@@ -1,24 +1,40 @@
 {
   "expo": {
-    "name": "inventario-app",
+    "name": "Inventario & Ventas",
     "slug": "inventario-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
       }
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "static",
+      "pwa": {
+        "name": "Sistema de Inventario Ropa Deportiva",
+        "shortName": "Inventario",
+        "startUrl": "/",
+        "display": "standalone",
+        "backgroundColor": "#ffffff",
+        "themeColor": "#1e293b"
+      }
+    },
+    "plugins": [
+      "expo-router"
+    ]
   }
 }
