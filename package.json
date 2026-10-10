@@ -23,7 +23,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:web": "pnpm expo export --platform web && node -e \"const fs=require('fs'); let h=fs.readFileSync('dist/index.html','utf8'); if(!h.includes('manifest.json')){ h=h.replace('</head>','<link rel=\\\"manifest\\\" href=\\\"/manifest.json\\\"><link rel=\\\"apple-touch-icon\\\" href=\\\"/icon-192.png\\\"></head>'); fs.writeFileSync('dist/index.html',h); }\""
   },
   "private": true,
   "devDependencies": {

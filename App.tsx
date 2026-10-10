@@ -228,6 +228,17 @@ const MainApp = () => {
 };
 
 export default function App() {
+   useEffect(() => {
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+         window.addEventListener('load', () => {
+            navigator.serviceWorker
+               .register('/firebase-messaging-sw.js')
+               .then((reg) => console.log('Service Worker registrado correctamente:', reg.scope))
+               .catch((err) => console.warn('Error al registrar Service Worker en inicio:', err));
+         });
+      }
+   }, []);
+
    return (
       <GestureHandlerRootView style={{ flex: 1 }}>
          <AuthProvider>
