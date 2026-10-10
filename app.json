@@ -20,21 +20,19 @@
         "backgroundColor": "#ffffff"
       }
     },
-    "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro",
-      "output": "static",
-      "pwa": {
-        "name": "Sistema de Inventario Ropa Deportiva",
-        "shortName": "Inventario",
-        "startUrl": "/",
-        "display": "standalone",
-        "backgroundColor": "#ffffff",
-        "themeColor": "#1e293b"
+    "expo": {
+      "name": "Sistema de Inventario & Catálogo Deportivo",
+      "shortName": "Inventario",
+      "slug": "inventario-deportivo-app",
+      "version": "1.0.0",
+      "web": {
+        "bundler": "metro",
+        "output": "single",
+        "favicon": "./assets/favicon.png",
+        "themeColor": "#2563eb",
+        "backgroundColor": "#0f172a",
+        "description": "Gestión de stock, punto de venta y catálogo público de prendas deportivas."
       }
-    },
-    "plugins": [
-      "expo-router"
-    ]
+    }
   }
 }
