@@ -1,21 +1,68 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeAuth, browserLocalPersistence, getAuth } from 'firebase/auth';
+// @ts-ignore - getReactNativePersistence existe en runtime
+import { getReactNativePersistence } from 'firebase/auth';
+import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  getFirestore,
+} from 'firebase/firestore';
+import { getMessaging, Messaging } from 'firebase/messaging';
+import { Platform } from 'react-native';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCX2mzrwuNpVCJFMD-OPaK9HrboLeWYuRw",
-  authDomain: "inventario-deportivo-app.firebaseapp.com",
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: "inventario-deportivo-app",
-  storageBucket: "inventario-deportivo-app.firebasestorage.app",
-  messagingSenderId: "628045340382",
-  appId: "1:628045340382:web:55abbc9a8df7818ba12c4f"
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Inicializar Firebase
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Exportar instancias de servicios
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+let authInstance;
+
+if (getApps().length > 0) {
+  authInstance = getAuth(app);
+} else {
+  if (Platform.OS === 'web') {
+    authInstance = initializeAuth(app, {
+      persistence: browserLocalPersistence,
+    });
+  } else {
+    authInstance = initializeAuth(app, {
+      persistence: getReactNativePersistence(ReactNativeAsyncStorage),
+    });
+  }
+}
+
+// Inicialización de Firestore con Persistencia Offline para PWA
+let dbInstance;
+if (Platform.OS === 'web') {
+  dbInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  });
+} else {
+  dbInstance = getFirestore(app);
+}
+
+// Inicialización segura de Firebase Messaging
+let messagingInstance: Messaging | null = null;
+if (Platform.OS === 'web' && typeof window !== 'undefined') {
+  try {
+    messagingInstance = getMessaging(app);
+  } catch (error) {
+    console.warn('Firebase Messaging no se inicializó en este entorno:', error);
+  }
+}
+
+export const auth = authInstance;
+export const db = dbInstance;
+export const messaging = messagingInstance;
 
 export default app;

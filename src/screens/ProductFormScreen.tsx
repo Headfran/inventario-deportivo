@@ -14,6 +14,7 @@ import { Product, ProductCategory, ProductVariant } from '../types/inventory';
 import { deleteImageFromR2, uploadImageToR2 } from '../services/storage';
 import { optimizeImage } from '../utils/imageOptimizer';
 import { createProduct, updateProduct } from '../services/productService';
+import * as ImagePicker from 'expo-image-picker';
 import { showConfirm, showAlert } from '../utils/alert';
 
 interface ProductFormProps {
@@ -110,34 +111,46 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
       normalizeVariants(initialProduct?.variants)
    );
 
-   const handleSelectImage = () => {
+   const handleSelectImage = async () => {
       if (imageItems.length >= 2) {
-         Alert.alert('Límite alcanzado', 'Solo puedes incluir hasta 2 imágenes por prenda.');
+         showAlert('Límite alcanzado', 'Solo puedes incluir hasta 2 imágenes por prenda.');
          return;
       }
 
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
+      try {
+         // Selector de imágenes multiplataforma de Expo (Web, iOS y Android)
+         const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: false,
+            quality: 0.8,
+         });
 
-      input.onchange = (e: any) => {
-         const file = e.target.files[0];
-         if (!file) return;
+         if (result.canceled || !result.assets || result.assets.length === 0) {
+            return;
+         }
 
-         const localPreviewUrl = URL.createObjectURL(file);
+         const selectedAsset = result.assets[0];
 
-         setImageItems(prev => [
+         // Convertir el URI de la imagen seleccionada a un Blob/File compatible con optimizeImage
+         const response = await fetch(selectedAsset.uri);
+         const blob = await response.blob();
+         const file = new File([blob], `photo_${Date.now()}.jpg`, {
+            type: blob.type || 'image/jpeg'
+         });
+
+         setImageItems((prev) => [
             ...prev,
             {
                id: `new_${Date.now()}`,
-               url: localPreviewUrl,
+               url: selectedAsset.uri, // Vista previa local (blob: o file://)
                isNew: true,
                file,
-            }
+            },
          ]);
-      };
-
-      input.click();
+      } catch (error: any) {
+         console.error('Error al seleccionar imagen:', error);
+         showAlert('Error', 'No se pudo abrir la galería de imágenes del dispositivo.');
+      }
    };
 
    const handleRemoveImage = (itemToRemove: ImageItem) => {

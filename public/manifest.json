@@ -1,0 +1,36 @@
+{
+  "short_name": "Inventario",
+  "name": "Sistema de Inventario & Catálogo Deportivo",
+  "description": "Gestión de stock, punto de venta y catálogo público de prendas deportivas.",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "/",
+  "lang": "es-ES",
+  "categories": [
+    "business",
+    "shopping",
+    "productivity"
+  ]
+}
