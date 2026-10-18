@@ -1,7 +1,6 @@
 {
   "expo": {
     "name": "Sistema de Inventario & Catálogo Deportivo",
-    "shortName": "Inventario",
     "slug": "inventario-deportivo-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -24,20 +23,10 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/favicon.png",
-      "name": "Sistema de Inventario & Catálogo Deportivo",
-      "shortName": "Inventario",
-      "description": "Gestión de stock, punto de venta y catálogo público de prendas deportivas.",
-      "themeColor": "#2563eb",
-      "backgroundColor": "#0f172a",
-      "display": "standalone",
-      "orientation": "portrait",
-      "startUrl": "/",
-      "lang": "es"
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-image",
-      "expo-sharing"
+      "expo-image"
     ]
   }
 }
