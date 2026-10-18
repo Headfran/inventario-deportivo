@@ -119,6 +119,7 @@ export const ShelfMapScreen = () => {
    const [dragGhostImg, setDragGhostImg] = useState<string | null>(null);
    const containerRef = useRef<View>(null);
    const cellLayoutsRef = useRef<Record<string, CellLayout>>({});
+   const scrollYRef = useRef(0);
 
    const [inspectedSpace, setInspectedSpace] = useState<{ shelfName: string; row: number; space: number; items: InspectedItem[]; isStash?: boolean; stashIndex?: number; } | null>(null);
 
@@ -173,20 +174,29 @@ export const ShelfMapScreen = () => {
    const registerCellLayout = useCallback((key: string, layout: CellLayout) => { cellLayoutsRef.current[key] = layout; }, []);
 
    const findCellAtPoint = useCallback((absX: number, absY: number, excludeKey?: string | null): string | null => {
+      // Las celdas se registraron con scroll=0. Su Y visual actual = Y_registrada - scrollY
+      const scrollY = scrollYRef.current;
       for (const [key, l] of Object.entries(cellLayoutsRef.current)) {
          if (excludeKey && key === excludeKey) continue;
-         if (absX >= l.x && absX <= l.x + l.width && absY >= l.y && absY <= l.y + l.height) return key;
+         const currentCellY = l.y - scrollY;
+         if (absX >= l.x && absX <= l.x + l.width && absY >= currentCellY && absY <= currentCellY + l.height) {
+            return key;
+         }
       }
       return null;
    }, []);
 
    const handleDragStart = useCallback((payload: MatrixDragPayload, absX: number, absY: number) => {
+      measureContainer();   // ← NUEVO: re-medir offsetX/offsetY frescos al iniciar el drag
       const sourceKey = payload.source === 'stash' ? `STASH_${payload.stashIndex}` : `F${payload.sourceRow}_E${payload.sourceSpace}`;
       const layout = cellLayoutsRef.current[sourceKey];
-      setMatrixDraggedPayload(payload); setDraggingSourceKey(sourceKey);
+      setMatrixDraggedPayload(payload);
+      setDraggingSourceKey(sourceKey);
       setDragGhostImg(payload.product.images[0] || 'https://via.placeholder.com/60');
-      ghostWidth.value = layout?.width ?? 70; ghostHeight.value = layout?.height ?? 70; hoverOpacity.value = 0;
-   }, []);
+      ghostWidth.value = layout?.width ?? 70;
+      ghostHeight.value = layout?.height ?? 70;
+      hoverOpacity.value = 0;
+   }, [measureContainer]);
 
    const handleDragMove = useCallback((absX: number, absY: number) => {
       const targetKey = findCellAtPoint(absX, absY, draggingSourceKey);
@@ -194,9 +204,15 @@ export const ShelfMapScreen = () => {
          lastTargetKeyRef.current = targetKey;
          if (targetKey && cellLayoutsRef.current[targetKey]) {
             const layout = cellLayoutsRef.current[targetKey];
-            hoverX.value = layout.x - offsetX.value; hoverY.value = layout.y - offsetY.value;
-            hoverW.value = layout.width; hoverH.value = layout.height; hoverOpacity.value = 1;
-         } else { hoverOpacity.value = 0; }
+            const scrollY = scrollYRef.current;
+            hoverX.value = layout.x - offsetX.value;
+            hoverY.value = (layout.y - scrollY) - offsetY.value;   // ← ajustado por scroll
+            hoverW.value = layout.width;
+            hoverH.value = layout.height;
+            hoverOpacity.value = 1;
+         } else {
+            hoverOpacity.value = 0;
+         }
       }
    }, [draggingSourceKey, findCellAtPoint]);
 
@@ -467,7 +483,7 @@ export const ShelfMapScreen = () => {
             </View>
          )}
 
-         <ScrollView contentContainerStyle={styles.content}>
+         <ScrollView contentContainerStyle={styles.content} style={{ flex: 1 }} onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }} scrollEventThrottle={16}>
 
             <View style={styles.floatingActionRow}>
                {hasUnsavedChanges && (
@@ -794,7 +810,7 @@ export const ShelfMapScreen = () => {
 };
 
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: '#f8fafc' },
+   container: { flex: 1, backgroundColor: '#f8fafc', position: 'relative' },
    content: { padding: 16, paddingBottom: 100 },
    sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
    sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
@@ -802,7 +818,7 @@ const styles = StyleSheet.create({
    // ESTILO DEL BOTÓN DE SCROLL WEB
    rowNavBtn: { padding: 4, backgroundColor: '#f8fafc', borderRadius: 8, marginHorizontal: 2, justifyContent: 'center', alignItems: 'center', height: 45, borderWidth: 1, borderColor: '#cbd5e1' },
 
-   floatingSelectionOverlay: { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 24, right: 16, zIndex: 50, backgroundColor: '#ffffff', borderRadius: 16, padding: 16, paddingRight: 32, flexDirection: 'row', alignItems: 'center', shadowColor: '#2563eb', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 12, borderWidth: 2, borderColor: '#93c5fd' },
+   floatingSelectionOverlay: { position: (Platform.OS === 'web' ? 'fixed' : 'absolute') as any, top: Platform.OS === 'ios' ? 60 : 24, right: 16, zIndex: 9999, backgroundColor: '#ffffff', borderRadius: 16, padding: 16, paddingRight: 32, flexDirection: 'row', alignItems: 'center', shadowColor: '#2563eb', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 12, borderWidth: 2, borderColor: '#93c5fd' },
    overlayImg: { width: 65, height: 65, borderRadius: 12, marginRight: 14, backgroundColor: '#f1f5f9' },
    overlayInfo: { justifyContent: 'center' },
    overlayTitle: { fontSize: 12, fontWeight: 'bold', color: '#2563eb', marginBottom: 4 },
