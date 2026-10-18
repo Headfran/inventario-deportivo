@@ -1,8 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { initializeAuth, browserLocalPersistence, getAuth } from 'firebase/auth';
-// @ts-ignore - getReactNativePersistence existe en runtime
-import { getReactNativePersistence } from 'firebase/auth';
-import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
+import { initializeAuth, browserLocalPersistence, getReactNativePersistence } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -21,33 +19,35 @@ const firebaseConfig = {
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-
+let app;
 let authInstance;
+let dbInstance;
 
-if (getApps().length > 0) {
-  authInstance = getAuth(app);
-} else {
+// Evitar inicialización múltiple por el Hot Reload de Expo
+if (getApps().length === 0) {
+  app = initializeApp(firebaseConfig);
+
+  // Inicializamos Auth inyectando AsyncStorage de forma segura para móviles
+  authInstance = initializeAuth(app, {
+    persistence: Platform.OS === 'web'
+      ? browserLocalPersistence
+      : getReactNativePersistence(AsyncStorage),
+  });
+
   if (Platform.OS === 'web') {
-    authInstance = initializeAuth(app, {
-      persistence: browserLocalPersistence,
+    dbInstance = initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
     });
   } else {
-    authInstance = initializeAuth(app, {
-      persistence: getReactNativePersistence(ReactNativeAsyncStorage),
-    });
+    dbInstance = getFirestore(app);
   }
-}
-
-// Inicialización de Firestore con Persistencia Offline para PWA
-let dbInstance;
-if (Platform.OS === 'web') {
-  dbInstance = initializeFirestore(app, {
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
-    }),
-  });
 } else {
+  // Si ya existe la app (Hot Reload), simplemente obtenemos las instancias
+  app = getApp();
+  const { getAuth } = require('firebase/auth');
+  authInstance = getAuth(app);
   dbInstance = getFirestore(app);
 }
 

@@ -34,6 +34,10 @@
       "orientation": "portrait",
       "startUrl": "/",
       "lang": "es"
-    }
+    },
+    "plugins": [
+      "expo-image",
+      "expo-sharing"
+    ]
   }
 }

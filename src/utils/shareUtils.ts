@@ -1,90 +1,136 @@
-import { Linking, Platform } from 'react-native';
+import { Linking, Platform, Share, Alert } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import * as Clipboard from 'expo-clipboard';
 import { Product } from '../types/inventory';
 
-/**
- * Formatea la ficha técnica de la prenda para WhatsApp con emojis y stock disponible
- */
-export const formatProductWhatsAppMessage = (
-  product: Product,
-  selectedColor?: string
-): string => {
-  let message = `🛍️ *${product.brand.toUpperCase()} - ${product.name}*\n`;
-  message += `📌 *Código:* ${product.code}\n`;
-  message += `💵 *Precio:* $${product.price.toFixed(2)}\n\n`;
-
-  message += `🎨 *Tallas y Colores Disponibles:*\n`;
-
-  const variantsToInclude = selectedColor
-    ? product.variants.filter((v) => v.color.toLowerCase() === selectedColor.toLowerCase())
-    : product.variants;
-
-  variantsToInclude.forEach((v) => {
-    const availableSizes = (v.sizes || [])
-      .filter((s) => Number(s.stock) > 0)
-      .map((s) => `${s.size}`)
-      .join(', ');
-
-    if (availableSizes) {
-      message += `• *Color ${v.color}:* Tallas ${availableSizes}\n`;
-    } else {
-      message += `• *Color ${v.color}:* (Agotado temporalmente)\n`;
-    }
+export const formatProductShareText = (product: Product, selectedColor?: string): string => {
+  let msg = `🛍️ *${product.brand.toUpperCase()} - ${product.name}*\n📌 *Código:* ${product.code}\n💵 *Precio:* $${product.price.toFixed(2)}\n\n🎨 *Tallas Disponibles:*\n`;
+  const variants = selectedColor ? product.variants.filter((v) => v.color.toLowerCase() === selectedColor.toLowerCase()) : product.variants;
+  variants.forEach((v) => {
+    const sizes = (v.sizes || []).filter((s) => Number(s.stock) > 0).map((s) => s.size).join(', ');
+    msg += sizes ? `• *${v.color}:* ${sizes}\n` : `• *${v.color}:* (Agotado)\n`;
   });
-
-  if (product.images && product.images.length > 0) {
-    message += `\n🖼️ *Ver fotos HD:*\n`;
-    product.images.slice(0, 2).forEach((img, idx) => {
-      message += `Foto ${idx + 1}: ${img}\n`;
-    });
-  }
-
-  message += `\n_¿Deseas apartar o consultar sobre este modelo?_`;
-  return message;
+  return msg + `\n_¿Deseas apartar o consultar sobre este modelo?_`;
 };
 
-/**
- * Abre WhatsApp con el mensaje pre-cargado
- */
-export const openWhatsAppShare = (
-  product: Product,
-  phoneNumber?: string,
-  selectedColor?: string
-) => {
-  const text = formatProductWhatsAppMessage(product, selectedColor);
-  const encodedText = encodeURIComponent(text);
-  const cleanPhone = phoneNumber ? phoneNumber.replace(/[^0-9]/g, '') : '';
-
-  const url = cleanPhone
-    ? `https://wa.me/${cleanPhone}?text=${encodedText}`
-    : `https://api.whatsapp.com/send?text=${encodedText}`;
-
-  if (Platform.OS === 'web') {
-    window.open(url, '_blank');
-  } else {
-    Linking.openURL(url).catch(() => {
-      alert('No se pudo abrir la aplicación de WhatsApp.');
-    });
-  }
+export const formatBulkShareText = (products: Product[]): string => {
+  let msg = `🌟 *CATÁLOGO DISPONIBLE* 🌟\n\n`;
+  products.forEach(p => {
+    msg += `🛍️ *${p.brand} - ${p.name}*\n`;
+    msg += `📌 Código: ${p.code} | 💵 $${p.price.toFixed(2)}\n`;
+    const availableSizes = Array.from(new Set(p.variants.flatMap(v => v.sizes.filter(s => s.stock > 0).map(s => s.size)))).join(', ');
+    msg += `📏 Tallas: ${availableSizes || '(Agotado)'}\n\n`;
+  });
+  return msg + `_¿Te interesa alguno de estos modelos?_`;
 };
 
-/**
- * Descarga una foto al almacenamiento local del dispositivo
- */
-export const downloadImageLocal = async (imageUrl: string, fileName?: string) => {
+// MOTOR DE CACHÉ INTELIGENTE
+const ensureImageCached = async (imageUrl: string, productCode: string, onStatus?: (s: string) => void): Promise<string> => {
+  const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+  if (!baseDir) throw new Error('Sistema de archivos inalcanzable');
+
+  // Formateamos un nombre único basado en el código del producto
+  const fileName = `img_cache_${productCode.replace(/[^a-zA-Z0-9]/g, '_')}.jpg`;
+  const localUri = `${baseDir}${fileName}`;
+
+  // Verificamos si la imagen ya existe físicamente en el celular
+  if (onStatus) onStatus('Verificando caché local... 🔍');
+  const info = await FileSystem.getInfoAsync(localUri);
+
+  if (info.exists) {
+    if (onStatus) onStatus('Usando imagen guardada ⚡');
+    return localUri;
+  }
+
+  if (onStatus) onStatus('Descargando alta calidad... 📥');
+  const { uri } = await FileSystem.downloadAsync(imageUrl, localUri);
+  return uri;
+};
+
+export const advancedNativeShare = async (product: Product, selectedColor?: string, onStatus?: (s: string | null) => void) => {
+  const text = formatProductShareText(product, selectedColor);
+
   try {
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
+    if (Platform.OS === 'web') {
+      if (onStatus) onStatus('Generando enlace...');
+      await Clipboard.setStringAsync(text);
+      alert('Texto copiado al portapapeles');
+      if (onStatus) onStatus(null);
+      return;
+    }
 
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = fileName || `prenda-${Date.now()}.jpg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(blobUrl);
+    if (product.images && product.images.length > 0) {
+      if (onStatus) onStatus('Copiando detalles... 📋');
+      await Clipboard.setStringAsync(text);
+
+      const localUri = await ensureImageCached(product.images[0], product.code || 'prenda', onStatus);
+
+      if (onStatus) onStatus('Abriendo menú de compartir... 🚀');
+      if (await Sharing.isAvailableAsync()) {
+        Alert.alert(
+          '¡Texto Copiado!',
+          'La información se copió al portapapeles.\n\nAl abrir WhatsApp/Instagram, presiona en el cuadro de texto y dale a "Pegar".',
+          [{
+            text: 'Compartir Imagen',
+            onPress: async () => {
+              if (onStatus) onStatus(null);
+              await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', UTI: 'public.jpeg' });
+            }
+          }]
+        );
+      } else {
+        if (onStatus) onStatus(null);
+        await Share.share({ message: text });
+      }
+    } else {
+      if (onStatus) onStatus(null);
+      await Share.share({ message: text });
+    }
   } catch (error) {
-    // Fallback directo abriendo en nueva pestaña si hay restricción de CORS
-    window.open(imageUrl, '_blank');
+    console.error('Error sharing', error);
+    if (onStatus) onStatus(null);
+  }
+};
+
+export const advancedBulkNativeShare = async (products: Product[], onStatus?: (s: string | null) => void) => {
+  const text = formatBulkShareText(products);
+  try {
+    if (Platform.OS === 'web') {
+      await Clipboard.setStringAsync(text);
+      alert('Catálogo copiado al portapapeles');
+      return;
+    }
+
+    const firstImageProduct = products.find(p => p.images && p.images.length > 0);
+
+    if (firstImageProduct) {
+      if (onStatus) onStatus('Preparando catálogo... 📋');
+      await Clipboard.setStringAsync(text);
+
+      // Descargamos o usamos el caché de la portada
+      const localUri = await ensureImageCached(firstImageProduct.images[0], 'bulk_cover', onStatus);
+
+      if (onStatus) onStatus('Abriendo sistema... 🚀');
+      if (await Sharing.isAvailableAsync()) {
+        Alert.alert(
+          '¡Catálogo Copiado!',
+          'Texto de prendas copiado.\n\nComparte esta portada y pega el texto en el chat. (Para enviar todas las imágenes a la vez, usa "Catálogo PDF").',
+          [{
+            text: 'Continuar',
+            onPress: async () => {
+              if (onStatus) onStatus(null);
+              await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', UTI: 'public.jpeg' });
+            }
+          }]
+        );
+        return;
+      }
+    }
+    if (onStatus) onStatus(null);
+    await Share.share({ message: text });
+  } catch (error) {
+    console.error('Error bulk', error);
+    if (onStatus) onStatus(null);
   }
 };

@@ -1,26 +1,38 @@
-export type PaymentMethod = 'efectivo' | 'pago_movil' | 'zelle' | 'tarjeta' | 'otro';
+export type PaymentMethod =
+  | 'efectivo'
+  | 'pago_movil'
+  | 'punto'
+  | 'transferencia'
+  | 'zelle'
+  | 'tarjeta'
+  | 'mixto';
 
 export interface SaleItem {
   productId: string;
-  productBrand: string;
-  productName: string;
-  productCode: string;
-  variantColor: string;
+  brand: string;
+  name: string;
+  code?: string;
+  color: string;
   size: string;
   quantity: number;
   unitPrice: number;
-  subtotal: number;
+  totalPrice: number;
   productImage?: string;
 }
 
 export interface Sale {
   id?: string;
+  receiptNumber?: string;
   createdAt?: any;
-  items: SaleItem[];
-  totalAmount: number;
-  paymentMethod: PaymentMethod;
+  sellerId?: string;
+  sellerName?: string;
   customerName?: string;
   customerPhone?: string;
+  items: SaleItem[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  paymentMethod: PaymentMethod;
+  status?: 'completed' | 'cancelled' | 'voided';
   notes?: string;
-  sellerName?: string;
 }

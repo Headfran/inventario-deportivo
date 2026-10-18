@@ -118,38 +118,27 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
       }
 
       try {
-         // Selector de imágenes multiplataforma de Expo (Web, iOS y Android)
          const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
-            allowsEditing: false,
-            quality: 0.8,
+            allowsEditing: false, // Mejor rendimiento si lo dejamos en false
+            quality: 1, // La compresión real la haremos en el submit
          });
 
-         if (result.canceled || !result.assets || result.assets.length === 0) {
-            return;
-         }
+         if (result.canceled || !result.assets || result.assets.length === 0) return;
 
          const selectedAsset = result.assets[0];
-
-         // Convertir el URI de la imagen seleccionada a un Blob/File compatible con optimizeImage
-         const response = await fetch(selectedAsset.uri);
-         const blob = await response.blob();
-         const file = new File([blob], `photo_${Date.now()}.jpg`, {
-            type: blob.type || 'image/jpeg'
-         });
 
          setImageItems((prev) => [
             ...prev,
             {
                id: `new_${Date.now()}`,
-               url: selectedAsset.uri, // Vista previa local (blob: o file://)
+               url: selectedAsset.uri, // Guardamos SOLO la ruta, no el archivo pesado
                isNew: true,
-               file,
             },
          ]);
       } catch (error: any) {
          console.error('Error al seleccionar imagen:', error);
-         showAlert('Error', 'No se pudo abrir la galería de imágenes del dispositivo.');
+         showAlert('Error', 'No se pudo abrir la galería de imágenes.');
       }
    };
 
@@ -246,9 +235,9 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
          for (const item of imageItems) {
             if (!item.isNew) {
                finalImageUrls.push(item.url);
-            } else if (item.file) {
-               const avifBlob = await optimizeImage(item.file, 900, 0.65);
-               const uploadedUrl = await uploadImageToR2(avifBlob);
+            } else {
+               const webpBlob = await optimizeImage(item.url, 800, 0.65);
+               const uploadedUrl = await uploadImageToR2(webpBlob);
                finalImageUrls.push(uploadedUrl);
             }
          }

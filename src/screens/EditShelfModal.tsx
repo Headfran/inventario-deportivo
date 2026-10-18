@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { X, Layers, Save } from 'lucide-react-native';
 import { Shelf } from '../types/inventory';
-import { updateShelf } from '../services/shelfService';
+import { updateShelf, createShelf } from '../services/shelfService'; // <-- Agregado createShelf
 import { showAlert } from '../utils/alert';
 
 interface EditShelfModalProps {
@@ -49,16 +49,22 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({
 
       try {
          setSubmitting(true);
+
          if (shelf.id) {
+            // Si tiene ID, es una edición
             await updateShelf(shelf.id, {
                name,
                rowsCount: parsedRows,
                spacesPerRow: parsedSpaces,
             });
+         } else {
+            // <-- SOLUCIÓN: Si NO tiene ID, es uno nuevo y llamamos a createShelf
+            await createShelf(name, parsedRows, parsedSpaces);
          }
+
          onClose();
       } catch (error: any) {
-         showAlert('Error', error.message || 'No se pudo actualizar el estante.');
+         showAlert('Error', error.message || 'No se pudo guardar el estante.');
       } finally {
          setSubmitting(false);
       }
@@ -71,7 +77,9 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({
                <View style={styles.header}>
                   <View style={styles.titleRow}>
                      <Layers size={20} color="#2563eb" style={{ marginRight: 8 }} />
-                     <Text style={styles.title}>Editar Estante</Text>
+                     <Text style={styles.title}>
+                        {shelf.id ? 'Editar Estante' : 'Nuevo Estante'}
+                     </Text>
                   </View>
                   <TouchableOpacity onPress={onClose}>
                      <X size={20} color="#64748b" />
@@ -124,7 +132,7 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({
                      disabled={submitting}
                   >
                      <Save size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                     <Text style={styles.saveText}>Guardar Cambios</Text>
+                     <Text style={styles.saveText}>Guardar</Text>
                   </TouchableOpacity>
                </View>
             </View>

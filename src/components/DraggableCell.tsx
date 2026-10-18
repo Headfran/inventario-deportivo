@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Platform } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
+import { SharedValue } from 'react-native-reanimated';
 
 export interface CellLayout {
    x: number;
@@ -20,6 +20,11 @@ interface Props {
    onDragStart: (absX: number, absY: number) => void;
    onDragMove: (absX: number, absY: number) => void;
    onDragEnd: (absX: number, absY: number) => void;
+
+   // Props inyectados para control 100% nativo de la GPU
+   dragX?: SharedValue<number>;
+   dragY?: SharedValue<number>;
+   isDragging?: SharedValue<boolean>;
 }
 
 export const DraggableCell: React.FC<Props> = ({
@@ -32,6 +37,9 @@ export const DraggableCell: React.FC<Props> = ({
    onDragStart,
    onDragMove,
    onDragEnd,
+   dragX,
+   dragY,
+   isDragging,
 }) => {
    const viewRef = useRef<any>(null);
 
@@ -41,12 +49,7 @@ export const DraggableCell: React.FC<Props> = ({
 
       if (Platform.OS === 'web' && typeof node.getBoundingClientRect === 'function') {
          const r = node.getBoundingClientRect();
-         onRegisterLayout(cellKey, {
-            x: r.left,
-            y: r.top,
-            width: r.width,
-            height: r.height,
-         });
+         onRegisterLayout(cellKey, { x: r.left, y: r.top, width: r.width, height: r.height });
          return;
       }
 
@@ -62,26 +65,57 @@ export const DraggableCell: React.FC<Props> = ({
       return () => clearTimeout(t);
    });
 
-   const jsPress = () => onPress();
-   const jsStart = (x: number, y: number) => onDragStart(x, y);
-   const jsMove = (x: number, y: number) => onDragMove(x, y);
-   const jsEnd = (x: number, y: number) => onDragEnd(x, y);
+   // 1. Toque simple (Tap) usando modificador nativo
+   const tap = Gesture.Tap()
+      .enabled(!disabled)
+      .onEnd((_e, success) => {
+         if (success) onPress();
+      })
+      .runOnJS(true);
 
-   const pan = Gesture.Pan()
+   // 2. Gesto de interfaz (UI Thread): 0 latencia, inyecta coordenadas de inmediato
+   const panUI = Gesture.Pan()
       .enabled(!disabled)
       .activateAfterLongPress(Platform.OS === 'web' ? 0 : 150)
-      .onStart((e) => runOnJS(jsStart)(e.absoluteX, e.absoluteY))
-      .onUpdate((e) => runOnJS(jsMove)(e.absoluteX, e.absoluteY))
-      .onEnd((e) => runOnJS(jsEnd)(e.absoluteX, e.absoluteY));
+      .onTouchesDown((e) => {
+         'worklet';
+         if (dragX) dragX.value = e.allTouches[0].absoluteX;
+         if (dragY) dragY.value = e.allTouches[0].absoluteY;
+      })
+      .onStart((e) => {
+         'worklet';
+         if (isDragging) isDragging.value = true;
+         if (dragX) dragX.value = e.absoluteX;
+         if (dragY) dragY.value = e.absoluteY;
+      })
+      .onUpdate((e) => {
+         'worklet';
+         if (dragX) dragX.value = e.absoluteX;
+         if (dragY) dragY.value = e.absoluteY;
+      })
+      .onEnd(() => {
+         'worklet';
+         if (isDragging) isDragging.value = false;
+      });
 
-   const tap = Gesture.Tap().onEnd((_e, success) => {
-      if (success) runOnJS(jsPress)();
-   });
+   // 3. Gesto Lógico (JS Thread): Notifica a React en segundo plano
+   const panJS = Gesture.Pan()
+      .enabled(!disabled)
+      .activateAfterLongPress(Platform.OS === 'web' ? 0 : 150)
+      .onStart((e) => {
+         onDragStart(e.absoluteX, e.absoluteY);
+      })
+      .onUpdate((e) => {
+         onDragMove(e.absoluteX, e.absoluteY);
+      })
+      .onEnd((e) => {
+         onDragEnd(e.absoluteX, e.absoluteY);
+      })
+      .runOnJS(true);
 
-   // Race: el que se active primero gana.
-   // - Un tap rápido nunca activa el Pan (delay 150 ms) → gana Tap.
-   // - Mantener presionado activa Pan y cancela Tap → nunca dispara onPress.
-   const composed = Gesture.Race(pan, tap);
+   // Unimos los gestos para eliminar cualquier tirón
+   const composedPan = Gesture.Simultaneous(panUI, panJS);
+   const composed = Gesture.Race(composedPan, tap);
 
    return (
       <GestureDetector gesture={composed}>
