@@ -28,6 +28,21 @@ interface Props {
    storeName?: string;
 }
 
+// Paleta de diseño (un solo lugar para cambiar colores)
+const C = {
+   bg: '#0A0A0A',
+   surface: '#121212',
+   raised: '#1A1A1A',
+   border: '#262626',
+   line: '#2E2E2E',
+   white: '#FFFFFF',
+   light: '#E8E8E8',
+   soft: '#BDBDBD',
+   mute: '#8A8A8A',
+   dim: '#6A6A6A',
+   ink: '#5A5A5A', // texto secundario sobre el "papel" del ticket
+};
+
 export const SaleReceiptModal: React.FC<Props> = ({
    sale,
    visible,
@@ -56,7 +71,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
             <View style={styles.card}>
                {/* CABECERA ÉXITO */}
                <View style={styles.successBanner}>
-                  <CheckCircle2 size={28} color="#16a34a" />
+                  <CheckCircle2 size={28} color={C.light} />
                   <Text style={styles.successTitle}>Venta Registrada con Éxito</Text>
                   <Text style={styles.successSubtitle}>
                      Inventario descontado correctamente
@@ -120,7 +135,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
                   <TextInput
                      style={styles.phoneInput}
                      placeholder="Número WhatsApp (+58...)"
-                     placeholderTextColor="#94a3b8"
+                     placeholderTextColor={C.dim}
                      value={overridePhone}
                      onChangeText={setOverridePhone}
                      keyboardType="phone-pad"
@@ -133,7 +148,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
                      style={styles.whatsAppBtn}
                      onPress={() => openWhatsAppReceipt(sale, overridePhone, storeName)}
                   >
-                     <MessageCircle size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                     <MessageCircle size={16} color={C.bg} style={{ marginRight: 6 }} />
                      <Text style={styles.whatsAppBtnText}>WhatsApp</Text>
                   </TouchableOpacity>
 
@@ -141,7 +156,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
                      style={styles.printBtn}
                      onPress={() => printReceiptHTML(sale, storeName)}
                   >
-                     <Printer size={16} color="#2563eb" style={{ marginRight: 6 }} />
+                     <Printer size={16} color={C.light} style={{ marginRight: 6 }} />
                      <Text style={styles.printBtnText}>Imprimir Ticket</Text>
                   </TouchableOpacity>
 
@@ -155,37 +170,63 @@ export const SaleReceiptModal: React.FC<Props> = ({
    );
 };
 
+// Bases compartidas (evitan repetir estilos)
+const caps = { textTransform: 'uppercase' as const, letterSpacing: 1.5 };
+const btn = {
+   flexDirection: 'row' as const,
+   justifyContent: 'center' as const,
+   alignItems: 'center' as const,
+   paddingVertical: 11,
+   borderRadius: 2,
+};
+const btnText = { ...caps, fontSize: 11, fontWeight: '900' as const };
+
 const styles = StyleSheet.create({
-   overlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.65)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-   card: { width: '100%', maxWidth: 440, maxHeight: '90%', backgroundColor: '#ffffff', borderRadius: 16, overflow: 'hidden' },
-   successBanner: { alignItems: 'center', backgroundColor: '#f0fdf4', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#bbf7d0' },
-   successTitle: { fontSize: 16, fontWeight: 'bold', color: '#166534', marginTop: 4 },
-   successSubtitle: { fontSize: 12, color: '#15803d' },
+   overlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.85)', justifyContent: 'center', alignItems: 'center', padding: 16 },
+   card: { width: '100%', maxWidth: 440, maxHeight: '90%', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 4, overflow: 'hidden' },
+
+   successBanner: { alignItems: 'center', backgroundColor: C.raised, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: C.border },
+   successTitle: { ...caps, fontSize: 14, fontWeight: '900', color: C.white, marginTop: 8 },
+   successSubtitle: { fontSize: 11, color: C.mute, letterSpacing: 1, marginTop: 2 },
+
    body: { padding: 16 },
-   ticketBox: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, marginBottom: 12 },
-   ticketHeader: { alignItems: 'center', marginBottom: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-   storeTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a', textTransform: 'uppercase' },
-   ticketMeta: { fontSize: 10, color: '#64748b', marginTop: 2 },
+
+   // Ticket tipo "papel": gris claro con texto oscuro
+   ticketBox: { backgroundColor: C.light, borderRadius: 2, padding: 14, marginBottom: 14 },
+   ticketHeader: { alignItems: 'center', marginBottom: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: C.soft },
+   storeTitle: { ...caps, fontSize: 15, fontWeight: '900', color: C.bg },
+   ticketMeta: { fontSize: 10, color: C.ink, marginTop: 2 },
    ticketRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-   ticketLabel: { fontSize: 11, color: '#475569' },
-   ticketVal: { fontSize: 11, fontWeight: 'bold', color: '#0f172a' },
-   divider: { height: 1, backgroundColor: '#cbd5e1', marginVertical: 8 },
-   itemsTitle: { fontSize: 11, fontWeight: 'bold', color: '#334155', marginBottom: 6 },
+   ticketLabel: { fontSize: 11, color: C.ink },
+   ticketVal: { fontSize: 11, fontWeight: 'bold', color: C.bg },
+   divider: { height: 1, backgroundColor: C.soft, marginVertical: 8 },
+   itemsTitle: { fontSize: 11, fontWeight: 'bold', color: C.bg, marginBottom: 6 },
    itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-   itemName: { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
-   itemSpec: { fontSize: 10, color: '#64748b' },
-   itemQtyPrice: { fontSize: 10, color: '#2563eb' },
-   itemSubtotal: { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
+   itemName: { fontSize: 12, fontWeight: 'bold', color: C.bg },
+   itemSpec: { fontSize: 10, color: C.ink },
+   itemQtyPrice: { fontSize: 10, color: C.ink },
+   itemSubtotal: { fontSize: 12, fontWeight: 'bold', color: C.bg },
    totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-   totalLabel: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
-   totalValue: { fontSize: 18, fontWeight: '800', color: '#16a34a' },
-   inputLabel: { fontSize: 11, fontWeight: 'bold', color: '#475569', marginBottom: 4 },
-   phoneInput: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 12, height: 40, fontSize: 13, color: '#0f172a' },
-   footer: { flexDirection: 'row', gap: 8, padding: 16, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0' },
-   whatsAppBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#25d366', paddingVertical: 10, borderRadius: 8 },
-   whatsAppBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
-   printBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', paddingVertical: 10, borderRadius: 8 },
-   printBtnText: { color: '#2563eb', fontSize: 12, fontWeight: 'bold' },
-   closeBtn: { paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#f1f5f9', borderRadius: 8, justifyContent: 'center' },
-   closeBtnText: { color: '#475569', fontSize: 12, fontWeight: 'bold' },
+   totalLabel: { ...caps, fontSize: 13, fontWeight: '900', color: C.bg },
+   totalValue: { fontSize: 20, fontWeight: '900', color: C.bg },
+
+   inputLabel: { ...caps, fontSize: 10, fontWeight: 'bold', color: C.mute, marginBottom: 6 },
+   phoneInput: {
+      backgroundColor: C.raised,
+      borderWidth: 1,
+      borderColor: C.line,
+      borderRadius: 2,
+      paddingHorizontal: 12,
+      height: 40,
+      fontSize: 13,
+      color: C.white,
+   },
+
+   footer: { flexDirection: 'row', gap: 8, padding: 16, backgroundColor: '#161616', borderTopWidth: 1, borderTopColor: C.border },
+   whatsAppBtn: { ...btn, flex: 1, backgroundColor: C.light },
+   whatsAppBtnText: { ...btnText, color: C.bg },
+   printBtn: { ...btn, flex: 1, backgroundColor: 'transparent', borderWidth: 1, borderColor: '#3A3A3A' },
+   printBtnText: { ...btnText, color: C.light },
+   closeBtn: { ...btn, paddingHorizontal: 12, backgroundColor: C.raised, borderWidth: 1, borderColor: C.line },
+   closeBtnText: { ...btnText, color: C.soft },
 });

@@ -28,6 +28,20 @@ import { createSale } from '../services/saleService';
 import { showAlert } from '../utils/alert';
 import { SaleReceiptModal } from '../components/SaleReceiptModal';
 
+// Paleta de diseño (un solo lugar para cambiar colores)
+const C = {
+   bg: '#0A0A0A',
+   surface: '#121212',
+   raised: '#1A1A1A',
+   border: '#262626',
+   line: '#2E2E2E',
+   white: '#FFFFFF',
+   light: '#E8E8E8',
+   soft: '#BDBDBD',
+   mute: '#8A8A8A',
+   dim: '#6A6A6A',
+};
+
 export const SalesRegisterScreen = () => {
    const [products, setProducts] = useState<Product[]>([]);
    const [searchQuery, setSearchQuery] = useState('');
@@ -199,11 +213,11 @@ export const SalesRegisterScreen = () => {
             <Text style={styles.panelTitle}>Catálogo de Prendas</Text>
 
             <View style={styles.searchBar}>
-               <Search size={16} color="#64748b" style={{ marginRight: 8 }} />
+               <Search size={16} color={C.mute} style={{ marginRight: 8 }} />
                <TextInput
                   style={styles.searchInput}
                   placeholder="Buscar por código, marca o nombre..."
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={C.dim}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
                />
@@ -298,7 +312,7 @@ export const SalesRegisterScreen = () => {
                   </ScrollView>
 
                   <TouchableOpacity style={styles.addToCartBtn} onPress={handleAddToCart}>
-                     <Plus size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                     <Plus size={16} color={C.bg} style={{ marginRight: 6 }} />
                      <Text style={styles.addToCartText}>Agregar al Carrito</Text>
                   </TouchableOpacity>
                </View>
@@ -308,7 +322,7 @@ export const SalesRegisterScreen = () => {
          {/* SECCIÓN DERECHA: CARRITO Y VENTA */}
          <View style={styles.rightPanel}>
             <View style={styles.cartHeader}>
-               <ShoppingBag size={20} color="#2563eb" style={{ marginRight: 8 }} />
+               <ShoppingBag size={20} color={C.light} style={{ marginRight: 8, marginBottom: 12 }} />
                <Text style={styles.panelTitle}>Carrito de Venta</Text>
             </View>
 
@@ -337,14 +351,14 @@ export const SalesRegisterScreen = () => {
                               style={styles.qtyBtn}
                               onPress={() => updateCartQuantity(idx, -1)}
                            >
-                              <Minus size={12} color="#0f172a" />
+                              <Minus size={12} color={C.light} />
                            </TouchableOpacity>
                            <Text style={styles.qtyText}>{item.quantity}</Text>
                            <TouchableOpacity
                               style={styles.qtyBtn}
                               onPress={() => updateCartQuantity(idx, 1)}
                            >
-                              <Plus size={12} color="#0f172a" />
+                              <Plus size={12} color={C.light} />
                            </TouchableOpacity>
                         </View>
 
@@ -371,7 +385,7 @@ export const SalesRegisterScreen = () => {
                            style={[styles.paymentBtn, isSelected && styles.paymentBtnActive]}
                            onPress={() => setPaymentMethod(m.id as PaymentMethod)}
                         >
-                           <IconComp size={14} color={isSelected ? '#ffffff' : '#475569'} />
+                           <IconComp size={14} color={isSelected ? C.bg : C.mute} />
                            <Text style={[styles.paymentBtnText, isSelected && styles.paymentBtnTextActive]}>
                               {m.label}
                            </Text>
@@ -383,11 +397,11 @@ export const SalesRegisterScreen = () => {
                <View style={styles.customerInputsRow}>
                   <View style={{ flex: 1, marginRight: 8 }}>
                      <View style={styles.inputWithIcon}>
-                        <User size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+                        <User size={14} color={C.mute} style={{ marginRight: 6 }} />
                         <TextInput
                            style={styles.smallInput}
                            placeholder="Nombre Cliente (Opcional)"
-                           placeholderTextColor="#94a3b8"
+                           placeholderTextColor={C.dim}
                            value={customerName}
                            onChangeText={setCustomerName}
                         />
@@ -396,11 +410,11 @@ export const SalesRegisterScreen = () => {
 
                   <View style={{ flex: 1 }}>
                      <View style={styles.inputWithIcon}>
-                        <Phone size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+                        <Phone size={14} color={C.mute} style={{ marginRight: 6 }} />
                         <TextInput
                            style={styles.smallInput}
                            placeholder="Teléfono (Opcional)"
-                           placeholderTextColor="#94a3b8"
+                           placeholderTextColor={C.dim}
                            value={customerPhone}
                            onChangeText={setCustomerPhone}
                            keyboardType="phone-pad"
@@ -420,10 +434,10 @@ export const SalesRegisterScreen = () => {
                   disabled={processing}
                >
                   {processing ? (
-                     <ActivityIndicator color="#ffffff" size="small" />
+                     <ActivityIndicator color={C.bg} size="small" />
                   ) : (
                      <>
-                        <CheckCircle2 size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                        <CheckCircle2 size={18} color={C.bg} style={{ marginRight: 8 }} />
                         <Text style={styles.completeSaleText}>Completar y Generar Ticket</Text>
                      </>
                   )}
@@ -441,60 +455,98 @@ export const SalesRegisterScreen = () => {
    );
 };
 
+// Bases compartidas (evitan repetir estilos)
+const box = {
+   backgroundColor: C.raised,
+   borderWidth: 1,
+   borderColor: C.line,
+   borderRadius: 2,
+};
+const activeBox = { backgroundColor: C.light, borderColor: C.light };
+const activeText = { color: C.bg, fontWeight: '900' as const };
+const caps = { textTransform: 'uppercase' as const, letterSpacing: 2 };
+const primaryBtn = {
+   flexDirection: 'row' as const,
+   justifyContent: 'center' as const,
+   alignItems: 'center' as const,
+   backgroundColor: C.light,
+   borderRadius: 2,
+};
+const primaryText = { ...caps, color: C.bg, fontWeight: '900' as const };
+
 const styles = StyleSheet.create({
-   container: { flex: 1, flexDirection: 'row', backgroundColor: '#f8fafc' },
-   leftPanel: { flex: 1.2, padding: 16, borderRightWidth: 1, borderRightColor: '#e2e8f0' },
-   rightPanel: { flex: 1, padding: 16, backgroundColor: '#ffffff', justifyContent: 'space-between' },
-   panelTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a', marginBottom: 12 },
-   searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 12, height: 40, marginBottom: 12 },
-   searchInput: { flex: 1, fontSize: 13, color: '#0f172a' },
+   container: { flex: 1, flexDirection: 'row', backgroundColor: C.bg },
+   leftPanel: { flex: 1.2, padding: 16, borderRightWidth: 1, borderRightColor: '#1E1E1E' },
+   rightPanel: { flex: 1, padding: 16, backgroundColor: C.surface, justifyContent: 'space-between' },
+   panelTitle: { ...caps, fontSize: 14, fontWeight: '900', color: C.white, marginBottom: 12 },
+
+   searchBar: { ...box, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 40, marginBottom: 12 },
+   searchInput: { flex: 1, fontSize: 13, color: C.white },
+
    productsScroll: { flex: 1 },
-   productCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0' },
-   productCardSelected: { borderColor: '#2563eb', backgroundColor: '#eff6ff' },
-   productImg: { width: 44, height: 44, borderRadius: 6, marginRight: 10, backgroundColor: '#f1f5f9' },
-   productBrand: { fontSize: 10, fontWeight: 'bold', color: '#2563eb' },
-   productName: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
-   productCode: { fontSize: 10, color: '#64748b' },
-   productPrice: { fontSize: 14, fontWeight: 'bold', color: '#16a34a' },
-   selectionModal: { backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#2563eb', padding: 12, marginTop: 12 },
-   selectionTitle: { fontSize: 13, fontWeight: 'bold', color: '#0f172a', marginBottom: 8 },
-   subLabel: { fontSize: 11, fontWeight: 'bold', color: '#475569', marginBottom: 4 },
-   chip: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, marginRight: 6 },
-   chipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   chipText: { fontSize: 11, color: '#334155' },
-   chipTextActive: { color: '#ffffff', fontWeight: 'bold' },
-   sizeChip: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, marginRight: 6 },
-   sizeChipActive: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
-   sizeChipDisabled: { opacity: 0.4, backgroundColor: '#f1f5f9' },
-   sizeChipText: { fontSize: 11, color: '#334155', fontWeight: 'bold' },
-   sizeChipTextActive: { color: '#ffffff' },
-   sizeChipTextDisabled: { color: '#ef4444', textDecorationLine: 'line-through' },
-   addToCartBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#2563eb', paddingVertical: 10, borderRadius: 8, marginTop: 6 },
-   addToCartText: { color: '#ffffff', fontWeight: 'bold', fontSize: 13 },
+   productCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: C.surface,
+      borderRadius: 4,
+      padding: 10,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: '#1F1F1F',
+   },
+   productCardSelected: { borderColor: C.light, backgroundColor: C.raised },
+   productImg: { width: 44, height: 44, borderRadius: 2, marginRight: 10, backgroundColor: C.raised },
+   productBrand: { ...caps, fontSize: 9, fontWeight: 'bold', color: C.mute },
+   productName: { fontSize: 13, fontWeight: 'bold', color: C.white },
+   productCode: { fontSize: 10, color: C.dim },
+   productPrice: { fontSize: 14, fontWeight: '900', color: C.white },
+
+   selectionModal: { backgroundColor: C.surface, borderRadius: 4, borderWidth: 1, borderColor: C.soft, padding: 12, marginTop: 12 },
+   selectionTitle: { fontSize: 13, fontWeight: 'bold', color: C.white, marginBottom: 8 },
+   subLabel: { ...caps, fontSize: 10, fontWeight: 'bold', color: C.mute, marginBottom: 4 },
+
+   chip: { ...box, paddingHorizontal: 10, paddingVertical: 5, marginRight: 6 },
+   chipActive: activeBox,
+   chipText: { fontSize: 11, color: C.soft },
+   chipTextActive: activeText,
+
+   sizeChip: { ...box, paddingHorizontal: 10, paddingVertical: 6, marginRight: 6 },
+   sizeChipActive: activeBox,
+   sizeChipDisabled: { opacity: 0.4 },
+   sizeChipText: { fontSize: 11, color: C.soft, fontWeight: 'bold' },
+   sizeChipTextActive: activeText,
+   sizeChipTextDisabled: { color: C.mute, textDecorationLine: 'line-through' },
+
+   addToCartBtn: { ...primaryBtn, paddingVertical: 10, marginTop: 6 },
+   addToCartText: { ...primaryText, fontSize: 12 },
+
    cartHeader: { flexDirection: 'row', alignItems: 'center' },
    cartScroll: { flex: 1, marginVertical: 12 },
-   emptyCartText: { fontSize: 13, color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginTop: 40 },
-   cartItemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-   cartItemImg: { width: 40, height: 40, borderRadius: 6, marginRight: 8 },
-   cartItemName: { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
-   cartItemDetail: { fontSize: 10, color: '#64748b' },
-   cartItemPrice: { fontSize: 10, color: '#16a34a', fontWeight: '600' },
-   qtyControls: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 6, padding: 2, marginHorizontal: 8 },
+   emptyCartText: { fontSize: 13, color: C.dim, fontStyle: 'italic', textAlign: 'center', marginTop: 40 },
+   cartItemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#222222' },
+   cartItemImg: { width: 40, height: 40, borderRadius: 2, marginRight: 8, backgroundColor: C.raised },
+   cartItemName: { fontSize: 12, fontWeight: 'bold', color: C.white },
+   cartItemDetail: { fontSize: 10, color: C.mute },
+   cartItemPrice: { fontSize: 10, color: C.soft, fontWeight: '600' },
+   qtyControls: { ...box, flexDirection: 'row', alignItems: 'center', padding: 2, marginHorizontal: 8 },
    qtyBtn: { padding: 4 },
-   qtyText: { fontSize: 12, fontWeight: 'bold', paddingHorizontal: 6 },
-   cartItemSubtotal: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
-   checkoutSection: { borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 12 },
+   qtyText: { fontSize: 12, fontWeight: 'bold', color: C.white, paddingHorizontal: 6 },
+   cartItemSubtotal: { fontSize: 13, fontWeight: '900', color: C.white },
+
+   checkoutSection: { borderTopWidth: 1, borderTopColor: C.border, paddingTop: 12 },
    paymentMethodsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
-   paymentBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, gap: 4 },
-   paymentBtnActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   paymentBtnText: { fontSize: 11, color: '#475569', fontWeight: 'bold' },
-   paymentBtnTextActive: { color: '#ffffff' },
+   paymentBtn: { ...box, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, gap: 4 },
+   paymentBtnActive: activeBox,
+   paymentBtnText: { fontSize: 11, color: C.soft, fontWeight: 'bold' },
+   paymentBtnTextActive: activeText,
+
    customerInputsRow: { flexDirection: 'row', marginBottom: 12 },
-   inputWithIcon: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 8, height: 36 },
-   smallInput: { flex: 1, fontSize: 11, color: '#0f172a' },
+   inputWithIcon: { ...box, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, height: 36 },
+   smallInput: { flex: 1, fontSize: 11, color: C.white },
+
    totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-   totalLabel: { fontSize: 13, fontWeight: 'bold', color: '#475569' },
-   totalValue: { fontSize: 22, fontWeight: '800', color: '#16a34a' },
-   completeSaleBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#16a34a', paddingVertical: 12, borderRadius: 10 },
-   completeSaleText: { color: '#ffffff', fontSize: 14, fontWeight: 'bold' },
+   totalLabel: { ...caps, fontSize: 11, fontWeight: 'bold', color: C.mute },
+   totalValue: { fontSize: 24, fontWeight: '900', color: C.white },
+   completeSaleBtn: { ...primaryBtn, paddingVertical: 14 },
+   completeSaleText: { ...primaryText, fontSize: 13 },
 });

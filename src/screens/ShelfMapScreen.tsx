@@ -1,30 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, Modal, Platform } from 'react-native';
 import {
-   View,
-   Text,
-   ScrollView,
-   TouchableOpacity,
-   StyleSheet,
-   Image,
-   Modal,
-   Platform,
-} from 'react-native';
-import {
-   Store,
-   Plus,
-   Trash2,
-   Eye,
-   MapPin,
-   Layers,
-   Pencil,
-   ChevronLeft,
-   Package,
-   Box,
-   X,
-   Save,
-   RotateCcw,
-   CheckCircle2,
-   Move,
+   Store, Plus, Trash2, Eye, MapPin, Layers, Pencil, ChevronLeft, Package, Box, X, Save, RotateCcw,
+   CheckCircle2, Move,
 } from 'lucide-react-native';
 import { Product, Shelf, ShelfLocation } from '../types/inventory';
 import { subscribeToShelves, deleteShelf } from '../services/shelfService';
@@ -34,6 +12,7 @@ import { EditShelfModal } from './EditShelfModal';
 import { ProductSearchFilter } from '../components/ProductSearchFilter';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { DraggableCell, CellLayout } from '../components/DraggableCell';
+import { C, caps, box, activeBox, activeText, btn, btnText, overlay, modalCard } from '../theme';
 
 interface SelectedVariantRef {
    product: Product;
@@ -428,7 +407,7 @@ export const ShelfMapScreen = () => {
             {hasUnsavedChanges && (
                <View style={styles.saveAlertBanner}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                     <Save size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                     <Save size={18} color={C.light} style={{ marginRight: 8 }} />
                      <View>
                         <Text style={styles.saveAlertTitle}>Reacomodos pendientes en el estante</Text>
                         <Text style={styles.saveAlertSubtitle}>Guarda los cambios para sincronizarlos en la base de datos.</Text>
@@ -437,12 +416,12 @@ export const ShelfMapScreen = () => {
 
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                      <TouchableOpacity style={styles.discardBtn} onPress={handleDiscardChanges} disabled={saving}>
-                        <RotateCcw size={14} color="#ffffff" />
+                        <RotateCcw size={14} color={C.soft} />
                         <Text style={styles.discardBtnText}>Descartar</Text>
                      </TouchableOpacity>
 
                      <TouchableOpacity style={styles.saveBtn} onPress={handleSaveChangesToFirebase} disabled={saving}>
-                        <CheckCircle2 size={14} color="#15803d" />
+                        <CheckCircle2 size={14} color={C.bg} />
                         <Text style={styles.saveBtnText}>Guardar Cambios</Text>
                      </TouchableOpacity>
                   </View>
@@ -465,24 +444,21 @@ export const ShelfMapScreen = () => {
                         Color: {selectedVariant.product.variants[selectedVariant.variantIndex]?.color} • Toca la casilla o la Vitrina para asignar
                      </Text>
                   </View>
-                  <TouchableOpacity style={styles.cancelBannerBtn} onPress={() => setSelectedVariant(null)}>
-                     <X size={18} color="#ffffff" />
+                  <TouchableOpacity style={{ padding: 6 }} onPress={() => setSelectedVariant(null)}>
+                     <X size={18} color={C.bg} />
                   </TouchableOpacity>
                </View>
             )}
 
             {/* VITRINA DE TIENDA */}
             <View style={styles.sectionHeader}>
-               <Store size={20} color="#7c3aed" style={{ marginRight: 8 }} />
+               <Store size={20} color={C.light} style={{ marginRight: 8 }} />
                <Text style={styles.sectionTitle}>Piso de Ventas / Vitrina en Tienda</Text>
             </View>
 
             <TouchableOpacity
                activeOpacity={0.9}
-               style={[
-                  styles.vitrinaDropZone,
-                  selectedVariant && styles.vitrinaDropZoneActive,
-               ]}
+               style={[styles.vitrinaDropZone, selectedVariant && styles.vitrinaDropZoneActive]}
                onPress={() => {
                   if (selectedVariant) {
                      assignProductToVitrina(selectedVariant.product, selectedVariant.variantIndex);
@@ -491,7 +467,7 @@ export const ShelfMapScreen = () => {
             >
                {exhibitionItems.length === 0 ? (
                   <View style={styles.emptyDropPrompt}>
-                     <Eye size={24} color={selectedVariant ? '#7c3aed' : '#94a3b8'} />
+                     <Eye size={24} color={selectedVariant ? C.light : C.dim} />
                      <Text style={[styles.emptyDropText, selectedVariant && styles.emptyDropTextActive]}>
                         {selectedVariant
                            ? 'Toca aquí para colocar esta prenda en Vitrina'
@@ -499,7 +475,7 @@ export const ShelfMapScreen = () => {
                      </Text>
                   </View>
                ) : (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.exhibitionScroll}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
                      {exhibitionItems.map((item, idx) => {
                         const currentDisplaySize = item.variant.exhibition?.displaySize || 'Única';
 
@@ -510,35 +486,27 @@ export const ShelfMapScreen = () => {
                                  style={styles.exhibitionImg}
                                  resizeMode="cover"
                               />
-                              <View style={styles.exhibitionInfo}>
-                                 <Text style={styles.exhibitionBrand}>{item.product.brand}</Text>
+                              <View style={{ flex: 1 }}>
+                                 <Text style={styles.brandTag}>{item.product.brand}</Text>
                                  <Text style={styles.exhibitionName} numberOfLines={1}>
                                     {item.product.name}
                                  </Text>
                                  <Text style={styles.exhibitionColor}>{item.variant.color}</Text>
 
                                  <Text style={styles.vitrinaSizeLabel}>Talla en vitrina:</Text>
-                                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.vitrinaSizeRow}>
+                                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', marginTop: 3 }}>
                                     {(item.variant.sizes || []).map((sObj: any) => {
                                        const isSelectedSize = currentDisplaySize === sObj.size;
 
                                        return (
                                           <TouchableOpacity
                                              key={sObj.size}
-                                             style={[
-                                                styles.vitrinaSizeChip,
-                                                isSelectedSize && styles.vitrinaSizeChipActive,
-                                             ]}
+                                             style={[styles.vitrinaSizeChip, isSelectedSize && activeBox]}
                                              onPress={() =>
                                                 updateVitrinaDisplaySize(item.product, item.variantIndex, sObj.size)
                                              }
                                           >
-                                             <Text
-                                                style={[
-                                                   styles.vitrinaSizeChipText,
-                                                   isSelectedSize && styles.vitrinaSizeChipTextActive,
-                                                ]}
-                                             >
+                                             <Text style={[styles.vitrinaSizeChipText, isSelectedSize && activeText]}>
                                                 {sObj.size}
                                              </Text>
                                           </TouchableOpacity>
@@ -548,10 +516,10 @@ export const ShelfMapScreen = () => {
                               </View>
 
                               <TouchableOpacity
-                                 style={styles.removeVitrinaBtn}
+                                 style={{ padding: 4 }}
                                  onPress={() => removeFromVitrina(item.product, item.variantIndex)}
                               >
-                                 <X size={14} color="#ef4444" />
+                                 <X size={14} color={C.mute} />
                               </TouchableOpacity>
                            </View>
                         );
@@ -565,14 +533,14 @@ export const ShelfMapScreen = () => {
                <>
                   <View style={[styles.sectionHeader, { marginTop: 24, justifyContent: 'space-between' }]}>
                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Layers size={20} color="#2563eb" style={{ marginRight: 8 }} />
+                        <Layers size={20} color={C.light} style={{ marginRight: 8 }} />
                         <Text style={styles.sectionTitle}>Plano General de Bodega</Text>
                      </View>
                      <TouchableOpacity
                         style={styles.createBtn}
                         onPress={() => setEditingShelf({ name: '', rowsCount: 1, spacesPerRow: 3 })}
                      >
-                        <Plus size={14} color="#ffffff" />
+                        <Plus size={14} color={C.bg} />
                         <Text style={styles.createBtnText}>Nuevo Estante</Text>
                      </TouchableOpacity>
                   </View>
@@ -589,7 +557,7 @@ export const ShelfMapScreen = () => {
                            onPress={() => setActiveShelf(shelf)}
                         >
                            <View style={styles.shelfIconWrapper}>
-                              <MapPin size={24} color="#2563eb" />
+                              <MapPin size={24} color={C.light} />
                            </View>
 
                            <Text style={styles.shelfSummaryTitle}>{shelf.name}</Text>
@@ -599,7 +567,7 @@ export const ShelfMapScreen = () => {
 
                            <View style={styles.shelfActions}>
                               <TouchableOpacity onPress={() => setEditingShelf(shelf)} style={styles.smallIconBtn}>
-                                 <Pencil size={14} color="#64748b" />
+                                 <Pencil size={14} color={C.soft} />
                               </TouchableOpacity>
                               <TouchableOpacity
                                  onPress={() =>
@@ -609,7 +577,7 @@ export const ShelfMapScreen = () => {
                                  }
                                  style={styles.smallIconBtn}
                               >
-                                 <Trash2 size={14} color="#ef4444" />
+                                 <Trash2 size={14} color={C.mute} />
                               </TouchableOpacity>
                            </View>
                         </TouchableOpacity>
@@ -617,7 +585,7 @@ export const ShelfMapScreen = () => {
                   </View>
                </>
             ) : (
-               <View style={styles.matrixContainer}>
+               <View style={{ flex: 1 }}>
                   <View style={styles.matrixNavRow}>
                      <TouchableOpacity
                         style={styles.backBtn}
@@ -636,19 +604,19 @@ export const ShelfMapScreen = () => {
                            }
                         }}
                      >
-                        <ChevronLeft size={20} color="#475569" />
+                        <ChevronLeft size={20} color={C.soft} />
                         <Text style={styles.backBtnText}>Volver a Bodega</Text>
                      </TouchableOpacity>
 
                      {matrixDraggedPayload && (
-                        <View style={styles.trashDropZone}>
-                           <Move size={16} color="#b91c1c" style={{ marginRight: 6 }} />
-                           <Text style={styles.trashDropText}>Arrastra a una casilla destino</Text>
+                        <View style={styles.dragHint}>
+                           <Move size={16} color={C.light} style={{ marginRight: 6 }} />
+                           <Text style={styles.dragHintText}>Arrastra a una casilla destino</Text>
                         </View>
                      )}
                   </View>
 
-                  <View style={styles.matrixHeader}>
+                  <View style={{ marginBottom: 16 }}>
                      <Text style={styles.matrixTitle}>{activeShelf.name}</Text>
                      <Text style={styles.matrixSubtitle}>
                         • Para colocar: Toca un color del inventario y luego la casilla.{'\n'}
@@ -669,7 +637,7 @@ export const ShelfMapScreen = () => {
                               <ScrollView
                                  horizontal
                                  showsHorizontalScrollIndicator={false}
-                                 contentContainerStyle={styles.spacesScroll}
+                                 contentContainerStyle={{ gap: 10 }}
                               >
                                  {Array.from({ length: activeShelf.spacesPerRow || 3 }).map((_, sIdx) => {
                                     const spaceNum = sIdx + 1;
@@ -730,7 +698,7 @@ export const ShelfMapScreen = () => {
 
                                           {isEmpty ? (
                                              <View style={styles.emptyCellTouchArea}>
-                                                <Box size={22} color={selectedVariant ? '#2563eb' : '#cbd5e1'} />
+                                                <Box size={22} color={selectedVariant ? C.light : C.dim} />
                                              </View>
                                           ) : (
                                              <>
@@ -740,7 +708,7 @@ export const ShelfMapScreen = () => {
                                                    resizeMode="cover"
                                                 />
                                                 <View style={styles.dragHandleIcon}>
-                                                   <Move size={10} color="#ffffff" />
+                                                   <Move size={10} color={C.white} />
                                                 </View>
                                                 {items.length > 1 && (
                                                    <View style={styles.cellBadge}>
@@ -762,7 +730,7 @@ export const ShelfMapScreen = () => {
 
             {/* INVENTARIO CON CATEGORÍAS PROMINENTES Y BÚSQUEDA */}
             <View style={[styles.sectionHeader, { marginTop: 32 }]}>
-               <Package size={20} color="#059669" style={{ marginRight: 8 }} />
+               <Package size={20} color={C.light} style={{ marginRight: 8 }} />
                <Text style={styles.sectionTitle}>Inventario General</Text>
             </View>
 
@@ -774,7 +742,7 @@ export const ShelfMapScreen = () => {
                availableSizes={availableSizes}
             />
 
-            <View style={styles.catalogDragContainer}>
+            <View style={{ gap: 10 }}>
                {filteredProducts.length === 0 ? (
                   <Text style={styles.emptyText}>No se encontraron prendas con los filtros aplicados.</Text>
                ) : (
@@ -786,7 +754,7 @@ export const ShelfMapScreen = () => {
                            resizeMode="cover"
                         />
                         <View style={{ flex: 1 }}>
-                           <Text style={styles.dragCardBrand}>{p.brand}</Text>
+                           <Text style={styles.brandTag}>{p.brand}</Text>
                            <Text style={styles.dragCardName}>{p.name}</Text>
                            <Text style={styles.dragCardCode}>SKU: {p.code}</Text>
 
@@ -800,20 +768,10 @@ export const ShelfMapScreen = () => {
                                     <TouchableOpacity
                                        key={v.id || vIdx}
                                        activeOpacity={0.7}
-                                       style={[
-                                          styles.variantDragBadge,
-                                          isSelected && styles.variantDragBadgeSelected,
-                                       ]}
+                                       style={[styles.variantDragBadge, isSelected && activeBox]}
                                        onPress={() => setSelectedVariant({ product: p, variantIndex: vIdx })}
                                     >
-                                       <Text
-                                          style={[
-                                             styles.variantDragText,
-                                             isSelected && styles.variantDragTextSelected,
-                                          ]}
-                                       >
-                                          {v.color}
-                                       </Text>
+                                       <Text style={[styles.variantDragText, isSelected && activeText]}>{v.color}</Text>
                                     </TouchableOpacity>
                                  );
                               })}
@@ -835,17 +793,17 @@ export const ShelfMapScreen = () => {
                   top: dragGhost.y - containerOffsetRef.current.y - dragGhost.height / 2,
                   width: dragGhost.width,
                   height: dragGhost.height,
-                  borderRadius: 10,
+                  borderRadius: 4,
                   overflow: 'hidden',
                   opacity: 0.92,
                   zIndex: 99999,
                   elevation: 30,
-                  shadowColor: '#0f172a',
-                  shadowOpacity: 0.35,
+                  shadowColor: '#000000',
+                  shadowOpacity: 0.5,
                   shadowRadius: 10,
                   shadowOffset: { width: 0, height: 6 },
                   borderWidth: 2,
-                  borderColor: '#2563eb',
+                  borderColor: C.light,
                }}
             >
                <Image
@@ -865,11 +823,11 @@ export const ShelfMapScreen = () => {
                         {inspectedSpace?.shelfName} • Fila {inspectedSpace?.row} • Espacio {inspectedSpace?.space}
                      </Text>
                      <TouchableOpacity onPress={() => setInspectedSpace(null)}>
-                        <X size={20} color="#64748b" />
+                        <X size={20} color={C.soft} />
                      </TouchableOpacity>
                   </View>
 
-                  <ScrollView style={styles.inspectorBody}>
+                  <ScrollView style={{ padding: 16 }}>
                      {inspectedSpace?.items.map((item, idx) => (
                         <View key={idx} style={styles.inspectorItemRow}>
                            <Image
@@ -878,13 +836,13 @@ export const ShelfMapScreen = () => {
                               resizeMode="cover"
                            />
                            <View style={{ flex: 1 }}>
-                              <Text style={styles.inspectorItemBrand}>{item.product.brand}</Text>
+                              <Text style={styles.brandTag}>{item.product.brand}</Text>
                               <Text style={styles.inspectorItemName}>{item.product.name}</Text>
-                              <Text style={styles.inspectorItemCode}>Color: {item.variant.color}</Text>
+                              <Text style={styles.dragCardCode}>Color: {item.variant.color}</Text>
                            </View>
 
                            <TouchableOpacity
-                              style={styles.removeItemFromSpaceBtn}
+                              style={{ padding: 6 }}
                               onPress={() => {
                                  if (inspectedSpace) {
                                     handleRemoveFromSpaceLocal(
@@ -898,7 +856,7 @@ export const ShelfMapScreen = () => {
                                  }
                               }}
                            >
-                              <Trash2 size={16} color="#ef4444" />
+                              <Trash2 size={16} color={C.mute} />
                            </TouchableOpacity>
                         </View>
                      ))}
@@ -917,222 +875,89 @@ export const ShelfMapScreen = () => {
 };
 
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: '#f8fafc' },
+   container: { flex: 1, backgroundColor: C.bg },
    content: { padding: 16 },
    sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
-   createBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#2563eb',
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 6,
-   },
-   createBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold', marginLeft: 4 },
-   emptyText: { fontSize: 13, color: '#94a3b8', fontStyle: 'italic', paddingVertical: 10 },
+   sectionTitle: { ...caps, fontSize: 13, fontWeight: '900', color: C.white },
+   emptyText: { fontSize: 13, color: C.dim, fontStyle: 'italic', paddingVertical: 10 },
+   brandTag: { ...caps, fontSize: 9, fontWeight: 'bold', color: C.mute, letterSpacing: 1.5 },
+   createBtn: { ...btn, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: C.light },
+   createBtnText: { ...btnText, fontSize: 11, color: C.bg, marginLeft: 4 },
 
-   saveAlertBanner: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: '#0284c7',
-      padding: 12,
-      borderRadius: 10,
-      marginBottom: 16,
-   },
-   saveAlertTitle: { color: '#ffffff', fontSize: 13, fontWeight: 'bold' },
-   saveAlertSubtitle: { color: '#e0f2fe', fontSize: 11 },
-   discardBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, backgroundColor: '#0369a1' },
-   discardBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold', marginLeft: 4 },
-   saveBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: '#ffffff' },
-   saveBtnText: { color: '#15803d', fontSize: 12, fontWeight: 'bold', marginLeft: 4 },
+   // Banners
+   saveAlertBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.raised, borderWidth: 1, borderColor: C.soft, padding: 12, borderRadius: 4, marginBottom: 16 },
+   saveAlertTitle: { color: C.white, fontSize: 13, fontWeight: 'bold' },
+   saveAlertSubtitle: { color: C.mute, fontSize: 11 },
+   discardBtn: { ...btn, paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#3A3A3A' },
+   discardBtnText: { ...btnText, fontSize: 11, color: C.soft, marginLeft: 4 },
+   saveBtn: { ...btn, paddingVertical: 6, paddingHorizontal: 12, backgroundColor: C.light },
+   saveBtnText: { ...btnText, fontSize: 11, color: C.bg, marginLeft: 4 },
+   activeSelectionBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.light, padding: 10, borderRadius: 4, marginBottom: 16, gap: 10 },
+   bannerImg: { width: 40, height: 40, borderRadius: 2, backgroundColor: C.soft },
+   bannerTitle: { color: C.bg, fontSize: 13, fontWeight: '900' },
+   bannerSubtitle: { color: C.ink, fontSize: 11 },
 
-   activeSelectionBanner: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#2563eb',
-      padding: 10,
-      borderRadius: 10,
-      marginBottom: 16,
-      gap: 10,
-   },
-   bannerImg: { width: 40, height: 40, borderRadius: 6, backgroundColor: '#ffffff' },
-   bannerTitle: { color: '#ffffff', fontSize: 13, fontWeight: 'bold' },
-   bannerSubtitle: { color: '#bfdbfe', fontSize: 11 },
-   cancelBannerBtn: { padding: 6 },
-
-   vitrinaDropZone: {
-      backgroundColor: '#f3e8ff',
-      borderWidth: 2,
-      borderColor: '#c084fc',
-      borderStyle: 'dashed',
-      borderRadius: 12,
-      padding: 12,
-      minHeight: 90,
-      justifyContent: 'center',
-   },
-   vitrinaDropZoneActive: { borderColor: '#7c3aed', backgroundColor: '#faf5ff', borderStyle: 'solid' },
+   // Vitrina
+   vitrinaDropZone: { backgroundColor: C.surface, borderWidth: 2, borderColor: '#3A3A3A', borderStyle: 'dashed', borderRadius: 4, padding: 12, minHeight: 90, justifyContent: 'center' },
+   vitrinaDropZoneActive: { borderColor: C.light, backgroundColor: C.raised, borderStyle: 'solid' },
    emptyDropPrompt: { alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
-   emptyDropText: { fontSize: 12, color: '#64748b', marginTop: 4, textAlign: 'center' },
-   emptyDropTextActive: { color: '#7c3aed', fontWeight: 'bold' },
-   exhibitionScroll: { flexDirection: 'row' },
-   exhibitionCard: {
-      flexDirection: 'row',
-      backgroundColor: '#ffffff',
-      borderRadius: 10,
-      padding: 10,
-      borderWidth: 1,
-      borderColor: '#d8b4fe',
-      marginRight: 10,
-      width: 240,
-      alignItems: 'flex-start',
-      position: 'relative',
-   },
-   exhibitionImg: { width: 46, height: 46, borderRadius: 6, marginRight: 10, backgroundColor: '#f3e8ff' },
-   exhibitionInfo: { flex: 1 },
-   exhibitionBrand: { fontSize: 9, fontWeight: 'bold', color: '#7c3aed' },
-   exhibitionName: { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
-   exhibitionColor: { fontSize: 10, color: '#64748b', marginBottom: 4 },
-   vitrinaSizeLabel: { fontSize: 10, color: '#475569', fontWeight: 'bold', marginTop: 2 },
-   vitrinaSizeRow: { flexDirection: 'row', marginTop: 3 },
-   vitrinaSizeChip: {
-      backgroundColor: '#f1f5f9',
-      borderWidth: 1,
-      borderColor: '#cbd5e1',
-      borderRadius: 4,
-      paddingVertical: 2,
-      paddingHorizontal: 6,
-      marginRight: 4,
-   },
-   vitrinaSizeChipActive: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
-   vitrinaSizeChipText: { fontSize: 10, color: '#475569', fontWeight: 'bold' },
-   vitrinaSizeChipTextActive: { color: '#ffffff' },
-   removeVitrinaBtn: { padding: 4 },
+   emptyDropText: { fontSize: 12, color: C.mute, marginTop: 4, textAlign: 'center' },
+   emptyDropTextActive: { color: C.light, fontWeight: 'bold' },
+   exhibitionCard: { flexDirection: 'row', backgroundColor: C.raised, borderRadius: 4, padding: 10, borderWidth: 1, borderColor: C.line, marginRight: 10, width: 240, alignItems: 'flex-start' },
+   exhibitionImg: { width: 46, height: 46, borderRadius: 2, marginRight: 10, backgroundColor: C.line },
+   exhibitionName: { fontSize: 12, fontWeight: 'bold', color: C.white },
+   exhibitionColor: { fontSize: 10, color: C.mute, marginBottom: 4 },
+   vitrinaSizeLabel: { fontSize: 10, color: C.soft, fontWeight: 'bold', marginTop: 2 },
+   vitrinaSizeChip: { ...box, paddingVertical: 2, paddingHorizontal: 6, marginRight: 4 },
+   vitrinaSizeChipText: { fontSize: 10, color: C.soft, fontWeight: 'bold' },
 
+   // Plano de bodega
    shelvesSummaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-   shelfSummaryCard: {
-      backgroundColor: '#ffffff',
-      borderWidth: 1,
-      borderColor: '#cbd5e1',
-      borderRadius: 12,
-      padding: 16,
-      width: '48%',
-      minWidth: 150,
-      alignItems: 'center',
-      position: 'relative',
-   },
-   shelfIconWrapper: { backgroundColor: '#eff6ff', padding: 12, borderRadius: 30, marginBottom: 8 },
-   shelfSummaryTitle: { fontSize: 14, fontWeight: 'bold', color: '#0f172a', textAlign: 'center' },
-   shelfSummaryDetail: { fontSize: 11, color: '#64748b', marginTop: 4 },
+   shelfSummaryCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 4, padding: 16, width: '48%', minWidth: 150, alignItems: 'center' },
+   shelfIconWrapper: { ...box, padding: 12, borderRadius: 30, marginBottom: 8 },
+   shelfSummaryTitle: { fontSize: 14, fontWeight: '900', color: C.white, textAlign: 'center' },
+   shelfSummaryDetail: { fontSize: 11, color: C.mute, marginTop: 4 },
    shelfActions: { position: 'absolute', top: 8, right: 8, gap: 6 },
-   smallIconBtn: { padding: 4, backgroundColor: '#f8fafc', borderRadius: 4 },
+   smallIconBtn: { ...box, padding: 4 },
 
-   matrixContainer: { flex: 1 },
+   // Matriz del estante
    matrixNavRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-   backBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#f1f5f9',
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 8,
-   },
-   backBtnText: { color: '#475569', fontWeight: 'bold', fontSize: 13, marginLeft: 4 },
-   trashDropZone: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#fee2e2',
-      borderWidth: 1,
-      borderColor: '#fca5a5',
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 8,
-   },
-   trashDropText: { fontSize: 12, color: '#b91c1c', fontWeight: 'bold' },
-   matrixHeader: { marginBottom: 16 },
-   matrixTitle: { fontSize: 22, fontWeight: 'bold', color: '#0f172a' },
-   matrixSubtitle: { fontSize: 12, color: '#64748b', marginTop: 2, lineHeight: 18 },
-   shelfStructure: { backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#cbd5e1', padding: 16 },
-   matrixRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: '#f1f5f9',
-      paddingBottom: 12,
-   },
-   rowLabel: {
-      width: 36,
-      height: 36,
-      backgroundColor: '#1e293b',
-      justifyContent: 'center',
-      alignItems: 'center',
-      borderRadius: 6,
-      marginRight: 12,
-   },
-   rowLabelText: { color: '#ffffff', fontWeight: 'bold', fontSize: 12 },
-   spacesScroll: { gap: 10 },
-   matrixCell: { width: 70, height: 70, borderRadius: 8, overflow: 'hidden', position: 'relative' },
+   backBtn: { ...box, flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 12 },
+   backBtnText: { ...caps, color: C.soft, fontWeight: 'bold', fontSize: 11, marginLeft: 4, letterSpacing: 1 },
+   dragHint: { ...box, flexDirection: 'row', alignItems: 'center', borderColor: C.light, paddingVertical: 6, paddingHorizontal: 12 },
+   dragHintText: { fontSize: 12, color: C.light, fontWeight: 'bold' },
+   matrixTitle: { ...caps, fontSize: 20, fontWeight: '900', color: C.white },
+   matrixSubtitle: { fontSize: 12, color: C.mute, marginTop: 2, lineHeight: 18 },
+   shelfStructure: { backgroundColor: C.surface, borderRadius: 4, borderWidth: 1, borderColor: C.border, padding: 16 },
+   matrixRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, borderBottomWidth: 1, borderBottomColor: '#222222', paddingBottom: 12 },
+   rowLabel: { width: 36, height: 36, backgroundColor: C.light, justifyContent: 'center', alignItems: 'center', borderRadius: 2, marginRight: 12 },
+   rowLabelText: { color: C.bg, fontWeight: '900', fontSize: 12 },
+   matrixCell: { width: 70, height: 70, borderRadius: 4, overflow: 'hidden', position: 'relative' },
    emptyCellTouchArea: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
-   matrixCellEmpty: { borderWidth: 2, borderColor: '#cbd5e1', borderStyle: 'dashed', backgroundColor: '#f8fafc' },
-   matrixCellOccupied: { borderWidth: 1, borderColor: '#2563eb', backgroundColor: '#eff6ff' },
-   matrixCellDropHighlight: { borderColor: '#2563eb', backgroundColor: '#dbeafe', borderWidth: 2 },
-   cellLabel: {
-      position: 'absolute',
-      top: 3,
-      left: 3,
-      fontSize: 9,
-      fontWeight: 'bold',
-      color: '#64748b',
-      zIndex: 10,
-      backgroundColor: 'rgba(255,255,255,0.85)',
-      paddingHorizontal: 2,
-      borderRadius: 2,
-   },
+   matrixCellEmpty: { borderWidth: 2, borderColor: '#3A3A3A', borderStyle: 'dashed', backgroundColor: C.raised },
+   matrixCellOccupied: { borderWidth: 1, borderColor: C.soft, backgroundColor: C.raised },
+   matrixCellDropHighlight: { borderColor: C.light, backgroundColor: '#2A2A2A', borderWidth: 2 },
+   cellLabel: { position: 'absolute', top: 3, left: 3, fontSize: 9, fontWeight: 'bold', color: C.bg, zIndex: 10, backgroundColor: 'rgba(232,232,232,0.9)', paddingHorizontal: 2, borderRadius: 2 },
    cellThumbnail: { width: '100%', height: '100%', opacity: 0.85 },
-   dragHandleIcon: { position: 'absolute', top: 3, right: 3, backgroundColor: 'rgba(37, 99, 235, 0.8)', borderRadius: 4, padding: 2 },
-   cellBadge: { position: 'absolute', bottom: 4, right: 4, backgroundColor: '#2563eb', borderRadius: 10, paddingHorizontal: 4, paddingVertical: 2 },
-   cellBadgeText: { color: '#ffffff', fontSize: 9, fontWeight: 'bold' },
+   dragHandleIcon: { position: 'absolute', top: 3, right: 3, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 4, padding: 2 },
+   cellBadge: { position: 'absolute', bottom: 4, right: 4, backgroundColor: C.light, borderRadius: 10, paddingHorizontal: 4, paddingVertical: 2 },
+   cellBadgeText: { color: C.bg, fontSize: 9, fontWeight: '900' },
 
-   catalogDragContainer: { gap: 10 },
-   dragProductCard: {
-      flexDirection: 'row',
-      backgroundColor: '#ffffff',
-      borderRadius: 10,
-      padding: 10,
-      borderWidth: 1,
-      borderColor: '#e2e8f0',
-      alignItems: 'center',
-   },
-   dragCardImg: { width: 50, height: 50, borderRadius: 8, marginRight: 12, backgroundColor: '#f1f5f9' },
-   dragCardBrand: { fontSize: 10, fontWeight: 'bold', color: '#2563eb' },
-   dragCardName: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
-   dragCardCode: { fontSize: 11, color: '#64748b' },
+   // Inventario general
+   dragProductCard: { flexDirection: 'row', backgroundColor: C.surface, borderRadius: 4, padding: 10, borderWidth: 1, borderColor: '#1F1F1F', alignItems: 'center' },
+   dragCardImg: { width: 50, height: 50, borderRadius: 2, marginRight: 12, backgroundColor: C.raised },
+   dragCardName: { fontSize: 13, fontWeight: 'bold', color: C.white },
+   dragCardCode: { fontSize: 11, color: C.dim },
    variantsDragRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-   variantDragBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#f1f5f9',
-      borderWidth: 1,
-      borderColor: '#cbd5e1',
-      paddingVertical: 4,
-      paddingHorizontal: 10,
-      borderRadius: 12,
-   },
-   variantDragBadgeSelected: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   variantDragText: { fontSize: 11, color: '#334155', fontWeight: '600' },
-   variantDragTextSelected: { color: '#ffffff', fontWeight: 'bold' },
+   variantDragBadge: { ...box, flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 10 },
+   variantDragText: { fontSize: 11, color: C.soft, fontWeight: '600' },
 
-   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-   inspectorCard: { width: '100%', maxWidth: 400, maxHeight: '80%', backgroundColor: '#ffffff', borderRadius: 16, overflow: 'hidden' },
-   inspectorHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, backgroundColor: '#f8fafc', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-   inspectorTitle: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
-   inspectorBody: { padding: 16 },
-   inspectorItemRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-   inspectorItemImg: { width: 44, height: 44, borderRadius: 6, marginRight: 12, backgroundColor: '#f1f5f9' },
-   inspectorItemBrand: { fontSize: 10, fontWeight: 'bold', color: '#2563eb' },
-   inspectorItemName: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
-   inspectorItemCode: { fontSize: 11, color: '#64748b' },
-   removeItemFromSpaceBtn: { padding: 6 },
+   // Inspector
+   modalOverlay: overlay,
+   inspectorCard: { ...modalCard, maxWidth: 400, maxHeight: '80%' },
+   inspectorHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, backgroundColor: '#161616', borderBottomWidth: 1, borderBottomColor: C.border },
+   inspectorTitle: { ...caps, fontSize: 12, fontWeight: '900', color: C.white, letterSpacing: 1 },
+   inspectorItemRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#222222' },
+   inspectorItemImg: { width: 44, height: 44, borderRadius: 2, marginRight: 12, backgroundColor: C.raised },
+   inspectorItemName: { fontSize: 13, fontWeight: '600', color: C.white },
 });

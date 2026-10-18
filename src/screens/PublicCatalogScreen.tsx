@@ -1,844 +1,670 @@
-import React, { useState, useEffect } from 'react';
-import {
-   View,
-   Text,
-   ScrollView,
-   TouchableOpacity,
-   StyleSheet,
-   Image,
-   TextInput,
-   Modal,
-   FlatList,
-} from 'react-native';
-import {
-   Search,
-   MessageCircle,
-   Lock,
-   X,
-   ShoppingBag,
-   SlidersHorizontal,
-   RotateCcw,
-   Check,
-   Tag,
-} from 'lucide-react-native';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions } from 'react-native';
+import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { subscribeToProducts } from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { openWhatsAppShare } from '../utils/shareUtils';
+import { Cover } from '../components/Cover';
+import { BLUE, LIGHT, DARK, Tone, display, ease, nd, reduced, useEnter, getColorHex } from '../design';
 
 interface Props {
    onOpenStaffAccess: () => void;
 }
 
-/**
- * Mapeo dinámico de nombres de color a códigos Hexadecimales
- */
-const getColorHex = (colorName: string): string => {
-   const name = colorName.toLowerCase().trim();
-   const colorMap: Record<string, string> = {
-      negro: '#000000',
-      black: '#000000',
-      blanco: '#ffffff',
-      white: '#ffffff',
-      rojo: '#ef4444',
-      red: '#ef4444',
-      azul: '#2563eb',
-      blue: '#2563eb',
-      'azul marino': '#1e3a8a',
-      navy: '#1e3a8a',
-      verde: '#22c55e',
-      green: '#22c55e',
-      amarillo: '#eab308',
-      yellow: '#eab308',
-      gris: '#64748b',
-      gray: '#64748b',
-      grey: '#64748b',
-      'gris oscuro': '#334155',
-      'gris claro': '#cbd5e1',
-      rosado: '#ec4899',
-      rosa: '#ec4899',
-      pink: '#ec4899',
-      morado: '#a855f7',
-      purpura: '#a855f7',
-      purple: '#a855f7',
-      naranja: '#f97316',
-      orange: '#f97316',
-      beige: '#fef3c7',
-      arena: '#fef3c7',
-      marron: '#78350f',
-      cafe: '#78350f',
-      brown: '#78350f',
-      vinotinto: '#881337',
-      burgundy: '#881337',
-   };
+// Catálogo en modo claro. Para verlo en oscuro cambia LIGHT por DARK.
+const T: Tone = LIGHT;
+const MAX = 1280; // ancho máximo del contenido en pantallas grandes
 
-   return colorMap[name] || '#94a3b8';
+/** Marcas conocidas -> logo del CDN público de Simple Icons */
+const BRAND_SLUGS: Record<string, string> = {
+   nike: 'nike', adidas: 'adidas', puma: 'puma', underarmour: 'underarmour', ua: 'underarmour', reebok: 'reebok',
+   jordan: 'airjordan', newbalance: 'newbalance', nb: 'newbalance', champion: 'champion', fila: 'fila', asics: 'asics',
+   converse: 'converse', vans: 'vans', uniqlo: 'uniqlo', uq: 'uniqlo', on: 'onrunning', onrunning: 'onrunning',
+   umbro: 'umbro', kappa: 'kappa', lotto: 'lotto', oakley: 'oakley', hummel: 'hummel',
 };
-
-/**
- * Mapea marcas deportivas y casuales conocidas al CDN público de Simple Icons
- */
 const getBrandLogoUrl = (brandName: string): string | null => {
-   const clean = brandName.toLowerCase().replace(/[^a-z0-9]/g, '');
-   const brandSlugMap: Record<string, string> = {
-      nike: 'nike',
-      adidas: 'adidas',
-      puma: 'puma',
-      underarmour: 'underarmour',
-      ua: 'underarmour',
-      reebok: 'reebok',
-      jordan: 'airjordan',
-      newbalance: 'newbalance',
-      nb: 'newbalance',
-      champion: 'champion',
-      fila: 'fila',
-      asics: 'asics',
-      converse: 'converse',
-      vans: 'vans',
-      uniqlo: 'uniqlo',
-      uq: 'uniqlo',
-      on: 'onrunning',
-      onrunning: 'onrunning',
-      umbro: 'umbro',
-      kappa: 'kappa',
-      lotto: 'lotto',
-      oakley: 'oakley',
-      hummel: 'hummel',
-   };
-
-   const slug = brandSlugMap[clean];
-   if (slug) {
-      return `https://cdn.simpleicons.org/${slug}/2563eb`;
-   }
-   return null;
+   const slug = BRAND_SLUGS[brandName.toLowerCase().replace(/[^a-z0-9]/g, '')];
+   return slug ? `https://cdn.simpleicons.org/${slug}/${T.inkMute.slice(1)}` : null;
 };
 
-/**
- * Componente que muestra el logo de la marca con fallback a Badge tipográfico
- */
-const BrandLogoItem: React.FC<{ brandName: string; isSelected: boolean }> = ({
-   brandName,
-   isSelected,
-}) => {
+/** Logo de la marca con fallback a un avatar con la inicial */
+const BrandLogoItem: React.FC<{ brandName: string; isSelected: boolean }> = ({ brandName, isSelected }) => {
    const [hasError, setHasError] = useState(false);
    const logoUrl = getBrandLogoUrl(brandName);
 
    if (logoUrl && !hasError) {
-      return (
-         <Image
-            source={{ uri: logoUrl }}
-            style={styles.brandLogoImg}
-            resizeMode="contain"
-            onError={() => setHasError(true)}
-         />
-      );
+      return <Image source={{ uri: logoUrl }} style={styles.brandLogoImg} resizeMode="contain" onError={() => setHasError(true)} />;
    }
-
-   // Fallback: Mostrar avatar redondo con la inicial de la marca
    return (
-      <View style={[styles.brandInitialAvatar, isSelected && styles.brandInitialAvatarActive]}>
-         <Text style={[styles.brandInitialText, isSelected && styles.brandInitialTextActive]}>
-            {brandName.charAt(0).toUpperCase()}
-         </Text>
+      <View style={[styles.avatar, isSelected && { backgroundColor: T.onAccent }]}>
+         <Text style={[styles.avatarText, isSelected && { color: T.accent }]}>{brandName.charAt(0).toUpperCase()}</Text>
       </View>
    );
 };
+
+const totalStock = (p: Product) =>
+   (p.variants || []).reduce((a, v) => a + (v.sizes || []).reduce((b, s) => b + (Number(s.stock) || 0), 0), 0);
+
+/** Tallas de la prenda con su disponibilidad (disponible si alguna variante tiene stock) */
+const sizeRun = (p: Product): [string, boolean][] => {
+   const m = new Map<string, boolean>();
+   (p.variants || []).forEach((v) => (v.sizes || []).forEach((s) => m.set(s.size, !!m.get(s.size) || Number(s.stock) > 0)));
+   return Array.from(m.entries());
+};
+
+/** Chip en forma de píldora (categorías, marcas, colores, tallas) */
+const Chip = ({ label, active, onPress, left }: { label: string; active: boolean; onPress: () => void; left?: React.ReactNode }) => (
+   <Pressable onPress={onPress} style={({ pressed }) => [styles.chip, active && styles.chipActive, pressed && styles.pressed]}>
+      {left}
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+   </Pressable>
+);
+
+const ActiveChip = ({ onPress, children }: { onPress: () => void; children: React.ReactNode }) => (
+   <Pressable style={styles.activeChip} onPress={onPress}>
+      {children}
+      <X size={12} color={T.onAccent} />
+   </Pressable>
+);
+
+/** Tarjeta de producto (memoizada, sin animaciones por tarjeta: más ligera) */
+const ProductCard = React.memo(({ item, width, compact, onOpen }: { item: Product; width: number; compact: boolean; onOpen: (p: Product) => void }) => {
+   const stock = totalStock(item);
+   const out = stock === 0;
+   const low = stock > 0 && stock <= 3;
+   const variants = item.variants || [];
+   const run = sizeRun(item).slice(0, 6);
+   const [int, dec] = item.price.toFixed(2).split('.');
+
+   return (
+      <Pressable style={({ pressed }) => [{ width }, pressed && styles.pressedCard]} onPress={() => onOpen(item)}>
+         <View style={styles.photo}>
+            <Cover uri={item.images?.[0]} name={item.name} bg={T.imgBg} fg={T.line} style={[styles.cardImg, out && { opacity: 0.45 }]} />
+
+            {(out || low) && (
+               <View style={[styles.badge, out ? { backgroundColor: T.solid } : { backgroundColor: BLUE[800] }]}>
+                  <Text style={[styles.badgeText, { color: out ? T.onSolid : '#FFFFFF' }]}>{out ? 'Agotado' : 'Últimas unidades'}</Text>
+               </View>
+            )}
+
+            {variants.length > 0 && (
+               <View style={styles.swatches}>
+                  {variants.slice(0, 4).map((vr, i) => (
+                     <View key={i} style={[styles.dot, { backgroundColor: getColorHex(vr.color) }]} />
+                  ))}
+                  {variants.length > 4 && <Text style={styles.dotsMore}>+{variants.length - 4}</Text>}
+               </View>
+            )}
+         </View>
+
+         <View style={styles.meta}>
+            <Text style={styles.cardBrand} numberOfLines={1}>{item.brand}</Text>
+            <Text style={[styles.cardName, !compact && { fontSize: 15 }]} numberOfLines={2}>{item.name}</Text>
+
+            {run.length > 0 && (
+               <View style={styles.sizes}>
+                  {run.map(([sz, ok]) => (
+                     <View key={sz} style={styles.sizeBox}>
+                        <Text style={[styles.sizeBoxText, !ok && styles.sizeOff]}>{sz}</Text>
+                     </View>
+                  ))}
+               </View>
+            )}
+         </View>
+
+         <View style={styles.priceRow}>
+            <Text style={[styles.price, !compact && { fontSize: 38, lineHeight: 36 }]}>
+               ${int}
+               <Text style={styles.cents}>.{dec}</Text>
+            </Text>
+            <Pressable
+               style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
+               accessibilityLabel="Consultar por WhatsApp"
+               onPress={(e) => {
+                  e.stopPropagation();
+                  openWhatsAppShare(item);
+               }}
+            >
+               <MessageCircle size={18} color={T.onAccent} />
+            </Pressable>
+         </View>
+      </Pressable>
+   );
+});
 
 export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
    const [products, setProducts] = useState<Product[]>([]);
    const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
    const [detailProduct, setDetailProduct] = useState<Product | null>(null);
    const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+   const [searchFocused, setSearchFocused] = useState(false);
 
    // ESTADO DE FILTROS MULTI-CRITERIO
-   const [filters, setFilters] = useState<FilterOptions>({
-      query: '',
-      category: 'all',
-      brand: '',
-      color: '',
-      size: '',
-      status: 'all',
-   });
+   const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
 
    useEffect(() => {
       const unsub = subscribeToProducts(setProducts);
       return () => unsub();
    }, []);
 
-   // EXTRACCIÓN DINÁMICA DE OPCIONES DISPONIBLES
-   const categories = ['all', ...Array.from(new Set(products.map((p) => p.category).filter(Boolean)))];
-   const brands = Array.from(new Set(products.map((p) => p.brand).filter(Boolean)));
-   const colors = Array.from(
-      new Set(
-         products.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean)
-      )
-   );
-   const sizes = Array.from(
-      new Set(
-         products.flatMap((p) =>
-            (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))
-         ).filter(Boolean)
-      )
-   );
+   // OPCIONES DISPONIBLES (solo se recalculan cuando cambian los productos)
+   const { categories, brands, colors, sizes } = useMemo(() => ({
+      categories: ['all', ...Array.from(new Set(products.map((p) => p.category).filter(Boolean)))],
+      brands: Array.from(new Set(products.map((p) => p.brand).filter(Boolean))),
+      colors: Array.from(new Set(products.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean))),
+      sizes: Array.from(new Set(products.flatMap((p) => (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))).filter(Boolean))),
+   }), [products]);
 
    // APLICAR FILTRADO INTELIGENTE
-   const filteredProducts = filterProducts(products, filters);
+   const filteredProducts = useMemo(() => filterProducts(products, filters), [products, filters]);
 
-   const activeFiltersCount =
-      (filters.brand ? 1 : 0) +
-      (filters.color ? 1 : 0) +
-      (filters.size ? 1 : 0) +
-      (filters.category !== 'all' ? 1 : 0);
+   const activeFiltersCount = (filters.brand ? 1 : 0) + (filters.color ? 1 : 0) + (filters.size ? 1 : 0) + (filters.category !== 'all' ? 1 : 0);
+   const handleResetFilters = () => setFilters({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
 
-   const handleResetFilters = () => {
-      setFilters({
-         query: '',
-         category: 'all',
-         brand: '',
-         color: '',
-         size: '',
-         status: 'all',
-      });
-   };
+   const openDetail = useCallback((p: Product) => {
+      setDetailProduct(p);
+      setSelectedImageIndex(0);
+   }, []);
 
-   return (
-      <View style={styles.container}>
-         {/* CABECERA TIENDA */}
-         <View style={styles.header}>
-            <View style={styles.brandGroup}>
-               <ShoppingBag size={22} color="#2563eb" style={{ marginRight: 8 }} />
-               <View>
-                  <Text style={styles.headerTitle}>Catálogo de Prendas</Text>
-                  <Text style={styles.headerSubtitle}>Explora nuestros modelos disponibles</Text>
+   // ---- RESPONSIVE ----
+   const { width } = useWindowDimensions();
+   const mobile = width < 600;
+   const wide = width >= 800;
+   const PAD = mobile ? 16 : 28;
+   const GAP = mobile ? 12 : 20;
+   const inner = Math.min(width, MAX) - PAD * 2;
+   const cols = inner >= 1100 ? 5 : inner >= 800 ? 4 : inner >= 560 ? 3 : 2;
+   const cardW = Math.floor((inner - GAP * (cols - 1)) / cols);
+
+   const filterAnim = useEnter(isFilterModalOpen, mobile);
+   const detailAnim = useEnter(!!detailProduct, mobile);
+
+   // ---- Portada: la única secuencia de movimiento (las fotos suben escalonadas, una sola vez) ----
+   const heroPics = useMemo(() => products.filter((p) => p.images?.[0]).slice(0, 3), [products]);
+   const reveal = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
+   const played = useRef(false);
+   useEffect(() => {
+      if (heroPics.length === 0 || played.current) return;
+      played.current = true;
+      if (reduced()) {
+         reveal.forEach((v) => v.setValue(1));
+         return;
+      }
+      Animated.stagger(90, reveal.map((v) => Animated.timing(v, { toValue: 1, duration: 520, easing: ease, useNativeDriver: nd }))).start();
+   }, [heroPics.length]);
+
+   const categoryChips = categories.map((cat) => (
+      <Chip
+         key={cat}
+         label={cat === 'all' ? 'Todas' : cat}
+         active={filters.category === cat}
+         onPress={() => setFilters((prev) => ({ ...prev, category: cat }))}
+      />
+   ));
+
+   const n = filteredProducts.length;
+   const titleSize = wide ? styles.titleLg : mobile ? styles.titleSm : styles.titleMd;
+
+   // Parte superior de la lista: portada, búsqueda, categorías y filtros activos
+   const header = (
+      <View>
+         <View style={styles.hero}>
+            <View style={[styles.inner, wide ? styles.heroWide : styles.heroCol, { paddingHorizontal: PAD }]}>
+               <View style={wide ? { flex: 1, paddingRight: 24 } : undefined}>
+                  <View style={styles.countPill}>
+                     <Text style={styles.countText}>{n} {n === 1 ? 'modelo' : 'modelos'}</Text>
+                  </View>
+                  <Text style={[styles.title, titleSize]}>Catálogo{'\n'}de prendas</Text>
+                  <Text style={styles.heroSub}>Descubre nuestros modelos disponibles</Text>
                </View>
-            </View>
 
-            <TouchableOpacity
-               style={styles.staffAccessBtn}
-               onPress={onOpenStaffAccess}
-               accessibilityLabel="Acceso al Personal"
-            >
-               <Lock size={14} color="#64748b" style={{ marginRight: 4 }} />
-               <Text style={styles.staffAccessText}>Personal</Text>
-            </TouchableOpacity>
+               {heroPics.length > 0 && (
+                  <View style={[styles.prints, wide && styles.printsWide]}>
+                     {heroPics.map((p, i) => (
+                        <Animated.View
+                           key={p.id || p.code}
+                           style={{
+                              flex: 1,
+                              marginTop: wide ? [0, 36, 12][i] : [0, 14, 6][i],
+                              opacity: reveal[i],
+                              transform: [{ translateY: reveal[i].interpolate({ inputRange: [0, 1], outputRange: [28, 0] }) }],
+                           }}
+                        >
+                           <View style={styles.printBack} />
+                           <Pressable onPress={() => openDetail(p)} style={({ pressed }) => [styles.printPhoto, pressed && styles.pressedCard]}>
+                              <Cover uri={p.images?.[0]} name={p.name} bg={BLUE[700]} fg={BLUE[600]} style={styles.printImg} />
+                           </Pressable>
+                        </Animated.View>
+                     ))}
+                  </View>
+               )}
+            </View>
+            {/* Corte diagonal que une la portada con el resto de la página */}
+            <View style={styles.slant} />
          </View>
 
-         {/* BARRA BÚSQUEDA Y BOTÓN FILTROS */}
-         <View style={styles.filterSection}>
+         <View style={[styles.inner, styles.filters, { paddingHorizontal: PAD }]}>
             <View style={styles.searchRow}>
-               <View style={styles.searchBar}>
-                  <Search size={16} color="#94a3b8" style={{ marginRight: 8 }} />
+               <View style={[styles.searchBar, searchFocused && styles.searchFocused]}>
+                  <Search size={18} color={T.ink} />
                   <TextInput
                      style={styles.searchInput}
-                     placeholder="Buscar por modelo, marca o código..."
-                     placeholderTextColor="#94a3b8"
+                     placeholder="Buscar por modelo, marca o código"
+                     placeholderTextColor={T.inkMute}
                      value={filters.query}
                      onChangeText={(text) => setFilters((prev) => ({ ...prev, query: text }))}
+                     onFocus={() => setSearchFocused(true)}
+                     onBlur={() => setSearchFocused(false)}
                   />
                   {filters.query ? (
-                     <TouchableOpacity onPress={() => setFilters((prev) => ({ ...prev, query: '' }))}>
-                        <X size={16} color="#94a3b8" />
-                     </TouchableOpacity>
+                     <Pressable onPress={() => setFilters((prev) => ({ ...prev, query: '' }))}>
+                        <X size={18} color={T.inkMute} />
+                     </Pressable>
                   ) : null}
                </View>
 
-               <TouchableOpacity
-                  style={[styles.filterBtn, activeFiltersCount > 0 && styles.filterBtnActive]}
-                  onPress={() => setIsFilterModalOpen(true)}
-               >
-                  <SlidersHorizontal
-                     size={16}
-                     color={activeFiltersCount > 0 ? '#ffffff' : '#2563eb'}
-                  />
+               <Pressable style={({ pressed }) => [styles.filterBtn, pressed && styles.pressed]} onPress={() => setIsFilterModalOpen(true)}>
+                  <SlidersHorizontal size={16} color={T.onSolid} />
+                  {!mobile && <Text style={styles.filterBtnText}>Filtros</Text>}
                   {activeFiltersCount > 0 && (
                      <View style={styles.filterBadge}>
                         <Text style={styles.filterBadgeText}>{activeFiltersCount}</Text>
                      </View>
                   )}
-               </TouchableOpacity>
+               </Pressable>
             </View>
 
-            {/* CHIPS DE CATEGORÍAS */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoriesScroll}>
-               {categories.map((cat) => {
-                  const isSelected = filters.category === cat;
-                  return (
-                     <TouchableOpacity
-                        key={cat}
-                        style={[styles.categoryChip, isSelected && styles.categoryChipActive]}
-                        onPress={() => setFilters((prev) => ({ ...prev, category: cat }))}
-                     >
-                        <Text style={[styles.categoryText, isSelected && styles.categoryTextActive]}>
-                           {cat === 'all' ? 'Todas' : cat}
-                        </Text>
-                     </TouchableOpacity>
-                  );
-               })}
-            </ScrollView>
+            {mobile ? (
+               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>
+                  {categoryChips}
+               </ScrollView>
+            ) : (
+               <View style={styles.wrap}>{categoryChips}</View>
+            )}
 
-            {/* RESUMEN DE FILTROS ACTIVOS CON CÍRCULOS DE COLOR Y ETIQUETAS */}
             {activeFiltersCount > 0 && (
                <View style={styles.activeFiltersRow}>
-                  <Text style={styles.activeFiltersLabel}>Filtros:</Text>
+                  <Text style={styles.activeFiltersLabel}>Filtros activos</Text>
 
                   {filters.brand ? (
-                     <TouchableOpacity
-                        style={styles.activeFilterChip}
-                        onPress={() => setFilters((prev) => ({ ...prev, brand: '' }))}
-                     >
-                        <Tag size={12} color="#2563eb" style={{ marginRight: 4 }} />
-                        <Text style={styles.activeFilterText}>{filters.brand}</Text>
-                        <X size={12} color="#2563eb" style={{ marginLeft: 4 }} />
-                     </TouchableOpacity>
+                     <ActiveChip onPress={() => setFilters((prev) => ({ ...prev, brand: '' }))}>
+                        <Tag size={12} color={T.onAccent} />
+                        <Text style={styles.activeChipText}>{filters.brand}</Text>
+                     </ActiveChip>
                   ) : null}
 
                   {filters.color ? (
-                     <TouchableOpacity
-                        style={styles.activeFilterChip}
-                        onPress={() => setFilters((prev) => ({ ...prev, color: '' }))}
-                     >
-                        <View
-                           style={[
-                              styles.colorCircleSmall,
-                              { backgroundColor: getColorHex(filters.color) },
-                           ]}
-                        />
-                        <Text style={styles.activeFilterText}>{filters.color}</Text>
-                        <X size={12} color="#2563eb" style={{ marginLeft: 4 }} />
-                     </TouchableOpacity>
+                     <ActiveChip onPress={() => setFilters((prev) => ({ ...prev, color: '' }))}>
+                        <View style={[styles.smallDot, { backgroundColor: getColorHex(filters.color) }]} />
+                        <Text style={styles.activeChipText}>{filters.color}</Text>
+                     </ActiveChip>
                   ) : null}
 
                   {filters.size ? (
-                     <TouchableOpacity
-                        style={styles.activeFilterChip}
-                        onPress={() => setFilters((prev) => ({ ...prev, size: '' }))}
-                     >
-                        <Text style={styles.activeFilterText}>Talla: {filters.size}</Text>
-                        <X size={12} color="#2563eb" style={{ marginLeft: 4 }} />
-                     </TouchableOpacity>
+                     <ActiveChip onPress={() => setFilters((prev) => ({ ...prev, size: '' }))}>
+                        <Text style={styles.activeChipText}>Talla {filters.size}</Text>
+                     </ActiveChip>
                   ) : null}
 
-                  <TouchableOpacity onPress={handleResetFilters} style={styles.resetTextBtn}>
-                     <RotateCcw size={12} color="#ef4444" style={{ marginRight: 2 }} />
+                  <Pressable onPress={handleResetFilters} style={styles.resetBtn}>
+                     <RotateCcw size={12} color={T.inkSoft} />
                      <Text style={styles.resetText}>Limpiar</Text>
-                  </TouchableOpacity>
+                  </Pressable>
                </View>
             )}
          </View>
+      </View>
+   );
 
-         {/* REJILLA DE PRODUCTOS (GRID) */}
+   // Contenido del detalle de la prenda
+   const renderDetail = (p: Product) => {
+      const [int, dec] = p.price.toFixed(2).split('.');
+
+      const gallery = (
+         <View>
+            <Cover uri={p.images?.[selectedImageIndex]} name={p.name} bg={T.imgBg} fg={T.line} style={wide ? styles.mainImgWide : styles.mainImg} />
+            {p.images && p.images.length > 1 && (
+               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.thumbs}>
+                  {p.images.map((img, idx) => (
+                     <Pressable key={idx} onPress={() => setSelectedImageIndex(idx)} style={[styles.thumb, selectedImageIndex === idx && styles.thumbActive]}>
+                        <Image source={{ uri: img }} style={{ width: '100%', height: '100%' }} />
+                     </Pressable>
+                  ))}
+               </ScrollView>
+            )}
+         </View>
+      );
+
+      const info = (
+         <View style={{ padding: 24 }}>
+            <Text style={styles.detailBrand}>{p.brand}</Text>
+            <Text style={styles.detailName}>{p.name}</Text>
+            <Text style={styles.detailCode}>Código {p.code}</Text>
+            <Text style={styles.detailPrice}>
+               ${int}
+               <Text style={styles.detailCents}>.{dec}</Text>
+            </Text>
+
+            <Text style={styles.sectionTitle}>Colores y tallas</Text>
+            <View>
+               {(p.variants || []).map((v, idx) => {
+                  const allSizes = v.sizes || [];
+                  const anyStock = allSizes.some((s) => Number(s.stock) > 0);
+                  return (
+                     <View key={idx} style={styles.variantRow}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                           <View style={[styles.swatch, { backgroundColor: getColorHex(v.color) }]} />
+                           <Text style={styles.variantColor}>{v.color}</Text>
+                        </View>
+                        {anyStock ? (
+                           <View style={styles.sizesWrap}>
+                              {allSizes.map((s) => (
+                                 <View key={s.size} style={styles.sizeBox}>
+                                    <Text style={[styles.sizeBoxText, Number(s.stock) <= 0 && styles.sizeOff]}>{s.size}</Text>
+                                 </View>
+                              ))}
+                           </View>
+                        ) : (
+                           <Text style={styles.soldOut}>Agotado</Text>
+                        )}
+                     </View>
+                  );
+               })}
+            </View>
+         </View>
+      );
+
+      const footer = (
+         <View style={styles.detailFooter}>
+            <Pressable
+               style={({ pressed }) => [styles.waMain, pressed && styles.pressed]}
+               onPress={() => {
+                  openWhatsAppShare(p);
+                  setDetailProduct(null);
+               }}
+            >
+               <MessageCircle size={19} color={T.onAccent} />
+               <Text style={styles.waMainText}>Pedir por WhatsApp</Text>
+            </Pressable>
+         </View>
+      );
+
+      // PC: foto a la izquierda, información a la derecha. Celular: todo en una columna.
+      return wide ? (
+         <View style={{ flexDirection: 'row' }}>
+            <View style={{ width: '46%' }}>{gallery}</View>
+            <View style={{ flex: 1 }}>
+               <ScrollView>{info}</ScrollView>
+               {footer}
+            </View>
+         </View>
+      ) : (
+         <>
+            <ScrollView>
+               {gallery}
+               {info}
+            </ScrollView>
+            {footer}
+         </>
+      );
+   };
+
+   return (
+      <View style={styles.container}>
+         {/* BARRA SUPERIOR */}
+         <View style={styles.bar}>
+            <View style={[styles.inner, styles.barRow, { paddingHorizontal: PAD }]}>
+               <View style={styles.brandGroup}>
+                  <View style={styles.logoBox}>
+                     <ShoppingBag size={17} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.barTitle} numberOfLines={1}>JDSTORE</Text>
+               </View>
+
+               <Pressable
+                  style={({ pressed }) => [styles.staffBtn, pressed && styles.pressed]}
+                  onPress={onOpenStaffAccess}
+                  accessibilityLabel="Acceso al Personal"
+               >
+                  <Lock size={13} color={T.onBar} />
+                  <Text style={styles.staffText}>Personal</Text>
+               </Pressable>
+            </View>
+         </View>
+
+         {/* REJILLA DE PRODUCTOS (las columnas se adaptan al ancho) */}
          <FlatList
+            key={cols}
             data={filteredProducts}
             keyExtractor={(item) => item.id || item.code}
-            numColumns={2}
-            contentContainerStyle={styles.gridContent}
-            columnWrapperStyle={styles.gridColumnWrapper}
-            renderItem={({ item }) => {
-               const coverImg = item.images?.[0] || 'https://via.placeholder.com/200?text=Sin+Foto';
-
-               return (
-                  <TouchableOpacity
-                     style={styles.productCard}
-                     activeOpacity={0.85}
-                     onPress={() => {
-                        setDetailProduct(item);
-                        setSelectedImageIndex(0);
-                     }}
-                  >
-                     <Image source={{ uri: coverImg }} style={styles.cardImg} resizeMode="cover" />
-
-                     <View style={styles.cardBody}>
-                        <Text style={styles.cardBrand}>{item.brand}</Text>
-                        <Text style={styles.cardName} numberOfLines={2}>
-                           {item.name}
-                        </Text>
-                        <Text style={styles.cardPrice}>${item.price.toFixed(2)}</Text>
-
-                        <TouchableOpacity
-                           style={styles.whatsAppQuickBtn}
-                           onPress={(e) => {
-                              e.stopPropagation();
-                              openWhatsAppShare(item);
-                           }}
-                        >
-                           <MessageCircle size={14} color="#ffffff" style={{ marginRight: 4 }} />
-                           <Text style={styles.whatsAppQuickText}>Consultar</Text>
-                        </TouchableOpacity>
-                     </View>
-                  </TouchableOpacity>
-               );
-            }}
+            numColumns={cols}
+            columnWrapperStyle={{ gap: GAP, marginBottom: GAP * 2, paddingHorizontal: PAD, width: '100%', maxWidth: MAX, alignSelf: 'center' }}
+            contentContainerStyle={{ paddingBottom: 56 }}
+            renderItem={({ item }) => <ProductCard item={item} width={cardW} compact={mobile} onOpen={openDetail} />}
+            ListHeaderComponent={header}
             ListEmptyComponent={
-               <View style={styles.emptyContainer}>
+               <View style={styles.emptyBox}>
                   <Text style={styles.emptyTitle}>No se encontraron prendas</Text>
-                  <Text style={styles.emptySubtitle}>Intenta cambiando los filtros de marca, color o talla.</Text>
+                  <Text style={styles.emptySub}>Prueba cambiando los filtros de marca, color o talla.</Text>
                   {activeFiltersCount > 0 && (
-                     <TouchableOpacity style={styles.resetBtnEmpty} onPress={handleResetFilters}>
-                        <Text style={styles.resetBtnEmptyText}>Restablecer Filtros</Text>
-                     </TouchableOpacity>
+                     <Pressable style={({ pressed }) => [styles.emptyBtn, pressed && styles.pressed]} onPress={handleResetFilters}>
+                        <Text style={styles.waMainText}>Restablecer filtros</Text>
+                     </Pressable>
                   )}
                </View>
             }
+            initialNumToRender={8}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
+            keyboardShouldPersistTaps="handled"
          />
 
-         {/* MODAL DE FILTROS VISUALES (MARCAS Y MUESTRAS DE COLOR) */}
-         <Modal visible={isFilterModalOpen} transparent animationType="slide">
-            <View style={styles.modalOverlay}>
-               <View style={styles.filterModalCard}>
-                  <View style={styles.filterModalHeader}>
-                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <SlidersHorizontal size={18} color="#2563eb" />
-                        <Text style={styles.filterModalTitle}>Filtros Visuales</Text>
-                     </View>
-                     <TouchableOpacity onPress={() => setIsFilterModalOpen(false)}>
-                        <X size={20} color="#64748b" />
-                     </TouchableOpacity>
+         {/* MODAL DE FILTROS */}
+         <Modal visible={isFilterModalOpen} transparent animationType="fade">
+            <View style={[styles.overlay, mobile && styles.overlaySheet]}>
+               <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsFilterModalOpen(false)} />
+               <Animated.View style={[styles.filterCard, mobile && styles.sheetCard, filterAnim]}>
+                  <View style={styles.modalHeader}>
+                     <Text style={styles.modalTitle}>Filtros</Text>
+                     <Pressable onPress={() => setIsFilterModalOpen(false)}>
+                        <X size={22} color="#FFFFFF" />
+                     </Pressable>
                   </View>
 
-                  <ScrollView style={{ padding: 16 }}>
-                     {/* FILTRO VISUAL DE MARCAS */}
-                     <Text style={styles.filterSectionTitle}>Marcas:</Text>
-                     <View style={styles.brandGrid}>
-                        <TouchableOpacity
-                           style={[styles.brandCard, !filters.brand && styles.brandCardActive]}
+                  <ScrollView style={{ padding: 20 }}>
+                     <Text style={styles.sectionTitle}>Marcas</Text>
+                     <View style={styles.wrap}>
+                        <Chip
+                           label="Todas"
+                           active={!filters.brand}
+                           left={<Tag size={14} color={!filters.brand ? T.onAccent : T.inkMute} />}
                            onPress={() => setFilters((p) => ({ ...p, brand: '' }))}
-                        >
-                           <Tag size={16} color={!filters.brand ? '#2563eb' : '#64748b'} />
-                           <Text style={[styles.brandCardText, !filters.brand && styles.brandCardTextActive]}>
-                              Todas
-                           </Text>
-                        </TouchableOpacity>
-
-                        {brands.map((b) => {
-                           const isSelected = filters.brand === b;
-                           return (
-                              <TouchableOpacity
-                                 key={b}
-                                 style={[styles.brandCard, isSelected && styles.brandCardActive]}
-                                 onPress={() => setFilters((p) => ({ ...p, brand: b }))}
-                              >
-                                 <BrandLogoItem brandName={b} isSelected={isSelected} />
-                                 <Text
-                                    style={[
-                                       styles.brandCardText,
-                                       isSelected && styles.brandCardTextActive,
-                                    ]}
-                                 >
-                                    {b}
-                                 </Text>
-                              </TouchableOpacity>
-                           );
-                        })}
+                        />
+                        {brands.map((b) => (
+                           <Chip
+                              key={b}
+                              label={b}
+                              active={filters.brand === b}
+                              left={<BrandLogoItem brandName={b} isSelected={filters.brand === b} />}
+                              onPress={() => setFilters((p) => ({ ...p, brand: b }))}
+                           />
+                        ))}
                      </View>
 
-                     {/* FILTRO VISUAL DE COLORES */}
-                     <Text style={styles.filterSectionTitle}>Colores Disponibles:</Text>
-                     <View style={styles.colorGrid}>
-                        <TouchableOpacity
-                           style={[styles.colorChipChoice, !filters.color && styles.colorChipChoiceActive]}
-                           onPress={() => setFilters((p) => ({ ...p, color: '' }))}
-                        >
-                           <Text style={[styles.colorChipText, !filters.color && styles.colorChipTextActive]}>
-                              Todos
-                           </Text>
-                        </TouchableOpacity>
-
-                        {colors.map((c) => {
-                           const isSelected = filters.color === c;
-                           const hexColor = getColorHex(c);
-                           const isWhite = hexColor.toLowerCase() === '#ffffff';
-
-                           return (
-                              <TouchableOpacity
-                                 key={c}
-                                 style={[
-                                    styles.colorChipChoice,
-                                    isSelected && styles.colorChipChoiceActive,
-                                 ]}
-                                 onPress={() => setFilters((p) => ({ ...p, color: c }))}
-                              >
-                                 <View
-                                    style={[
-                                       styles.colorSwatch,
-                                       { backgroundColor: hexColor },
-                                       isWhite && { borderWidth: 1, borderColor: '#cbd5e1' },
-                                    ]}
-                                 />
-                                 <Text
-                                    style={[
-                                       styles.colorChipText,
-                                       isSelected && styles.colorChipTextActive,
-                                    ]}
-                                 >
-                                    {c}
-                                 </Text>
-                              </TouchableOpacity>
-                           );
-                        })}
+                     <Text style={styles.sectionTitle}>Colores disponibles</Text>
+                     <View style={styles.wrap}>
+                        <Chip label="Todos" active={!filters.color} onPress={() => setFilters((p) => ({ ...p, color: '' }))} />
+                        {colors.map((c) => (
+                           <Chip
+                              key={c}
+                              label={c}
+                              active={filters.color === c}
+                              left={<View style={[styles.swatch, { backgroundColor: getColorHex(c) }]} />}
+                              onPress={() => setFilters((p) => ({ ...p, color: c }))}
+                           />
+                        ))}
                      </View>
 
-                     {/* FILTRO POR TALLA */}
-                     <Text style={styles.filterSectionTitle}>Talla Disponible:</Text>
-                     <View style={styles.sizeWrap}>
-                        <TouchableOpacity
-                           style={[styles.sizeChipChoice, !filters.size && styles.sizeChipChoiceActive]}
-                           onPress={() => setFilters((p) => ({ ...p, size: '' }))}
-                        >
-                           <Text style={[styles.sizeChipText, !filters.size && styles.sizeChipTextActive]}>
-                              Todas
-                           </Text>
-                        </TouchableOpacity>
-
-                        {sizes.map((s) => {
-                           const isSelected = filters.size === s;
-                           return (
-                              <TouchableOpacity
-                                 key={s}
-                                 style={[styles.sizeChipChoice, isSelected && styles.sizeChipChoiceActive]}
-                                 onPress={() => setFilters((p) => ({ ...p, size: s }))}
-                              >
-                                 <Text
-                                    style={[
-                                       styles.sizeChipText,
-                                       isSelected && styles.sizeChipTextActive,
-                                    ]}
-                                 >
-                                    {s}
-                                 </Text>
-                              </TouchableOpacity>
-                           );
-                        })}
+                     <Text style={styles.sectionTitle}>Talla disponible</Text>
+                     <View style={styles.wrap}>
+                        <Chip label="Todas" active={!filters.size} onPress={() => setFilters((p) => ({ ...p, size: '' }))} />
+                        {sizes.map((s) => (
+                           <Chip key={s} label={s} active={filters.size === s} onPress={() => setFilters((p) => ({ ...p, size: s }))} />
+                        ))}
                      </View>
                   </ScrollView>
 
-                  <View style={styles.filterModalFooter}>
-                     <TouchableOpacity style={styles.clearFiltersBtn} onPress={handleResetFilters}>
-                        <Text style={styles.clearFiltersText}>Limpiar Todo</Text>
-                     </TouchableOpacity>
-
-                     <TouchableOpacity
-                        style={styles.applyFiltersBtn}
-                        onPress={() => setIsFilterModalOpen(false)}
-                     >
-                        <Check size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                        <Text style={styles.applyFiltersText}>
-                           Ver {filteredProducts.length} Resultados
-                        </Text>
-                     </TouchableOpacity>
+                  <View style={styles.filterFooter}>
+                     <Pressable style={({ pressed }) => [styles.ghostBtn, pressed && styles.pressed]} onPress={handleResetFilters}>
+                        <Text style={styles.ghostText}>Limpiar todo</Text>
+                     </Pressable>
+                     <Pressable style={({ pressed }) => [styles.mainBtn, pressed && styles.pressed]} onPress={() => setIsFilterModalOpen(false)}>
+                        <Check size={16} color={T.onAccent} />
+                        <Text style={styles.waMainText}>Ver {n} resultados</Text>
+                     </Pressable>
                   </View>
-               </View>
+               </Animated.View>
             </View>
          </Modal>
 
          {/* MODAL DETALLE DE PRENDA */}
-         <Modal visible={!!detailProduct} transparent animationType="slide">
-            {detailProduct && (
-               <View style={styles.modalOverlay}>
-                  <View style={styles.modalCard}>
-                     <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setDetailProduct(null)}>
-                        <X size={20} color="#0f172a" />
-                     </TouchableOpacity>
-
-                     <ScrollView style={styles.modalScroll}>
-                        <View style={styles.galleryContainer}>
-                           <Image
-                              source={{
-                                 uri:
-                                    detailProduct.images?.[selectedImageIndex] ||
-                                    'https://via.placeholder.com/300?text=Sin+Foto',
-                              }}
-                              style={styles.mainGalleryImg}
-                              resizeMode="cover"
-                           />
-
-                           {detailProduct.images && detailProduct.images.length > 1 && (
-                              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbnailsRow}>
-                                 {detailProduct.images.map((img, idx) => (
-                                    <TouchableOpacity
-                                       key={idx}
-                                       onPress={() => setSelectedImageIndex(idx)}
-                                       style={[
-                                          styles.thumbnailBox,
-                                          selectedImageIndex === idx && styles.thumbnailActive,
-                                       ]}
-                                    >
-                                       <Image source={{ uri: img }} style={styles.thumbnailImg} />
-                                    </TouchableOpacity>
-                                 ))}
-                              </ScrollView>
-                           )}
-                        </View>
-
-                        <View style={styles.modalBody}>
-                           <Text style={styles.modalBrand}>{detailProduct.brand}</Text>
-                           <Text style={styles.modalName}>{detailProduct.name}</Text>
-                           <Text style={styles.modalCode}>SKU: {detailProduct.code}</Text>
-                           <Text style={styles.modalPrice}>${detailProduct.price.toFixed(2)}</Text>
-
-                           <Text style={styles.sectionLabel}>Colores y Tallas Disponibles:</Text>
-                           <View style={styles.variantsBox}>
-                              {detailProduct.variants.map((v, idx) => {
-                                 const availableSizes = (v.sizes || [])
-                                    .filter((s) => Number(s.stock) > 0)
-                                    .map((s) => s.size)
-                                    .join(', ');
-
-                                 return (
-                                    <View key={idx} style={styles.variantRow}>
-                                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                          <View
-                                             style={[
-                                                styles.colorCircleSmall,
-                                                { backgroundColor: getColorHex(v.color) },
-                                             ]}
-                                          />
-                                          <Text style={styles.variantColor}>Color {v.color}:</Text>
-                                       </View>
-                                       <Text style={availableSizes ? styles.variantSizes : styles.variantOutOfStock}>
-                                          {availableSizes ? `Tallas: ${availableSizes}` : 'Agotado'}
-                                       </Text>
-                                    </View>
-                                 );
-                              })}
-                           </View>
-                        </View>
-                     </ScrollView>
-
-                     <View style={styles.modalFooter}>
-                        <TouchableOpacity
-                           style={styles.modalWhatsAppBtn}
-                           onPress={() => {
-                              openWhatsAppShare(detailProduct);
-                              setDetailProduct(null);
-                           }}
-                        >
-                           <MessageCircle size={18} color="#ffffff" style={{ marginRight: 8 }} />
-                           <Text style={styles.modalWhatsAppText}>Pedir por WhatsApp</Text>
-                        </TouchableOpacity>
-                     </View>
-                  </View>
-               </View>
-            )}
+         <Modal visible={!!detailProduct} transparent animationType="fade">
+            <View style={[styles.overlay, mobile && styles.overlaySheet]}>
+               <Pressable style={StyleSheet.absoluteFill} onPress={() => setDetailProduct(null)} />
+               {detailProduct && (
+                  <Animated.View style={[styles.detailCard, wide && { maxWidth: 940 }, mobile && styles.sheetCard, detailAnim]}>
+                     <Pressable style={styles.closeBtn} onPress={() => setDetailProduct(null)}>
+                        <X size={20} color={T.onSolid} />
+                     </Pressable>
+                     {renderDetail(detailProduct)}
+                  </Animated.View>
+               )}
+            </View>
          </Modal>
       </View>
    );
 };
 
+const modalBase = { width: '100%' as const, backgroundColor: T.bg, borderRadius: 16, overflow: 'hidden' as const };
+
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: '#f8fafc' },
-   header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      backgroundColor: '#ffffff',
-      borderBottomWidth: 1,
-      borderBottomColor: '#e2e8f0',
-   },
-   brandGroup: { flexDirection: 'row', alignItems: 'center' },
-   headerTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
-   headerSubtitle: { fontSize: 11, color: '#64748b' },
-   staffAccessBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#f1f5f9',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 6,
-   },
-   staffAccessText: { fontSize: 11, color: '#64748b', fontWeight: 'bold' },
+   container: { flex: 1, backgroundColor: T.bg },
+   inner: { width: '100%', maxWidth: MAX, alignSelf: 'center' },
+   pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
+   pressedCard: { transform: [{ scale: 0.98 }] },
+   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 
-   filterSection: { paddingHorizontal: 16, paddingTop: 12, backgroundColor: '#ffffff' },
-   searchRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-   searchBar: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#f8fafc',
-      borderWidth: 1,
-      borderColor: '#cbd5e1',
-      borderRadius: 8,
-      paddingHorizontal: 12,
-      height: 40,
-   },
-   searchInput: { flex: 1, fontSize: 13, color: '#0f172a' },
-   filterBtn: {
-      width: 40,
-      height: 40,
-      backgroundColor: '#eff6ff',
-      borderWidth: 1,
-      borderColor: '#bfdbfe',
-      borderRadius: 8,
-      justifyContent: 'center',
-      alignItems: 'center',
-      position: 'relative',
-   },
-   filterBtnActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   filterBadge: {
-      position: 'absolute',
-      top: -4,
-      right: -4,
-      backgroundColor: '#ef4444',
-      borderRadius: 10,
-      width: 18,
-      height: 18,
-      justifyContent: 'center',
-      alignItems: 'center',
-   },
-   filterBadgeText: { color: '#ffffff', fontSize: 10, fontWeight: 'bold' },
+   // Barra superior (negra)
+   bar: { backgroundColor: T.bar, paddingVertical: 12 },
+   barRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+   brandGroup: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
+   logoBox: { width: 34, height: 34, backgroundColor: BLUE[700], borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+   barTitle: { ...display, fontSize: 22, fontWeight: '800', color: T.onBar, letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 1 },
+   staffBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)', borderRadius: 999 },
+   staffText: { fontSize: 13, fontWeight: '600', color: T.onBar },
 
-   categoriesScroll: { flexDirection: 'row', paddingBottom: 10 },
-   categoryChip: {
-      backgroundColor: '#f1f5f9',
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 16,
-      marginRight: 6,
-   },
-   categoryChipActive: { backgroundColor: '#2563eb' },
-   categoryText: { fontSize: 12, color: '#475569', fontWeight: '600' },
-   categoryTextActive: { color: '#ffffff', fontWeight: 'bold' },
+   // Portada azul marino de lado a lado
+   hero: { backgroundColor: BLUE[800], overflow: 'hidden', paddingTop: 32, paddingBottom: 64 },
+   heroWide: { flexDirection: 'row', alignItems: 'center' },
+   heroCol: { gap: 28 },
+   countPill: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, marginBottom: 14 },
+   countText: { fontSize: 13, fontWeight: '700', color: BLUE[300] },
+   title: { ...display, fontWeight: '800', color: '#FFFFFF', textTransform: 'uppercase' },
+   titleSm: { fontSize: 60, lineHeight: 56 },
+   titleMd: { fontSize: 96, lineHeight: 88 },
+   titleLg: { fontSize: 132, lineHeight: 118 },
+   heroSub: { fontSize: 17, color: BLUE[300], marginTop: 14, maxWidth: 380 },
+   prints: { flexDirection: 'row', gap: 16, paddingRight: 10, alignItems: 'flex-start' },
+   printsWide: { width: '46%' },
+   printBack: { position: 'absolute', top: 10, left: 10, right: -10, bottom: -10, backgroundColor: BLUE[600], borderRadius: 12 },
+   printPhoto: { borderRadius: 12, overflow: 'hidden' },
+   printImg: { width: '100%', aspectRatio: 3 / 4 },
+   slant: { position: 'absolute', left: -30, right: -30, bottom: -34, height: 64, backgroundColor: T.bg, transform: [{ rotate: '-1.4deg' }] },
 
-   activeFiltersRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, paddingBottom: 10 },
-   activeFiltersLabel: { fontSize: 11, color: '#64748b', fontWeight: 'bold' },
-   activeFilterChip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#eff6ff',
-      borderWidth: 1,
-      borderColor: '#bfdbfe',
-      borderRadius: 12,
-      paddingHorizontal: 8,
-      paddingVertical: 3,
-   },
-   activeFilterText: { fontSize: 11, color: '#2563eb', fontWeight: '600' },
-   resetTextBtn: { flexDirection: 'row', alignItems: 'center', marginLeft: 4 },
-   resetText: { fontSize: 11, color: '#ef4444', fontWeight: 'bold' },
+   // Búsqueda y filtros
+   filters: { gap: 14, marginBottom: 24 },
+   searchRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-end' },
+   searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: 48, borderBottomWidth: 2, borderBottomColor: T.ink },
+   searchFocused: { borderBottomColor: BLUE[600] },
+   searchInput: { flex: 1, fontSize: 16, color: T.ink },
+   filterBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 44, paddingHorizontal: 16, backgroundColor: T.solid, borderRadius: 999 },
+   filterBtnText: { fontSize: 14, fontWeight: '700', color: T.onSolid },
+   filterBadge: { minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: BLUE[600], justifyContent: 'center', alignItems: 'center' },
+   filterBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
+   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 9, borderWidth: 1, borderColor: T.line, borderRadius: 999, backgroundColor: T.bg },
+   chipActive: { backgroundColor: T.accent, borderColor: T.accent },
+   chipText: { fontSize: 14, color: T.ink, fontWeight: '600' },
+   chipTextActive: { color: T.onAccent, fontWeight: '700' },
+   activeFiltersRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+   activeFiltersLabel: { fontSize: 13, color: T.inkMute, fontWeight: '600' },
+   activeChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: T.accent, borderRadius: 999 },
+   activeChipText: { fontSize: 13, color: T.onAccent, fontWeight: '600' },
+   resetBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+   resetText: { fontSize: 13, color: T.inkSoft, fontWeight: '700' },
+   smallDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
 
-   /* GRID */
-   gridContent: { padding: 12 },
-   gridColumnWrapper: { justifyContent: 'space-between', marginBottom: 12 },
-   productCard: {
-      width: '48.5%',
-      backgroundColor: '#ffffff',
-      borderRadius: 12,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: '#e2e8f0',
-      elevation: 2,
-   },
-   cardImg: { width: '100%', height: 160, backgroundColor: '#f1f5f9' },
-   cardBody: { padding: 10 },
-   cardBrand: { fontSize: 10, fontWeight: 'bold', color: '#2563eb', textTransform: 'uppercase' },
-   cardName: { fontSize: 13, fontWeight: 'bold', color: '#0f172a', marginVertical: 2, height: 36 },
-   cardPrice: { fontSize: 15, fontWeight: '800', color: '#16a34a', marginBottom: 8 },
-   whatsAppQuickBtn: {
-      flexDirection: 'row',
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: '#25d366',
-      paddingVertical: 6,
-      borderRadius: 6,
-   },
-   whatsAppQuickText: { color: '#ffffff', fontSize: 11, fontWeight: 'bold' },
+   // Tarjetas
+   photo: { borderRadius: 12, overflow: 'hidden', backgroundColor: T.imgBg },
+   cardImg: { width: '100%', aspectRatio: 4 / 5 },
+   badge: { position: 'absolute', top: 10, left: 10, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6 },
+   badgeText: { fontSize: 11, fontWeight: '800' },
+   swatches: { position: 'absolute', left: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: T.pill, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999 },
+   dot: { width: 11, height: 11, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(0,0,0,0.15)' },
+   dotsMore: { fontSize: 10, color: T.inkSoft, fontWeight: '700' },
+   meta: { paddingTop: 12, gap: 3 },
+   cardBrand: { fontSize: 12, fontWeight: '700', color: BLUE[600] },
+   cardName: { fontSize: 14, fontWeight: '700', color: T.ink, minHeight: 36 },
+   sizes: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },
+   sizeBox: { minWidth: 26, height: 24, paddingHorizontal: 5, borderRadius: 5, borderWidth: 1, borderColor: T.line, justifyContent: 'center', alignItems: 'center' },
+   sizeBoxText: { fontSize: 11, fontWeight: '700', color: T.ink },
+   sizeOff: { color: T.inkMute, textDecorationLine: 'line-through', fontWeight: '500', opacity: 0.6 },
+   priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
+   price: { ...display, fontSize: 32, lineHeight: 30, fontWeight: '800', color: T.ink },
+   cents: { fontSize: 16, fontWeight: '700', color: T.inkSoft },
+   fab: { width: 42, height: 42, backgroundColor: T.accent, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
 
-   emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40 },
-   emptyTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a' },
-   emptySubtitle: { fontSize: 12, color: '#64748b', marginTop: 4 },
-   resetBtnEmpty: { marginTop: 12, backgroundColor: '#2563eb', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
-   resetBtnEmptyText: { color: '#ffffff', fontWeight: 'bold', fontSize: 12 },
+   emptyBox: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24 },
+   emptyTitle: { ...display, fontSize: 32, fontWeight: '800', color: T.ink, textTransform: 'uppercase' },
+   emptySub: { fontSize: 14, color: T.inkSoft, marginTop: 4, textAlign: 'center' },
+   emptyBtn: { marginTop: 16, paddingVertical: 12, paddingHorizontal: 20, backgroundColor: T.accent, borderRadius: 8 },
 
-   /* MODAL FILTROS VISUALES */
-   filterModalCard: { width: '100%', maxWidth: 440, maxHeight: '88%', backgroundColor: '#ffffff', borderRadius: 16, overflow: 'hidden' },
-   filterModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#f8fafc', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-   filterModalTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a' },
-   filterSectionTitle: { fontSize: 12, fontWeight: 'bold', color: '#334155', marginTop: 12, marginBottom: 8 },
-
-   /* TARJETAS DE MARCAS Y FALLBACK AVATAR */
-   brandGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-   brandCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#f8fafc',
-      borderWidth: 1,
-      borderColor: '#cbd5e1',
-      borderRadius: 8,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      gap: 6,
-   },
-   brandCardActive: { backgroundColor: '#eff6ff', borderColor: '#2563eb' },
+   // Modales
+   overlay: { flex: 1, backgroundColor: T.overlay, justifyContent: 'center', alignItems: 'center', padding: 16 },
+   overlaySheet: { justifyContent: 'flex-end', padding: 0 },
+   sheetCard: { maxWidth: '100%', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 },
+   filterCard: { ...modalBase, maxWidth: 500, maxHeight: '88%' },
+   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: BLUE[800] },
+   modalTitle: { ...display, fontSize: 28, fontWeight: '800', color: '#FFFFFF', textTransform: 'uppercase' },
+   sectionTitle: { fontSize: 15, fontWeight: '800', color: T.ink, marginTop: 18, marginBottom: 10 },
+   swatch: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: 'rgba(0,0,0,0.2)' },
    brandLogoImg: { width: 18, height: 18 },
-   brandInitialAvatar: {
-      width: 18,
-      height: 18,
-      borderRadius: 9,
-      backgroundColor: '#e2e8f0',
-      justifyContent: 'center',
-      alignItems: 'center',
-   },
-   brandInitialAvatarActive: { backgroundColor: '#2563eb' },
-   brandInitialText: { fontSize: 10, fontWeight: 'bold', color: '#475569' },
-   brandInitialTextActive: { color: '#ffffff' },
-   brandCardText: { fontSize: 12, color: '#475569', fontWeight: '600' },
-   brandCardTextActive: { color: '#2563eb', fontWeight: 'bold' },
+   avatar: { width: 18, height: 18, borderRadius: 9, backgroundColor: T.line, justifyContent: 'center', alignItems: 'center' },
+   avatarText: { fontSize: 10, fontWeight: 'bold', color: T.inkSoft },
+   filterFooter: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, backgroundColor: T.surface },
+   ghostBtn: { paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, borderColor: T.line, borderRadius: 8, backgroundColor: T.bg },
+   ghostText: { fontSize: 14, fontWeight: '700', color: T.ink },
+   mainBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 18, backgroundColor: T.accent, borderRadius: 8 },
+   waMainText: { fontSize: 15, fontWeight: '800', color: T.onAccent },
 
-   /* FILTRO DE COLORES CON MUESTRA SWATCH */
-   colorGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-   colorChipChoice: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#f8fafc',
-      borderWidth: 1,
-      borderColor: '#cbd5e1',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 16,
-      gap: 6,
-   },
-   colorChipChoiceActive: { backgroundColor: '#eff6ff', borderColor: '#2563eb' },
-   colorSwatch: { width: 14, height: 14, borderRadius: 7 },
-   colorCircleSmall: { width: 10, height: 10, borderRadius: 5, borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)' },
-   colorChipText: { fontSize: 11, color: '#475569', textTransform: 'capitalize' },
-   colorChipTextActive: { color: '#2563eb', fontWeight: 'bold' },
-
-   /* FILTRO DE TALLAS */
-   sizeWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-   sizeChipChoice: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-   sizeChipChoiceActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   sizeChipText: { fontSize: 12, color: '#475569', fontWeight: 'bold' },
-   sizeChipTextActive: { color: '#ffffff' },
-
-   filterModalFooter: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0' },
-   clearFiltersBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, backgroundColor: '#f1f5f9' },
-   clearFiltersText: { fontSize: 12, fontWeight: 'bold', color: '#475569' },
-   applyFiltersBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2563eb', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 },
-   applyFiltersText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
-
-   /* MODAL DETALLE PRENDA */
-   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.7)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-   modalCard: { width: '100%', maxWidth: 460, maxHeight: '90%', backgroundColor: '#ffffff', borderRadius: 16, overflow: 'hidden', position: 'relative' },
-   modalCloseBtn: { position: 'absolute', top: 12, right: 12, zIndex: 10, backgroundColor: '#ffffff', borderRadius: 16, padding: 6, elevation: 3 },
-   modalScroll: { flex: 1 },
-   galleryContainer: { backgroundColor: '#f8fafc' },
-   mainGalleryImg: { width: '100%', height: 280 },
-   thumbnailsRow: { padding: 8, flexDirection: 'row' },
-   thumbnailBox: { width: 50, height: 50, borderRadius: 6, overflow: 'hidden', marginRight: 6, borderWidth: 2, borderColor: 'transparent' },
-   thumbnailActive: { borderColor: '#2563eb' },
-   thumbnailImg: { width: '100%', height: '100%' },
-   modalBody: { padding: 16 },
-   modalBrand: { fontSize: 12, fontWeight: 'bold', color: '#2563eb', textTransform: 'uppercase' },
-   modalName: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', marginVertical: 2 },
-   modalCode: { fontSize: 11, color: '#64748b', marginBottom: 6 },
-   modalPrice: { fontSize: 22, fontWeight: '800', color: '#16a34a', marginBottom: 14 },
-   sectionLabel: { fontSize: 12, fontWeight: 'bold', color: '#334155', marginBottom: 6 },
-   variantsBox: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, padding: 10 },
-   variantRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-   variantColor: { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
-   variantSizes: { fontSize: 12, color: '#16a34a', fontWeight: '600' },
-   variantOutOfStock: { fontSize: 12, color: '#ef4444', fontStyle: 'italic' },
-   modalFooter: { padding: 16, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0' },
-   modalWhatsAppBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#25d366', paddingVertical: 12, borderRadius: 10 },
-   modalWhatsAppText: { color: '#ffffff', fontSize: 14, fontWeight: 'bold' },
+   // Detalle
+   detailCard: { ...modalBase, maxWidth: 480, maxHeight: '92%' },
+   closeBtn: { position: 'absolute', top: 12, right: 12, zIndex: 10, backgroundColor: T.solid, borderRadius: 18, padding: 7 },
+   mainImg: { width: '100%', height: 320, backgroundColor: T.imgBg },
+   mainImgWide: { width: '100%', aspectRatio: 4 / 5, backgroundColor: T.imgBg },
+   thumbs: { padding: 10, gap: 8 },
+   thumb: { width: 54, height: 54, borderRadius: 8, overflow: 'hidden', borderWidth: 2, borderColor: 'transparent' },
+   thumbActive: { borderColor: BLUE[600] },
+   detailBrand: { fontSize: 14, fontWeight: '700', color: BLUE[600] },
+   detailName: { ...display, fontSize: 44, lineHeight: 42, fontWeight: '800', color: T.ink, textTransform: 'uppercase', marginVertical: 4 },
+   detailCode: { fontSize: 12, color: T.inkMute, marginBottom: 10 },
+   detailPrice: { ...display, fontSize: 60, lineHeight: 58, fontWeight: '800', color: T.ink },
+   detailCents: { fontSize: 26, color: T.inkSoft },
+   variantRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderTopWidth: 1, borderTopColor: T.line },
+   variantColor: { fontSize: 15, fontWeight: '700', color: T.ink },
+   sizesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end', flex: 1, marginLeft: 12 },
+   soldOut: { fontSize: 13, color: T.inkMute, fontStyle: 'italic' },
+   detailFooter: { padding: 16, backgroundColor: T.surface },
+   waMain: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, height: 54, backgroundColor: T.accent, borderRadius: 10 },
 });

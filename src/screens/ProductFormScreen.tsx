@@ -49,6 +49,20 @@ const PRESET_COLORS = [
 const PRESET_SIZES_CLOTHING = ['S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL'];
 const PRESET_SIZES_SHOES = ['36', '37', '38', '39', '40', '41', '42', '43', '44', '45'];
 
+// Paleta de diseño (un solo lugar para cambiar colores)
+const C = {
+   bg: '#0A0A0A',
+   surface: '#121212',
+   raised: '#1A1A1A',
+   border: '#262626',
+   line: '#2E2E2E',
+   white: '#FFFFFF',
+   light: '#E8E8E8',
+   soft: '#BDBDBD',
+   mute: '#8A8A8A',
+   dim: '#6A6A6A',
+};
+
 // Función helper para migrar/normalizar variantes viejas a la estructura nueva
 const normalizeVariants = (rawVariants?: any[]): ProductVariant[] => {
    if (!rawVariants || rawVariants.length === 0) {
@@ -282,9 +296,12 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
    return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
          <View style={styles.header}>
-            <Text style={styles.title}>
-               {initialProduct ? 'Editar Prenda' : 'Nueva Prenda'}
-            </Text>
+            <View>
+               <View style={styles.accentLine} />
+               <Text style={styles.title}>
+                  {initialProduct ? 'Editar Prenda' : 'Nueva Prenda'}
+               </Text>
+            </View>
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
                <Text style={styles.closeBtnText}>✕</Text>
             </TouchableOpacity>
@@ -296,6 +313,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
                <TextInput
                   style={styles.input}
                   placeholder="NK-DFT-01"
+                  placeholderTextColor={C.dim}
                   value={code}
                   onChangeText={setCode}
                   autoCapitalize="characters"
@@ -307,6 +325,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
                <TextInput
                   style={styles.input}
                   placeholder="25.00"
+                  placeholderTextColor={C.dim}
                   value={price}
                   onChangeText={setPrice}
                   keyboardType="numeric"
@@ -318,16 +337,18 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
          <TextInput
             style={styles.input}
             placeholder="Franelilla Running Dri-FIT"
+            placeholderTextColor={C.dim}
             value={name}
             onChangeText={setName}
          />
 
-         <View style={styles.row}>
+         <View style={[styles.row, { marginTop: 12 }]}>
             <View style={styles.flex1}>
                <Text style={styles.label}>Marca *</Text>
                <TextInput
                   style={styles.input}
                   placeholder="Nike, Under Armour, UQ"
+                  placeholderTextColor={C.dim}
                   value={brand}
                   onChangeText={setBrand}
                />
@@ -368,7 +389,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
                   disabled={uploadingImage}
                >
                   {uploadingImage ? (
-                     <ActivityIndicator color="#2563eb" />
+                     <ActivityIndicator color={C.light} />
                   ) : (
                      <>
                         <Text style={styles.uploadIcon}>📷</Text>
@@ -429,6 +450,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
                   <TextInput
                      style={styles.colorInputCustom}
                      placeholder="O escribe un color personalizado (ej. Azul Turquesa)"
+                     placeholderTextColor={C.dim}
                      value={variant.color}
                      onChangeText={(val) => {
                         setVariants(prev => {
@@ -485,7 +507,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
             disabled={submitting || uploadingImage}
          >
             {submitting ? (
-               <ActivityIndicator color="#ffffff" />
+               <ActivityIndicator color={C.bg} />
             ) : (
                <Text style={styles.submitBtnText}>
                   {initialProduct ? 'Guardar Cambios' : 'Registrar Prenda'}
@@ -496,53 +518,81 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
    );
 };
 
+// Bases compartidas (evitan repetir estilos)
+const inputBase = {
+   backgroundColor: C.raised,
+   borderWidth: 1,
+   borderColor: C.line,
+   borderRadius: 2,
+   color: C.white,
+};
+const chipBase = {
+   backgroundColor: C.raised,
+   borderWidth: 1,
+   borderColor: C.line,
+   borderRadius: 2,
+};
+const activeBox = { backgroundColor: C.light, borderColor: C.light };
+const activeText = { color: C.bg, fontWeight: '900' as const };
+const caps = { textTransform: 'uppercase' as const, letterSpacing: 2 };
+
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: '#ffffff' },
-   content: { padding: 20 },
-   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-   title: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
-   closeBtn: { padding: 8 },
-   closeBtnText: { fontSize: 20, color: '#64748b' },
-   sectionTitle: { fontSize: 16, fontWeight: '600', color: '#334155', marginTop: 16, marginBottom: 12 },
+   container: { flex: 1, backgroundColor: C.bg },
+   content: { padding: 20, paddingTop: 40 },
+
+   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+   accentLine: { width: 48, height: 4, backgroundColor: C.mute, marginBottom: 14 },
+   title: { ...caps, fontSize: 22, fontWeight: '900', color: C.white },
+   closeBtn: { padding: 8, borderWidth: 1, borderColor: '#3A3A3A', borderRadius: 2, paddingHorizontal: 12 },
+   closeBtnText: { fontSize: 16, color: C.soft },
+
+   sectionTitle: { ...caps, fontSize: 12, fontWeight: 'bold', color: C.mute, marginTop: 20, marginBottom: 12 },
    row: { flexDirection: 'row', gap: 12, marginBottom: 12 },
    flex1: { flex: 1 },
-   label: { fontSize: 13, fontWeight: '500', color: '#475569', marginBottom: 4 },
-   subLabel: { fontSize: 12, fontWeight: '600', color: '#64748b', marginTop: 10, marginBottom: 6 },
-   input: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 10, fontSize: 15 },
+   label: { ...caps, fontSize: 10, fontWeight: '700', color: C.mute, marginBottom: 6 },
+   subLabel: { fontSize: 11, fontWeight: '600', color: C.mute, marginTop: 10, marginBottom: 6 },
+   input: { ...inputBase, padding: 12, fontSize: 15 },
+
    chipRow: { flexDirection: 'row', marginTop: 4 },
-   chip: { backgroundColor: '#f1f5f9', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, marginRight: 6 },
-   chipActive: { backgroundColor: '#2563eb' },
-   chipText: { fontSize: 12, color: '#475569' },
-   chipTextActive: { color: '#ffffff', fontWeight: '600' },
+   chip: { ...chipBase, paddingVertical: 7, paddingHorizontal: 12, marginRight: 6 },
+   chipActive: activeBox,
+   chipText: { fontSize: 12, color: C.soft },
+   chipTextActive: activeText,
+
    imageGrid: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-   imageCard: { width: 100, height: 100, borderRadius: 8, overflow: 'hidden', position: 'relative' },
+   imageCard: { width: 100, height: 100, borderRadius: 2, overflow: 'hidden', borderWidth: 1, borderColor: C.line, position: 'relative' },
    previewImage: { width: '100%', height: '100%' },
-   removeImgBtn: { position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.6)', width: 22, height: 22, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
-   removeImgText: { color: '#ffffff', fontSize: 12 },
-   uploadCard: { width: 100, height: 100, borderRadius: 8, borderWidth: 2, borderColor: '#cbd5e1', borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' },
+   removeImgBtn: { position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.75)', width: 22, height: 22, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
+   removeImgText: { color: C.white, fontSize: 12 },
+   uploadCard: { width: 100, height: 100, borderRadius: 2, borderWidth: 1, borderColor: '#3A3A3A', borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center', backgroundColor: C.raised },
    uploadIcon: { fontSize: 22 },
-   uploadText: { fontSize: 11, color: '#64748b', marginTop: 4 },
+   uploadText: { ...caps, fontSize: 9, color: C.mute, marginTop: 4 },
+
    variantHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
    addColorBtn: { paddingVertical: 4 },
-   addColorText: { color: '#2563eb', fontSize: 13, fontWeight: '600' },
-   colorCard: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, padding: 14, marginBottom: 14 },
+   addColorText: { ...caps, color: C.light, fontSize: 11, fontWeight: '800' },
+
+   colorCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 4, padding: 14, marginBottom: 14 },
    colorHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
    removeColorBtn: { padding: 4 },
-   removeColorText: { fontSize: 12, color: '#ef4444', fontWeight: '600' },
+   removeColorText: { fontSize: 12, color: C.mute, fontWeight: '600' },
    paletteRow: { flexDirection: 'row', marginVertical: 8 },
-   colorBadge: { width: 32, height: 32, borderRadius: 16, marginRight: 10, borderWidth: 1, borderColor: '#cbd5e1', justifyContent: 'center', alignItems: 'center' },
-   colorBadgeActive: { borderWidth: 3, borderColor: '#2563eb' },
-   colorInputCustom: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 8, fontSize: 13, marginBottom: 10 },
+   colorBadge: { width: 32, height: 32, borderRadius: 16, marginRight: 10, borderWidth: 1, borderColor: '#3A3A3A', justifyContent: 'center', alignItems: 'center' },
+   colorBadgeActive: { borderWidth: 3, borderColor: C.light },
+   colorInputCustom: { ...inputBase, padding: 10, fontSize: 13, marginBottom: 10 },
+
    sizeChipsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-   sizeChip: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
-   sizeChipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   sizeChipText: { fontSize: 13, color: '#334155', fontWeight: '600' },
-   sizeChipTextActive: { color: '#ffffff' },
-   stockInputsContainer: { marginTop: 8, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 8 },
+   sizeChip: { ...chipBase, paddingVertical: 8, paddingHorizontal: 14 },
+   sizeChipActive: activeBox,
+   sizeChipText: { fontSize: 13, color: C.soft, fontWeight: '600' },
+   sizeChipTextActive: activeText,
+
+   stockInputsContainer: { marginTop: 8, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8 },
    stockRowGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
    stockBox: { width: 60, alignItems: 'center' },
-   stockSizeLabel: { fontSize: 11, fontWeight: 'bold', color: '#475569', marginBottom: 2 },
-   stockInput: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 6, padding: 6, textAlign: 'center', width: '100%', fontSize: 14 },
-   submitBtn: { backgroundColor: '#2563eb', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 20, marginBottom: 40 },
-   submitBtnText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
+   stockSizeLabel: { fontSize: 11, fontWeight: 'bold', color: C.soft, marginBottom: 2 },
+   stockInput: { ...inputBase, padding: 6, textAlign: 'center', width: '100%', fontSize: 14 },
+
+   submitBtn: { backgroundColor: C.light, padding: 16, borderRadius: 2, alignItems: 'center', marginTop: 20, marginBottom: 40 },
+   submitBtnText: { ...caps, color: C.bg, fontSize: 14, fontWeight: '900', letterSpacing: 3 },
 });
