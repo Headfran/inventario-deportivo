@@ -27,7 +27,7 @@ export interface PendingSale {
   subtotal: number;
   discount: number;
   total: number;
-  paymentMethod: 'efectivo' | 'pago_movil' | 'punto' | 'transferencia' | 'zelle' | 'tarjeta' | 'mixto';
+  paymentMethod: 'efectivo' | 'pago_movil' | 'binance' | 'transferencia' | 'zelle' | 'mixto';
   notes?: string;
 }
 

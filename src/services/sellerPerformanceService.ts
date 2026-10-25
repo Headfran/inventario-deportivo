@@ -14,20 +14,30 @@ export interface SellerMetrics {
   activeLayaways: Layaway[];
 }
 
-export type TimePeriod = 'today' | 'week' | 'month' | 'all';
+export type TimePeriod = 'today' | 'week' | 'month' | 'all' | 'custom';
+
+const parseDateSafely = (val: any): Date => {
+  if (!val) return new Date(0);
+  if (val instanceof Date) return val;
+  if (typeof val.toDate === 'function') return val.toDate();
+  if (typeof val.seconds === 'number') return new Date(val.seconds * 1000);
+  const parsed = new Date(val);
+  return isNaN(parsed.getTime()) ? new Date(0) : parsed;
+};
 
 /**
- * Filtra registros según el periodo seleccionado (Hoy, Esta Semana, Este Mes, Todo)
+ * Filtra registros según el periodo seleccionado
  */
-export const filterByPeriod = <T extends { createdAt: Date }>(
+export const filterByPeriod = <T extends { createdAt: any }>(
   items: T[],
-  period: TimePeriod
+  period: TimePeriod,
+  customRange?: { start: Date; end: Date } | null
 ): T[] => {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   if (period === 'today') {
-    return items.filter((i) => new Date(i.createdAt) >= startOfDay);
+    return items.filter((i) => parseDateSafely(i.createdAt) >= startOfDay);
   }
 
   if (period === 'week') {
@@ -35,12 +45,19 @@ export const filterByPeriod = <T extends { createdAt: Date }>(
     const day = startOfWeek.getDay();
     const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
     startOfWeek.setDate(diff);
-    return items.filter((i) => new Date(i.createdAt) >= startOfWeek);
+    return items.filter((i) => parseDateSafely(i.createdAt) >= startOfWeek);
   }
 
   if (period === 'month') {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    return items.filter((i) => new Date(i.createdAt) >= startOfMonth);
+    return items.filter((i) => parseDateSafely(i.createdAt) >= startOfMonth);
+  }
+
+  if (period === 'custom' && customRange) {
+    return items.filter((i) => {
+      const d = parseDateSafely(i.createdAt);
+      return d >= customRange.start && d <= customRange.end;
+    });
   }
 
   return items;
@@ -52,12 +69,13 @@ export const filterByPeriod = <T extends { createdAt: Date }>(
 export const computeSellerPerformance = (
   salesList: Sale[],
   layawaysList: Layaway[],
-  period: TimePeriod
+  period: TimePeriod,
+  customRange?: { start: Date; end: Date } | null
 ): SellerMetrics[] => {
-  const filteredSales = filterByPeriod(salesList, period).filter(
+  const filteredSales = filterByPeriod(salesList, period, customRange).filter(
     (s) => s.status === 'completed'
   );
-  const filteredLayaways = filterByPeriod(layawaysList, period).filter(
+  const filteredLayaways = filterByPeriod(layawaysList, period, customRange).filter(
     (l) => l.status !== 'cancelled'
   );
 

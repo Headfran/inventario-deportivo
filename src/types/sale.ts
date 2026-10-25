@@ -1,17 +1,21 @@
 export type PaymentMethod =
   | 'efectivo'
   | 'pago_movil'
-  | 'punto'
+  | 'binance'
   | 'transferencia'
   | 'zelle'
-  | 'tarjeta'
   | 'mixto';
 
+export interface Seller {
+  id: string;
+  name: string;
+  createdAt?: any;
+}
 export interface SaleItem {
   productId: string;
   brand: string;
   name: string;
-  code?: string;
+  productCode?: string;
   color: string;
   size: string;
   quantity: number;

@@ -104,9 +104,8 @@ export const printReceiptHTML = (sale: Sale, storeName: string = 'Mi Tienda de R
   const paymentLabels: Record<string, string> = {
     pago_movil: 'Pago Móvil',
     efectivo: 'Efectivo',
+    binance: 'Binance',
     zelle: 'Zelle',
-    tarjeta: 'Tarjeta / Punto de Venta',
-    otro: 'Otro',
     mixto: 'Mixto',
     transferencia: 'Transferencia'
   };

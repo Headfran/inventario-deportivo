@@ -11,6 +11,7 @@ import { db } from './firebase';
 
 export interface SaleItem {
   productId: string;
+  productCode?: string;
   brand: string;
   name: string;
   color: string;
@@ -32,14 +33,11 @@ export interface Sale {
   subtotal: number;
   discount: number;
   total: number;
-  paymentMethod: 'efectivo' | 'pago_movil' | 'punto' | 'transferencia' | 'mixto';
+  paymentMethod: 'efectivo' | 'pago_movil' | 'punto' | 'transferencia' | 'mixto' | 'binance' | 'zelle';
   status: 'completed' | 'voided';
   notes?: string;
 }
 
-/**
- * Convierte de forma segura cualquier representación de fecha a un Date de JS
- */
 export const parseDate = (val: any): Date => {
   if (!val) return new Date();
   if (val instanceof Date) return val;
@@ -49,9 +47,6 @@ export const parseDate = (val: any): Date => {
   return isNaN(parsed.getTime()) ? new Date() : parsed;
 };
 
-/**
- * Formatea una fecha a string de forma consistente sin errores
- */
 export const formatDateTime = (dateVal: any, style: 'short' | 'long' = 'short'): string => {
   const d = parseDate(dateVal);
   const day = d.getDate().toString().padStart(2, '0');
@@ -62,7 +57,7 @@ export const formatDateTime = (dateVal: any, style: 'short' | 'long' = 'short'):
 
   const ampm = hoursStr >= 12 ? 'PM' : 'AM';
   hoursStr = hoursStr % 12;
-  hoursStr = hoursStr ? hoursStr : 12; // el 0 debe ser 12
+  hoursStr = hoursStr ? hoursStr : 12;
 
   if (style === 'long') {
     return `${day}/${month}/${year} a las ${hoursStr}:${minutes} ${ampm}`;
@@ -70,10 +65,6 @@ export const formatDateTime = (dateVal: any, style: 'short' | 'long' = 'short'):
   return `${day}/${month}/${year} ${hoursStr}:${minutes} ${ampm}`;
 };
 
-/**
- * Escucha la lista de ventas en tiempo real. 
- * INCLUYE NORMALIZACIÓN DE DATOS para evitar los errores de "N/A"
- */
 export const subscribeToSales = (callback: (sales: Sale[]) => void) => {
   if (!db) return () => { };
 
@@ -85,9 +76,9 @@ export const subscribeToSales = (callback: (sales: Sale[]) => void) => {
       const salesList: Sale[] = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
 
-        // NORMALIZACIÓN: Mapeamos las propiedades del POS a las que espera el Historial
         const normalizedItems: SaleItem[] = (data.items || []).map((item: any) => ({
           productId: item.productId || 'unknown',
+          productCode: item.productCode || item.code || 'S/N', // <-- LECTURA DEL CÓDIGO AQUÍ
           brand: item.productBrand || item.brand || 'Genérico',
           name: item.productName || item.name || 'Artículo Desconocido',
           color: item.variantColor || item.color || 'N/A',
@@ -108,7 +99,7 @@ export const subscribeToSales = (callback: (sales: Sale[]) => void) => {
           items: normalizedItems,
           subtotal: Number(data.subtotal) || 0,
           discount: Number(data.discount) || 0,
-          total: Number(data.totalAmount || data.total) || 0, // Fallback vital para el POS
+          total: Number(data.totalAmount || data.total) || 0,
           paymentMethod: data.paymentMethod || 'efectivo',
           status: data.status || 'completed',
           notes: data.notes || '',
@@ -123,9 +114,6 @@ export const subscribeToSales = (callback: (sales: Sale[]) => void) => {
   );
 };
 
-/**
- * Anula una venta de forma atómica devolviendo el stock
- */
 export const voidSale = async (sale: Sale, reason?: string): Promise<boolean> => {
   if (!db || sale.status === 'voided') return false;
 
@@ -133,7 +121,6 @@ export const voidSale = async (sale: Sale, reason?: string): Promise<boolean> =>
     await runTransaction(db, async (transaction) => {
       const saleRef = doc(db, 'sales', sale.id);
 
-      // 1. Restaurar stock
       for (const item of sale.items) {
         const productRef = doc(db, 'products', item.productId);
         const productSnap = await transaction.get(productRef);
@@ -163,7 +150,6 @@ export const voidSale = async (sale: Sale, reason?: string): Promise<boolean> =>
         }
       }
 
-      // 2. Marcar venta como anulada
       transaction.update(saleRef, {
         status: 'voided',
         voidedAt: Timestamp.now(),

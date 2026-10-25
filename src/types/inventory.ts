@@ -6,6 +6,11 @@ export type ProductCategory =
   | 'Monos'
   | 'Conjuntos'
   | 'Accesorios'
+  | 'Franelillas AAA'
+  | 'Camisas AAA'
+  | 'Sudaderas'
+  | 'Chemises'
+  | 'Chaquetas'
   | 'Otros';
 
 export interface ExhibitionDetail {

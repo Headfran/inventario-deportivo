@@ -10,7 +10,8 @@ import {
    FlatList,
    Animated,
    useWindowDimensions,
-   ActivityIndicator
+   ActivityIndicator,
+   Linking
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight } from 'lucide-react-native';
@@ -18,9 +19,32 @@ import { Product } from '../types/inventory';
 import { subscribeToProducts } from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 
-import { advancedNativeShare } from '../utils/shareUtils';
 import { Cover } from '../components/Cover';
 import { BLUE, LIGHT, DARK, Tone, display, ease, nd, reduced, useEnter, getColorHex } from '../design';
+
+// ==========================================
+// CONFIGURACIÓN DEL COMERCIO
+// ==========================================
+const STORE_PHONE = "584222630079";
+
+// ==========================================
+// CATEGORÍAS FIJAS (Siempre visibles)
+// ==========================================
+// Agrega aquí todas las categorías que tienes en tu formulario para que siempre aparezcan
+const STATIC_CATEGORIES = [
+   'Franelas',
+   'Sudaderas',
+   'Monos',
+   'Shorts',
+   'Chaquetas',
+   'Camisas',
+   'Camisas AAA',
+   'Franelillas AAA',
+   'Chemises',
+   'Conjuntos',
+   'Zapatos',
+   'Accesorios'
+];
 
 interface Props {
    onOpenStaffAccess: () => void;
@@ -158,9 +182,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
    const [detailProduct, setDetailProduct] = useState<Product | null>(null);
    const [selectedImageIndex, setSelectedImageIndex] = useState(0);
    const [searchFocused, setSearchFocused] = useState(false);
-   const [shareStatus, setShareStatus] = useState<string | null>(null);
 
-   // 2. ESTADO DE PAGINACIÓN TRADICIONAL
+   // ESTADOS PARA EL CARRITO DE WHATSAPP
+   const [selectedColor, setSelectedColor] = useState<string | null>(null);
+   const [selectedSize, setSelectedSize] = useState<string | null>(null);
+
    const [currentPage, setCurrentPage] = useState(1);
    const flatListRef = useRef<FlatList>(null);
 
@@ -171,21 +197,37 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
       return () => unsub();
    }, []);
 
-   const { categories, brands, colors, sizes } = useMemo(() => ({
-      categories: ['all', ...Array.from(new Set(products.map((p) => p.category).filter(Boolean)))],
-      brands: Array.from(new Set(products.map((p) => p.brand).filter(Boolean))),
-      colors: Array.from(new Set(products.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean))),
-      sizes: Array.from(new Set(products.flatMap((p) => (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))).filter(Boolean))),
-   }), [products]);
+   // 1. FILTRO MAESTRO: Solo prendas ubicadas en Bodega/Vitrina
+   const validProducts = useMemo(() => {
+      return products.reduce((acc: Product[], p) => {
+         const validVariants = (p.variants || []).filter(v => v.locations && v.locations.length > 0);
+         if (validVariants.length > 0) {
+            acc.push({ ...p, variants: validVariants });
+         }
+         return acc;
+      }, []);
+   }, [products]);
 
-   const filteredProducts = useMemo(() => filterProducts(products, filters), [products, filters]);
+   // 2. EXTRACCIÓN DINÁMICA DE FILTROS (Con categorías fijas y 'all' al final)
+   const { categories, brands, colors, sizes } = useMemo(() => {
+      const dynamicCats = validProducts.map((p) => p.category).filter(Boolean);
+      // Combinamos las fijas con las dinámicas (por si hay alguna nueva) y eliminamos duplicados
+      const cats = Array.from(new Set([...STATIC_CATEGORIES, ...dynamicCats]));
 
-   // AL FILTRAR, VOLVER A LA PÁGINA 1
+      return {
+         categories: [...cats, 'all'], // <-- 'all' al final
+         brands: Array.from(new Set(validProducts.map((p) => p.brand).filter(Boolean))),
+         colors: Array.from(new Set(validProducts.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean))),
+         sizes: Array.from(new Set(validProducts.flatMap((p) => (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))).filter(Boolean))),
+      }
+   }, [validProducts]);
+
+   const filteredProducts = useMemo(() => filterProducts(validProducts, filters), [validProducts, filters]);
+
    useEffect(() => {
       setCurrentPage(1);
    }, [filters]);
 
-   // 3. CÁLCULOS DE PAGINACIÓN
    const totalPages = Math.ceil(filteredProducts.length / PAGE_SIZE) || 1;
 
    const paginatedProducts = useMemo(() => {
@@ -193,7 +235,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
       return filteredProducts.slice(start, start + PAGE_SIZE);
    }, [filteredProducts, currentPage]);
 
-   // FUNCIÓN PARA CAMBIAR DE PÁGINA Y HACER SCROLL ARRIBA
    const handlePageChange = (newPage: number) => {
       setCurrentPage(newPage);
       flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -205,9 +246,22 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
    const openDetail = useCallback((p: Product) => {
       setDetailProduct(p);
       setSelectedImageIndex(0);
+      setSelectedColor(null);
+      setSelectedSize(null);
    }, []);
 
-   // ---- RESPONSIVE ----
+   // REDIRECCIÓN A WHATSAPP
+   const sendToWhatsApp = (p: Product, color?: string | null, size?: string | null) => {
+      let msg = `Hola! Me interesa el modelo *${p.brand} - ${p.name}*\nCódigo: ${p.code}`;
+      if (color && size) {
+         msg += `\nQuisiera pedir el color *${color}* en talla *${size}*.`;
+      } else {
+         msg += `\n¿Me podrías dar más información sobre su disponibilidad?`;
+      }
+      const url = `https://wa.me/${STORE_PHONE}?text=${encodeURIComponent(msg)}`;
+      Linking.openURL(url).catch(() => alert('Verifica tener WhatsApp instalado.'));
+   };
+
    const { width } = useWindowDimensions();
    const mobile = width < 600;
    const wide = width >= 800;
@@ -220,7 +274,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
    const filterAnim = useEnter(isFilterModalOpen, mobile);
    const detailAnim = useEnter(!!detailProduct, mobile);
 
-   const heroPics = useMemo(() => products.filter((p) => p.images?.[0]).slice(0, 3), [products]);
+   const heroPics = useMemo(() => validProducts.filter((p) => p.images?.[0]).slice(0, 3), [validProducts]);
    const reveal = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
    const played = useRef(false);
 
@@ -355,7 +409,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
       </View>
    );
 
-   // 4. FOOTER CON CONTROLES DE PAGINACIÓN
    const paginationFooter = (
       <View style={styles.paginationContainer}>
          {totalPages > 1 && (
@@ -421,6 +474,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
                {(p.variants || []).map((v, idx) => {
                   const allSizes = v.sizes || [];
                   const anyStock = allSizes.some((s) => Number(s.stock) > 0);
+
                   return (
                      <View key={idx} style={styles.variantRow}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -429,11 +483,25 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
                         </View>
                         {anyStock ? (
                            <View style={styles.sizesWrap}>
-                              {allSizes.map((s) => (
-                                 <View key={s.size} style={styles.sizeBox}>
-                                    <Text style={[styles.sizeBoxText, Number(s.stock) <= 0 && styles.sizeOff]}>{s.size}</Text>
-                                 </View>
-                              ))}
+                              {allSizes.map((s) => {
+                                 const isSelected = selectedColor === v.color && selectedSize === s.size;
+                                 return (
+                                    <Pressable
+                                       key={s.size}
+                                       style={[styles.sizeBox, isSelected && styles.sizeBoxSelected]}
+                                       onPress={() => {
+                                          if (Number(s.stock) > 0) {
+                                             setSelectedColor(v.color);
+                                             setSelectedSize(s.size);
+                                          }
+                                       }}
+                                    >
+                                       <Text style={[styles.sizeBoxText, Number(s.stock) <= 0 && styles.sizeOff, isSelected && styles.sizeBoxTextSelected]}>
+                                          {s.size}
+                                       </Text>
+                                    </Pressable>
+                                 );
+                              })}
                            </View>
                         ) : (
                            <Text style={styles.soldOut}>Agotado</Text>
@@ -448,13 +516,13 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
       const footer = (
          <View style={styles.detailFooter}>
             <Pressable
-               style={({ pressed }) => [styles.waMain, pressed && styles.pressed]}
-               onPress={() => {
-                  advancedNativeShare(p, undefined, setShareStatus);
-               }}
+               style={({ pressed }) => [styles.waMain, pressed && styles.pressed, (!selectedColor || !selectedSize) && { backgroundColor: T.ink, opacity: 0.95 }]}
+               onPress={() => sendToWhatsApp(p, selectedColor, selectedSize)}
             >
                <MessageCircle size={19} color={T.onAccent} />
-               <Text style={styles.waMainText}>Pedir por WhatsApp</Text>
+               <Text style={styles.waMainText}>
+                  {selectedColor && selectedSize ? `Pedir ${selectedSize} en ${selectedColor}` : 'Consultar por WhatsApp'}
+               </Text>
             </Pressable>
          </View>
       );
@@ -513,11 +581,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
                   width={cardW}
                   compact={mobile}
                   onOpen={openDetail}
-                  onShare={(p) => advancedNativeShare(p, undefined, setShareStatus)}
+                  onShare={(p) => sendToWhatsApp(p)}
                />
             )}
             ListHeaderComponent={header}
-            ListFooterComponent={paginationFooter} // 5. INYECTAMOS LA PAGINACIÓN AQUÍ
+            ListFooterComponent={paginationFooter}
             ListEmptyComponent={
                <View style={styles.emptyBox}>
                   <Text style={styles.emptyTitle}>No se encontraron prendas</Text>
@@ -536,7 +604,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
             keyboardShouldPersistTaps="handled"
          />
 
-         {/* MODALES RECURRENTES (Filtros, Detalle, Carga) */}
+         {/* MODAL DE FILTROS */}
          <Modal visible={isFilterModalOpen} transparent animationType="fade">
             <View style={[styles.overlay, mobile && styles.overlaySheet]}>
                <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsFilterModalOpen(false)} />
@@ -604,6 +672,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
             </View>
          </Modal>
 
+         {/* MODAL DE DETALLE */}
          <Modal visible={!!detailProduct} transparent animationType="fade">
             <View style={[styles.overlay, mobile && styles.overlaySheet]}>
                <Pressable style={StyleSheet.absoluteFill} onPress={() => setDetailProduct(null)} />
@@ -615,15 +684,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess }) => {
                      {renderDetail(detailProduct)}
                   </Animated.View>
                )}
-            </View>
-         </Modal>
-
-         <Modal visible={!!shareStatus} transparent animationType="fade">
-            <View style={styles.loaderOverlay}>
-               <View style={styles.loaderBox}>
-                  <ActivityIndicator size="large" color={T.accent} />
-                  <Text style={styles.loaderText}>{shareStatus}</Text>
-               </View>
             </View>
          </Modal>
       </View>
@@ -701,7 +761,9 @@ const styles = StyleSheet.create({
    cardName: { fontSize: 14, fontWeight: '700', color: T.ink, minHeight: 36 },
    sizes: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },
    sizeBox: { minWidth: 26, height: 24, paddingHorizontal: 5, borderRadius: 5, borderWidth: 1, borderColor: T.line, justifyContent: 'center', alignItems: 'center' },
+   sizeBoxSelected: { borderColor: T.accent, backgroundColor: T.accent },
    sizeBoxText: { fontSize: 11, fontWeight: '700', color: T.ink },
+   sizeBoxTextSelected: { color: T.onAccent },
    sizeOff: { color: T.inkMute, textDecorationLine: 'line-through', fontWeight: '500', opacity: 0.6 },
    priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
    price: { ...display, fontSize: 32, lineHeight: 30, fontWeight: '800', color: T.ink },
@@ -756,9 +818,4 @@ const styles = StyleSheet.create({
    soldOut: { fontSize: 13, color: T.inkMute, fontStyle: 'italic' },
    detailFooter: { padding: 16, backgroundColor: T.surface },
    waMain: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, height: 54, backgroundColor: T.accent, borderRadius: 10 },
-
-   // Modal de Carga para Compartir
-   loaderOverlay: { flex: 1, backgroundColor: T.overlay, justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
-   loaderBox: { backgroundColor: T.surface, padding: 24, borderRadius: 16, alignItems: 'center', minWidth: 200, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.2, shadowRadius: 10 },
-   loaderText: { marginTop: 14, fontSize: 15, fontWeight: '800', color: T.ink },
 });

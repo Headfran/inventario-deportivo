@@ -4,37 +4,63 @@ import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import { Product } from '../types/inventory';
 
-export const formatProductShareText = (product: Product, selectedColor?: string): string => {
-  let msg = `🛍️ *${product.brand.toUpperCase()} - ${product.name}*\n📌 *Código:* ${product.code}\n💵 *Precio:* $${product.price.toFixed(2)}\n\n🎨 *Tallas Disponibles:*\n`;
-  const variants = selectedColor ? product.variants.filter((v) => v.color.toLowerCase() === selectedColor.toLowerCase()) : product.variants;
-  variants.forEach((v) => {
-    const sizes = (v.sizes || []).filter((s) => Number(s.stock) > 0).map((s) => s.size).join(', ');
-    msg += sizes ? `• *${v.color}:* ${sizes}\n` : `• *${v.color}:* (Agotado)\n`;
+// ALGORITMO INTELIGENTE PARA ORDENAR TALLAS DE ROPA Y ZAPATOS
+const sortSizes = (sizes: string[]): string[] => {
+  const SIZE_ORDER = ['S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL'];
+
+  return sizes.sort((a, b) => {
+    const indexA = SIZE_ORDER.indexOf(a.toUpperCase());
+    const indexB = SIZE_ORDER.indexOf(b.toUpperCase());
+
+    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+    if (indexA !== -1) return -1;
+    if (indexB !== -1) return 1;
+
+    const numA = parseFloat(a);
+    const numB = parseFloat(b);
+    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+
+    return a.localeCompare(b);
   });
-  return msg + `\n_¿Deseas apartar o consultar sobre este modelo?_`;
+};
+
+export const formatProductShareText = (product: Product, selectedColors: string[] = []): string => {
+  let msg = `📌 *Código:* ${product.code}\n\n`;
+
+  const variants = selectedColors.length > 0
+    ? product.variants.filter((v) => selectedColors.includes(v.color))
+    : product.variants;
+
+  variants.forEach((v) => {
+    const availableSizes = (v.sizes || []).filter((s) => Number(s.stock) > 0).map((s) => s.size);
+    const sortedSizes = sortSizes(availableSizes).join(', ');
+
+    msg += sortedSizes ? `• *${v.color}:* ${sortedSizes}\n` : `• *${v.color}:* (Agotado)\n`;
+  });
+
+  return msg.trim();
 };
 
 export const formatBulkShareText = (products: Product[]): string => {
-  let msg = `🌟 *CATÁLOGO DISPONIBLE* 🌟\n\n`;
+  let msg = ``;
   products.forEach(p => {
-    msg += `🛍️ *${p.brand} - ${p.name}*\n`;
-    msg += `📌 Código: ${p.code} | 💵 $${p.price.toFixed(2)}\n`;
-    const availableSizes = Array.from(new Set(p.variants.flatMap(v => v.sizes.filter(s => s.stock > 0).map(s => s.size)))).join(', ');
-    msg += `📏 Tallas: ${availableSizes || '(Agotado)'}\n\n`;
+    msg += `📌 *Código:* ${p.code}\n`;
+    const availableSizes = Array.from(new Set(p.variants.flatMap(v => v.sizes.filter(s => s.stock > 0).map(s => s.size))));
+    const sortedSizes = sortSizes(availableSizes).join(', ');
+    msg += `• Tallas: ${sortedSizes || '(Agotado)'}\n\n`;
   });
-  return msg + `_¿Te interesa alguno de estos modelos?_`;
+  return msg.trim();
 };
 
-// MOTOR DE CACHÉ INTELIGENTE
-const ensureImageCached = async (imageUrl: string, productCode: string, onStatus?: (s: string) => void): Promise<string> => {
+// MOTOR DE CACHÉ INTELIGENTE 
+const ensureImageCached = async (imageUrl: string, uniqueId: string, onStatus?: (s: string) => void): Promise<string> => {
   const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
   if (!baseDir) throw new Error('Sistema de archivos inalcanzable');
 
-  // Formateamos un nombre único basado en el código del producto
-  const fileName = `img_cache_${productCode.replace(/[^a-zA-Z0-9]/g, '_')}.jpg`;
+  const imageHash = imageUrl.substring(imageUrl.length - 15).replace(/[^a-zA-Z0-9]/g, '_');
+  const fileName = `img_cache_${uniqueId.replace(/[^a-zA-Z0-9]/g, '_')}_${imageHash}.jpg`;
   const localUri = `${baseDir}${fileName}`;
 
-  // Verificamos si la imagen ya existe físicamente en el celular
   if (onStatus) onStatus('Verificando caché local... 🔍');
   const info = await FileSystem.getInfoAsync(localUri);
 
@@ -48,29 +74,66 @@ const ensureImageCached = async (imageUrl: string, productCode: string, onStatus
   return uri;
 };
 
-export const advancedNativeShare = async (product: Product, selectedColor?: string, onStatus?: (s: string | null) => void) => {
-  const text = formatProductShareText(product, selectedColor);
+export const advancedNativeShare = async (product: Product, selectedColors: string[] = [], selectedImage?: string, onStatus?: (s: string | null) => void) => {
+  const text = formatProductShareText(product, selectedColors);
+  const targetImage = selectedImage || (product.images && product.images[0]);
 
   try {
+    // ENTORNO PWA WEB (Chrome/Safari Móvil y Escritorio)
     if (Platform.OS === 'web') {
+      if (navigator.share) {
+        try {
+          if (onStatus) onStatus('Preparando envío...');
+          let shareData: ShareData = {
+            title: product.code,
+            text: text,
+          };
+
+          // MAGIA: Intentar compartir la foto en la Web PWA
+          if (targetImage && navigator.canShare) {
+            try {
+              const response = await fetch(targetImage);
+              const blob = await response.blob();
+              const file = new File([blob], `${product.code}.jpg`, { type: 'image/jpeg' });
+
+              if (navigator.canShare({ files: [file] })) {
+                shareData.files = [file];
+              }
+            } catch (imgError) {
+              console.log("La imagen no se pudo adjuntar en web, enviando solo texto.", imgError);
+            }
+          }
+
+          await navigator.share(shareData);
+          if (onStatus) onStatus(null);
+          return;
+        } catch (e: any) {
+          if (onStatus) onStatus(null);
+          // Si el usuario canceló el menú nativo, salimos sin hacer nada (No copiamos al portapapeles)
+          if (e.name === 'AbortError') return;
+        }
+      }
+
+      // FALLBACK: Computadoras o móviles sin HTTPS (Local)
       if (onStatus) onStatus('Generando enlace...');
       await Clipboard.setStringAsync(text);
-      alert('Texto copiado al portapapeles');
+      alert('Texto copiado al portapapeles. Pégalo en tu chat.');
       if (onStatus) onStatus(null);
       return;
     }
 
-    if (product.images && product.images.length > 0) {
+    // ENTORNO APP / EXPO GO (Móvil Nativo)
+    if (targetImage) {
       if (onStatus) onStatus('Copiando detalles... 📋');
       await Clipboard.setStringAsync(text);
 
-      const localUri = await ensureImageCached(product.images[0], product.code || 'prenda', onStatus);
+      const localUri = await ensureImageCached(targetImage, product.code || 'prenda', onStatus);
 
       if (onStatus) onStatus('Abriendo menú de compartir... 🚀');
       if (await Sharing.isAvailableAsync()) {
         Alert.alert(
           '¡Texto Copiado!',
-          'La información se copió al portapapeles.\n\nAl abrir WhatsApp/Instagram, presiona en el cuadro de texto y dale a "Pegar".',
+          'La información se copió al portapapeles.\n\nAl abrir WhatsApp o Instagram, presiona en el cuadro de texto y dale a "Pegar".',
           [{
             text: 'Compartir Imagen',
             onPress: async () => {
@@ -97,6 +160,15 @@ export const advancedBulkNativeShare = async (products: Product[], onStatus?: (s
   const text = formatBulkShareText(products);
   try {
     if (Platform.OS === 'web') {
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: 'Catálogo', text: text });
+          return;
+        } catch (e: any) {
+          if (e.name === 'AbortError') return;
+        }
+      }
+
       await Clipboard.setStringAsync(text);
       alert('Catálogo copiado al portapapeles');
       return;
@@ -108,14 +180,13 @@ export const advancedBulkNativeShare = async (products: Product[], onStatus?: (s
       if (onStatus) onStatus('Preparando catálogo... 📋');
       await Clipboard.setStringAsync(text);
 
-      // Descargamos o usamos el caché de la portada
       const localUri = await ensureImageCached(firstImageProduct.images[0], 'bulk_cover', onStatus);
 
       if (onStatus) onStatus('Abriendo sistema... 🚀');
       if (await Sharing.isAvailableAsync()) {
         Alert.alert(
           '¡Catálogo Copiado!',
-          'Texto de prendas copiado.\n\nComparte esta portada y pega el texto en el chat. (Para enviar todas las imágenes a la vez, usa "Catálogo PDF").',
+          'El texto del catálogo se copió.\n\nComparte esta portada y pega el texto en tu chat.',
           [{
             text: 'Continuar',
             onPress: async () => {

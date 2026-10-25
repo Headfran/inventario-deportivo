@@ -27,7 +27,7 @@ interface MenuItem { id: StaffTab; label: string; icon: any; }
 const MENU_ITEMS: MenuItem[] = [
    { id: 'inventory', label: 'Inventario', icon: Package },
    { id: 'shelves', label: 'Mapa Estantes', icon: MapPin },
-   { id: 'sales', label: 'Punto de Venta', icon: ShoppingBag },
+   { id: 'sales', label: 'Registro de Venta', icon: ShoppingBag },
    { id: 'layaways', label: 'Apartados', icon: Clock },
    { id: 'history', label: 'Historial', icon: Receipt },
    { id: 'sellers', label: 'Vendedores', icon: Users },
@@ -293,7 +293,7 @@ const MainApp = () => {
          <View style={styles.tabContent}>
             {activeTab === 'inventory' && <InventoryListScreen />}
             {activeTab === 'shelves' && <ShelfMapScreen />}
-            {activeTab === 'sales' && <SalesRegisterScreen currentSellerName={user?.email || 'Vendedor'} currentSellerId={user?.uid} isOnline={isOnline} />}
+            {activeTab === 'sales' && <SalesRegisterScreen isOnline={isOnline} />}
             {activeTab === 'history' && <SalesHistoryScreen />}
             {activeTab === 'analytics' && <AnalyticsDashboardScreen />}
             {activeTab === 'layaways' && <LayawayScreen currentSellerName={user?.email || 'Vendedor'} currentSellerId={user?.uid} />}

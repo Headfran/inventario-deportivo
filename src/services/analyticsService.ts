@@ -1,6 +1,6 @@
-import { Sale } from '../types/sale';
+import { Sale, SaleItem } from '../services/salesHistoryService';
 
-export type TimeRangeOption = 'today' | '7days' | '30days' | 'all';
+export type TimeRangeOption = 'today' | '7days' | '30days' | 'all' | 'custom';
 
 export interface PaymentMethodBreakdown {
   method: string;
@@ -32,20 +32,35 @@ export interface AnalyticsData {
 }
 
 /**
- * Filtra las ventas según el rango de tiempo seleccionado
+ * Función segura para parsear fechas de Firestore a JavaScript Date
+ */
+const parseDateSafely = (val: any): Date => {
+  if (!val) return new Date(0);
+  if (val instanceof Date) return val;
+  if (typeof val.toDate === 'function') return val.toDate();
+  if (typeof val.seconds === 'number') return new Date(val.seconds * 1000);
+  const parsed = new Date(val);
+  return isNaN(parsed.getTime()) ? new Date(0) : parsed;
+};
+
+/**
+ * Filtra las ventas según el rango de tiempo seleccionado, excluyendo las anuladas
  */
 export const filterSalesByTimeRange = (
   sales: Sale[],
-  range: TimeRangeOption
+  range: TimeRangeOption,
+  customRange?: { start: Date; end: Date } | null
 ): Sale[] => {
-  if (range === 'all') return sales;
-
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
   return sales.filter((sale) => {
-    const saleDate = sale.createdAt?.toDate ? sale.createdAt.toDate() : new Date();
-    const saleTime = saleDate.getTime();
+    // REGLA DE ORO: Las ventas anuladas no cuentan para las estadísticas
+    if (sale.status === 'voided') return false;
+
+    if (range === 'all') return true;
+
+    const saleTime = parseDateSafely(sale.createdAt).getTime();
 
     if (range === 'today') {
       return saleTime >= startOfDay;
@@ -55,6 +70,8 @@ export const filterSalesByTimeRange = (
     } else if (range === '30days') {
       const thirtyDaysAgo = startOfDay - 29 * 24 * 60 * 60 * 1000;
       return saleTime >= thirtyDaysAgo;
+    } else if (range === 'custom' && customRange) {
+      return saleTime >= customRange.start.getTime() && saleTime <= customRange.end.getTime();
     }
 
     return true;
@@ -69,48 +86,54 @@ export const calculateAnalytics = (sales: Sale[]): AnalyticsData => {
   let totalUnitsSold = 0;
   const totalTransactions = sales.length;
 
-  const paymentMap: Record<string, { totalAmount: number; count: number }> = {
-    pago_movil: { totalAmount: 0, count: 0 },
-    efectivo: { totalAmount: 0, count: 0 },
-    zelle: { totalAmount: 0, count: 0 },
-    tarjeta: { totalAmount: 0, count: 0 },
-    otro: { totalAmount: 0, count: 0 },
-  };
-
+  const paymentMap: Record<string, { totalAmount: number; count: number }> = {};
   const productMap: Record<string, TopProductStat> = {};
 
   sales.forEach((sale) => {
-    totalRevenue += sale.totalAmount || 0;
+    // Compatibilidad: lee tanto 'total' (nuevo) como 'totalAmount' (viejo)
+    const saleTotal = Number(sale.total || (sale as any).totalAmount) || 0;
+    totalRevenue += saleTotal;
 
     // Desglose por Método de Pago
     const method = sale.paymentMethod || 'otro';
     if (!paymentMap[method]) {
       paymentMap[method] = { totalAmount: 0, count: 0 };
     }
-    paymentMap[method].totalAmount += sale.totalAmount || 0;
+    paymentMap[method].totalAmount += saleTotal;
     paymentMap[method].count += 1;
 
     // Procesar prendas vendidas
-    (sale.items || []).forEach((item) => {
-      totalUnitsSold += item.quantity || 0;
+    (sale.items || []).forEach((item: any) => {
+      const qty = Number(item.quantity) || 0;
+      totalUnitsSold += qty;
 
-      const productKey = `${item.productId}_${item.variantColor}_${item.size}`;
+      // Adaptabilidad de datos: Soporta la estructura vieja y la nueva simultáneamente
+      const brand = item.brand || item.productBrand || 'Genérico';
+      const name = item.name || item.productName || 'Artículo Desconocido';
+      const code = item.productCode || item.code || 'S/N';
+      const color = item.color || item.variantColor || 'N/A';
+      const size = item.size || 'N/A';
+      const image = item.productImage || item.image || '';
+      const itemTotal = Number(item.totalPrice || item.subtotal) || 0;
+
+      const productKey = `${item.productId}_${color}_${size}`;
+
       if (!productMap[productKey]) {
         productMap[productKey] = {
           productId: item.productId,
-          brand: item.productBrand,
-          name: item.productName,
-          code: item.productCode,
-          variantColor: item.variantColor,
-          size: item.size,
+          brand,
+          name,
+          code,
+          variantColor: color, // Mantenemos el nombre para no romper tu interfaz
+          size,
           unitsSold: 0,
           totalRevenue: 0,
-          image: item.productImage,
+          image,
         };
       }
 
-      productMap[productKey].unitsSold += item.quantity || 0;
-      productMap[productKey].totalRevenue += item.subtotal || 0;
+      productMap[productKey].unitsSold += qty;
+      productMap[productKey].totalRevenue += itemTotal;
     });
   });
 
@@ -121,6 +144,10 @@ export const calculateAnalytics = (sales: Sale[]): AnalyticsData => {
     pago_movil: 'Pago Móvil',
     efectivo: 'Efectivo',
     zelle: 'Zelle',
+    binance: 'Binance',
+    punto: 'Punto de Venta',
+    transferencia: 'Transferencia',
+    mixto: 'Mixto',
     tarjeta: 'Tarjeta / Punto',
     otro: 'Otro',
   };
@@ -128,7 +155,7 @@ export const calculateAnalytics = (sales: Sale[]): AnalyticsData => {
   const paymentBreakdown: PaymentMethodBreakdown[] = Object.entries(paymentMap)
     .map(([method, data]) => ({
       method,
-      label: labels[method] || method,
+      label: labels[method] || method.toUpperCase(),
       totalAmount: data.totalAmount,
       count: data.count,
       percentage: totalRevenue > 0 ? (data.totalAmount / totalRevenue) * 100 : 0,
