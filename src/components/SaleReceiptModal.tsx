@@ -1,25 +1,9 @@
 import React, { useState } from 'react';
-import {
-   View,
-   Text,
-   Modal,
-   StyleSheet,
-   TouchableOpacity,
-   ScrollView,
-   TextInput,
-} from 'react-native';
-import {
-   CheckCircle2,
-   Printer,
-   MessageCircle,
-   X,
-   Share2,
-   ShoppingBag,
-   DollarSign,
-   User,
-} from 'lucide-react-native';
+import { View, Text, Modal, StyleSheet, Pressable, ScrollView, TextInput } from 'react-native';
+import { CheckCircle2, Printer, MessageCircle } from 'lucide-react-native';
 import { Sale } from '../types/sale';
 import { openWhatsAppReceipt, printReceiptHTML } from '../utils/receiptUtils';
+import { MONO as T, display } from '../design';
 
 interface Props {
    sale: Sale | null;
@@ -28,20 +12,10 @@ interface Props {
    storeName?: string;
 }
 
-// Paleta de diseño (un solo lugar para cambiar colores)
-const C = {
-   bg: '#0A0A0A',
-   surface: '#121212',
-   raised: '#1A1A1A',
-   border: '#262626',
-   line: '#2E2E2E',
-   white: '#FFFFFF',
-   light: '#E8E8E8',
-   soft: '#BDBDBD',
-   mute: '#8A8A8A',
-   dim: '#6A6A6A',
-   ink: '#5A5A5A', // texto secundario sobre el "papel" del ticket
-};
+// Botón con respuesta al presionar
+const P = ({ style, ...rest }: any) => (
+   <Pressable {...rest} style={({ pressed }: any) => [style, pressed && styles.pressed]} />
+);
 
 export const SaleReceiptModal: React.FC<Props> = ({
    sale,
@@ -69,17 +43,15 @@ export const SaleReceiptModal: React.FC<Props> = ({
       <Modal visible={visible} transparent animationType="fade">
          <View style={styles.overlay}>
             <View style={styles.card}>
-               {/* CABECERA ÉXITO */}
+               {/* CABECERA ÉXITO (negra, como el banner del panel) */}
                <View style={styles.successBanner}>
-                  <CheckCircle2 size={28} color={C.light} />
+                  <CheckCircle2 size={34} color={T.onBar} />
                   <Text style={styles.successTitle}>Venta Registrada con Éxito</Text>
-                  <Text style={styles.successSubtitle}>
-                     Inventario descontado correctamente
-                  </Text>
+                  <Text style={styles.successSubtitle}>Inventario descontado correctamente</Text>
                </View>
 
                {/* DETALLE TICKET PREVIEW */}
-               <ScrollView style={styles.body}>
+               <ScrollView style={{ padding: 16 }}>
                   <View style={styles.ticketBox}>
                      <View style={styles.ticketHeader}>
                         <Text style={styles.storeTitle}>{storeName}</Text>
@@ -114,7 +86,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
                               <Text style={styles.itemSpec}>
                                  {item.variantColor} • Talla: {item.size}
                               </Text>
-                              <Text style={styles.itemQtyPrice}>
+                              <Text style={styles.itemSpec}>
                                  {item.quantity} unidad(es) x ${item.unitPrice.toFixed(2)}
                               </Text>
                            </View>
@@ -135,7 +107,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
                   <TextInput
                      style={styles.phoneInput}
                      placeholder="Número WhatsApp (+58...)"
-                     placeholderTextColor={C.dim}
+                     placeholderTextColor={T.inkMute}
                      value={overridePhone}
                      onChangeText={setOverridePhone}
                      keyboardType="phone-pad"
@@ -144,25 +116,19 @@ export const SaleReceiptModal: React.FC<Props> = ({
 
                {/* ACCIONES DEL COMPROBANTE */}
                <View style={styles.footer}>
-                  <TouchableOpacity
-                     style={styles.whatsAppBtn}
-                     onPress={() => openWhatsAppReceipt(sale, overridePhone, storeName)}
-                  >
-                     <MessageCircle size={16} color={C.bg} style={{ marginRight: 6 }} />
+                  <P style={styles.whatsAppBtn} onPress={() => openWhatsAppReceipt(sale, overridePhone, storeName)}>
+                     <MessageCircle size={17} color={T.onSolid} />
                      <Text style={styles.whatsAppBtnText}>WhatsApp</Text>
-                  </TouchableOpacity>
+                  </P>
 
-                  <TouchableOpacity
-                     style={styles.printBtn}
-                     onPress={() => printReceiptHTML(sale, storeName)}
-                  >
-                     <Printer size={16} color={C.light} style={{ marginRight: 6 }} />
+                  <P style={styles.printBtn} onPress={() => printReceiptHTML(sale, storeName)}>
+                     <Printer size={17} color={T.ink} />
                      <Text style={styles.printBtnText}>Imprimir Ticket</Text>
-                  </TouchableOpacity>
+                  </P>
 
-                  <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+                  <P style={styles.closeBtn} onPress={onClose}>
                      <Text style={styles.closeBtnText}>Nueva Venta</Text>
-                  </TouchableOpacity>
+                  </P>
                </View>
             </View>
          </View>
@@ -170,63 +136,43 @@ export const SaleReceiptModal: React.FC<Props> = ({
    );
 };
 
-// Bases compartidas (evitan repetir estilos)
-const caps = { textTransform: 'uppercase' as const, letterSpacing: 1.5 };
-const btn = {
-   flexDirection: 'row' as const,
-   justifyContent: 'center' as const,
-   alignItems: 'center' as const,
-   paddingVertical: 11,
-   borderRadius: 2,
-};
-const btnText = { ...caps, fontSize: 11, fontWeight: '900' as const };
+const btn = { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 8, height: 48, borderRadius: 10 };
 
 const styles = StyleSheet.create({
-   overlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.85)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-   card: { width: '100%', maxWidth: 440, maxHeight: '90%', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 4, overflow: 'hidden' },
+   overlay: { flex: 1, backgroundColor: T.overlay, justifyContent: 'center', alignItems: 'center', padding: 16 },
+   card: { width: '100%', maxWidth: 440, maxHeight: '92%', backgroundColor: T.bg, borderRadius: 16, overflow: 'hidden' },
+   pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
 
-   successBanner: { alignItems: 'center', backgroundColor: C.raised, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: C.border },
-   successTitle: { ...caps, fontSize: 14, fontWeight: '900', color: C.white, marginTop: 8 },
-   successSubtitle: { fontSize: 11, color: C.mute, letterSpacing: 1, marginTop: 2 },
+   successBanner: { alignItems: 'center', backgroundColor: T.bar, paddingVertical: 22, paddingHorizontal: 16 },
+   successTitle: { ...display, fontSize: 30, lineHeight: 30, fontWeight: '800', color: T.onBar, marginTop: 8, textTransform: 'uppercase', textAlign: 'center' },
+   successSubtitle: { fontSize: 13, color: 'rgba(255,255,255,0.65)', marginTop: 4 },
 
-   body: { padding: 16 },
-
-   // Ticket tipo "papel": gris claro con texto oscuro
-   ticketBox: { backgroundColor: C.light, borderRadius: 2, padding: 14, marginBottom: 14 },
-   ticketHeader: { alignItems: 'center', marginBottom: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: C.soft },
-   storeTitle: { ...caps, fontSize: 15, fontWeight: '900', color: C.bg },
-   ticketMeta: { fontSize: 10, color: C.ink, marginTop: 2 },
+   // Ticket: gris muy claro, con separadores punteados
+   ticketBox: { backgroundColor: T.surface, borderRadius: 12, padding: 16, marginBottom: 16 },
+   ticketHeader: { alignItems: 'center', marginBottom: 12 },
+   storeTitle: { ...display, fontSize: 26, lineHeight: 26, fontWeight: '800', color: T.ink, textTransform: 'uppercase', textAlign: 'center' },
+   ticketMeta: { fontSize: 12, color: T.inkMute, marginTop: 4 },
    ticketRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-   ticketLabel: { fontSize: 11, color: C.ink },
-   ticketVal: { fontSize: 11, fontWeight: 'bold', color: C.bg },
-   divider: { height: 1, backgroundColor: C.soft, marginVertical: 8 },
-   itemsTitle: { fontSize: 11, fontWeight: 'bold', color: C.bg, marginBottom: 6 },
-   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-   itemName: { fontSize: 12, fontWeight: 'bold', color: C.bg },
-   itemSpec: { fontSize: 10, color: C.ink },
-   itemQtyPrice: { fontSize: 10, color: C.ink },
-   itemSubtotal: { fontSize: 12, fontWeight: 'bold', color: C.bg },
-   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-   totalLabel: { ...caps, fontSize: 13, fontWeight: '900', color: C.bg },
-   totalValue: { fontSize: 20, fontWeight: '900', color: C.bg },
+   ticketLabel: { fontSize: 13, color: T.inkSoft },
+   ticketVal: { fontSize: 13, fontWeight: '700', color: T.ink },
+   divider: { borderTopWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(0,0,0,0.3)', marginVertical: 12 },
+   itemsTitle: { fontSize: 12, fontWeight: '700', color: T.inkSoft, marginBottom: 8 },
+   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10 },
+   itemName: { fontSize: 14, fontWeight: '700', color: T.ink },
+   itemSpec: { fontSize: 12, color: T.inkMute },
+   itemSubtotal: { fontSize: 14, fontWeight: '800', color: T.ink },
+   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+   totalLabel: { fontSize: 13, fontWeight: '800', color: T.inkSoft, paddingBottom: 6 },
+   totalValue: { ...display, fontSize: 52, lineHeight: 48, fontWeight: '800', color: T.ink },
 
-   inputLabel: { ...caps, fontSize: 10, fontWeight: 'bold', color: C.mute, marginBottom: 6 },
-   phoneInput: {
-      backgroundColor: C.raised,
-      borderWidth: 1,
-      borderColor: C.line,
-      borderRadius: 2,
-      paddingHorizontal: 12,
-      height: 40,
-      fontSize: 13,
-      color: C.white,
-   },
+   inputLabel: { fontSize: 13, fontWeight: '700', color: T.inkSoft, marginBottom: 6 },
+   phoneInput: { borderWidth: 1, borderColor: T.line, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 14, color: T.ink, backgroundColor: T.bg },
 
-   footer: { flexDirection: 'row', gap: 8, padding: 16, backgroundColor: '#161616', borderTopWidth: 1, borderTopColor: C.border },
-   whatsAppBtn: { ...btn, flex: 1, backgroundColor: C.light },
-   whatsAppBtnText: { ...btnText, color: C.bg },
-   printBtn: { ...btn, flex: 1, backgroundColor: 'transparent', borderWidth: 1, borderColor: '#3A3A3A' },
-   printBtnText: { ...btnText, color: C.light },
-   closeBtn: { ...btn, paddingHorizontal: 12, backgroundColor: C.raised, borderWidth: 1, borderColor: C.line },
-   closeBtnText: { ...btnText, color: C.soft },
+   footer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 16, backgroundColor: T.surface },
+   whatsAppBtn: { ...btn, flexGrow: 1, flexBasis: '46%', backgroundColor: T.solid },
+   whatsAppBtnText: { fontSize: 14, fontWeight: '800', color: T.onSolid },
+   printBtn: { ...btn, flexGrow: 1, flexBasis: '46%', borderWidth: 1, borderColor: T.line, backgroundColor: T.bg },
+   printBtnText: { fontSize: 14, fontWeight: '700', color: T.ink },
+   closeBtn: { ...btn, flexBasis: '100%', borderWidth: 1, borderColor: T.ink, backgroundColor: T.bg },
+   closeBtnText: { fontSize: 14, fontWeight: '800', color: T.ink },
 });

@@ -114,62 +114,66 @@ export const InventoryListScreen = () => {
 
   const padX = isMobile ? 14 : 22;
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.inner}>
-        <View style={[styles.topActions, { paddingHorizontal: padX }, isMobile && styles.topActionsMobile]}>
-          <View style={styles.heading}>
-            <Text style={[styles.title, isMobile && styles.titleMobile]}>
-              JDSTORE<Text style={styles.titleSub}> / INVENTARIO</Text>
-            </Text>
-            <Text style={styles.productCount}>
-              {filteredProducts.length} prendas encontradas
-            </Text>
-          </View>
-
-          <View style={[styles.headerButtons, isMobile && styles.headerButtonsMobile]}>
-            <Pressable
-              style={({ pressed }) => [styles.printBtn, isCompact && styles.compactButton, pressed && styles.pressed]}
-              onPress={() => setIsPrintModalOpen(true)}
-            >
-              <Printer size={17} color={T.ink} />
-              {!isCompact && <Text style={styles.printBtnText}>Catálogo PDF</Text>}
-            </Pressable>
-
-            <Pressable
-              style={({ pressed }) => [styles.newBtn, isCompact && styles.compactButton, pressed && styles.pressed]}
-              onPress={() => {
-                setSelectedProduct(null);
-                setIsFormOpen(true);
-              }}
-            >
-              <Plus size={18} color={T.onSolid} />
-              {!isCompact && <Text style={styles.newBtnText}>Nueva prenda</Text>}
-            </Pressable>
-          </View>
+  // Cabecera que incluye título, botones y los filtros de búsqueda/categorías personalizados
+  const renderHeader = () => (
+    <View>
+      <View style={[styles.topActions, { paddingHorizontal: padX }, isMobile && styles.topActionsMobile]}>
+        <View style={styles.heading}>
+          <Text style={[styles.title, isMobile && styles.titleMobile]}>
+            JDSTORE<Text style={styles.titleSub}> / INVENTARIO</Text>
+          </Text>
+          <Text style={styles.productCount}>
+            {filteredProducts.length} prendas encontradas
+          </Text>
         </View>
 
-        <View style={{ paddingHorizontal: padX }}>
-          <ProductSearchFilter
-            filters={filters}
-            onFilterChange={handleFilterChange}
-            availableCategories={availableCategories}
-            availableBrands={availableBrands}
-            availableSizes={availableSizes}
-          />
+        <View style={[styles.headerButtons, isMobile && styles.headerButtonsMobile]}>
+          <Pressable
+            style={({ pressed }) => [styles.printBtn, isCompact && styles.compactButton, pressed && styles.pressed]}
+            onPress={() => setIsPrintModalOpen(true)}
+          >
+            <Printer size={17} color={T.ink} />
+            {!isCompact && <Text style={styles.printBtnText}>Catálogo PDF</Text>}
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.newBtn, isCompact && styles.compactButton, pressed && styles.pressed]}
+            onPress={() => {
+              setSelectedProduct(null);
+              setIsFormOpen(true);
+            }}
+          >
+            <Plus size={18} color={T.onSolid} />
+            {!isCompact && <Text style={styles.newBtnText}>Nueva prenda</Text>}
+          </Pressable>
         </View>
       </View>
 
+      <View style={{ paddingHorizontal: padX, marginBottom: 12 }}>
+        <ProductSearchFilter
+          filters={filters}
+          onFilterChange={handleFilterChange}
+          availableCategories={availableCategories}
+          availableBrands={availableBrands}
+          availableSizes={availableSizes}
+        />
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={styles.container}>
       <FlatList
         style={styles.list}
         data={paginatedProducts}
         keyExtractor={(item) => item.id || item.code}
+        ListHeaderComponent={renderHeader}
         contentContainerStyle={[
           styles.listContent,
           { paddingHorizontal: padX },
           paginatedProducts.length === 0 && styles.emptyList,
         ]}
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={true}
         renderItem={({ item }) => {
           const totalStock = calculateTotalStock(item);
           const out = totalStock === 0;
@@ -375,7 +379,7 @@ const styles = StyleSheet.create({
 
   // Lista
   list: { flex: 1 },
-  listContent: { width: '100%', maxWidth: MAX, alignSelf: 'center', paddingTop: 8, paddingBottom: 24, gap: 8, flexGrow: 1 },
+  listContent: { width: '100%', maxWidth: MAX, alignSelf: 'center', paddingTop: 8, paddingBottom: 32, gap: 8, flexGrow: 1 },
   emptyList: { justifyContent: 'center' },
   card: { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 12, paddingRight: 16, backgroundColor: T.surface, borderRadius: 12 },
   cardMobile: { flexDirection: 'column', alignItems: 'stretch', gap: 12 },
@@ -388,8 +392,7 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginTop: 2 },
   code: { fontSize: 12, color: T.inkMute, fontWeight: '600' },
   dots: { flexDirection: 'row', gap: 4 },
-  dot: { width: 11, height: 11, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
-  variantCount: { fontSize: 12, color: T.inkMute },
+  dot: { width: 11, height: 11, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(0,0,0,0.3)' },
 
   // Stock, precio y acciones
   side: { flexDirection: 'row', alignItems: 'center', gap: 18 },

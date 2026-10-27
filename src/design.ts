@@ -73,10 +73,10 @@ const COLOR_MAP: Record<string, string> = {
    cafe: '#78350f', brown: '#78350f', vinotinto: '#881337', burgundy: '#881337',
 };
 export const getColorHex = (colorName: string): string => COLOR_MAP[colorName.toLowerCase().trim()] || '#94a3b8';
-// Panel del vendedor: solo negro y blanco (los grises son blanco con transparencia)
+// Panel del vendedor: negro y blanco (los grises son negro con transparencia)
 export const MONO: typeof LIGHT = {
-   bg: '#000000', surface: 'rgba(255,255,255,0.05)', ink: '#FFFFFF', inkSoft: 'rgba(255,255,255,0.72)',
-   inkMute: 'rgba(255,255,255,0.5)', line: 'rgba(255,255,255,0.14)', accent: '#FFFFFF', accentHi: '#FFFFFF',
-   onAccent: '#000000', solid: '#FFFFFF', onSolid: '#000000', imgBg: 'rgba(255,255,255,0.08)',
-   pill: 'rgba(0,0,0,0.75)', overlay: 'rgba(0,0,0,0.85)', bar: '#000000', onBar: '#FFFFFF',
+   bg: '#FFFFFF', surface: 'rgba(0,0,0,0.04)', ink: '#000000', inkSoft: 'rgba(0,0,0,0.75)',
+   inkMute: 'rgba(0,0,0,0.6)', line: 'rgba(0,0,0,0.14)', accent: '#000000', accentHi: '#000000',
+   onAccent: '#FFFFFF', solid: '#000000', onSolid: '#FFFFFF', imgBg: 'rgba(0,0,0,0.06)',
+   pill: 'rgba(255,255,255,0.9)', overlay: 'rgba(0,0,0,0.6)', bar: '#000000', onBar: '#FFFFFF',
 };

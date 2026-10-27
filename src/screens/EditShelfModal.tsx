@@ -1,20 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, Modal, Animated, Easing, Platform, AccessibilityInfo } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, Modal, Animated } from 'react-native';
 import { X, Layers, Save } from 'lucide-react-native';
 import { Shelf } from '../types/inventory';
 import { updateShelf } from '../services/shelfService';
 import { showAlert } from '../utils/alert';
-import { C, box, label, btn, btnText, caps, overlay, modalCard } from '../theme';
+import { MONO as T, display, ease, nd, reduced } from '../design';
 
 interface EditShelfModalProps {
    shelf: Shelf | null;
    visible: boolean;
    onClose: () => void;
 }
-
-// Curva ease-out fuerte: arranca rápido y se siente inmediata
-const ease = Easing.bezier(0.23, 1, 0.32, 1);
-const nd = Platform.OS !== 'web';
 
 export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, onClose }) => {
    // ---- LÓGICA ORIGINAL (sin cambios) ----
@@ -31,7 +27,7 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
       }
    }, [shelf]);
 
-   // ---- SOLO DISEÑO: foco, animación de entrada ----
+   // ---- SOLO DISEÑO: foco y animación de entrada ----
    const [focused, setFocused] = useState<'name' | 'rows' | 'spaces' | null>(null);
    const card = useRef(new Animated.Value(0)).current;
    const items = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
@@ -42,15 +38,13 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
          all.forEach((v) => v.setValue(0)); // listo para la próxima apertura
          return;
       }
-      AccessibilityInfo.isReduceMotionEnabled().then((reduce) => {
-         if (reduce) {
-            all.forEach((v) => v.setValue(1)); // sin movimiento si el usuario lo pidió
-            return;
-         }
-         const t = (v: Animated.Value, d: number) =>
-            Animated.timing(v, { toValue: 1, duration: d, easing: ease, useNativeDriver: nd });
-         Animated.parallel([t(card, 240), Animated.stagger(50, items.map((v) => t(v, 220)))]).start();
-      });
+      if (reduced()) {
+         all.forEach((v) => v.setValue(1)); // sin movimiento si el usuario lo pidió
+         return;
+      }
+      const t = (v: Animated.Value, d: number) =>
+         Animated.timing(v, { toValue: 1, duration: d, easing: ease, useNativeDriver: nd });
+      Animated.parallel([t(card, 240), Animated.stagger(50, items.map((v) => t(v, 220)))]).start();
    }, [visible]);
 
    if (!shelf) return null;
@@ -106,16 +100,14 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                   },
                ]}
             >
-               <View style={styles.shape} />
-
+               {/* Cabecera negra, como el banner del panel */}
                <View style={styles.header}>
-                  <View>
-                     <View style={styles.accentLine} />
+                  <View style={{ flex: 1 }}>
                      <Text style={styles.title}>Editar Estante</Text>
                      <Text style={styles.subtitle}>Nombre y cuadrícula de la bodega</Text>
                   </View>
                   <Pressable onPress={onClose} style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}>
-                     <X size={18} color={C.soft} />
+                     <X size={18} color={T.onBar} />
                   </Pressable>
                </View>
 
@@ -130,7 +122,7 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                         onBlur={() => setFocused(null)}
                         autoCapitalize="characters"
                         placeholder="Ej: RACK A, ESTANTE 2"
-                        placeholderTextColor={C.dim}
+                        placeholderTextColor={T.inkMute}
                      />
                   </Animated.View>
 
@@ -145,7 +137,7 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                            onBlur={() => setFocused(null)}
                            keyboardType="number-pad"
                            placeholder="1"
-                           placeholderTextColor={C.dim}
+                           placeholderTextColor={T.inkMute}
                         />
                      </View>
 
@@ -159,7 +151,7 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                            onBlur={() => setFocused(null)}
                            keyboardType="number-pad"
                            placeholder="3"
-                           placeholderTextColor={C.dim}
+                           placeholderTextColor={T.inkMute}
                         />
                      </View>
                   </Animated.View>
@@ -167,8 +159,8 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                   {/* Vista previa en vivo del estante */}
                   <Animated.View style={[styles.preview, reveal(items[2])]}>
                      <View style={styles.previewHead}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                           <Layers size={14} color={C.mute} style={{ marginRight: 6 }} />
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                           <Layers size={15} color={T.inkSoft} />
                            <Text style={styles.previewTitle}>Vista previa</Text>
                         </View>
                         <Text style={styles.previewTotal}>
@@ -206,7 +198,7 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                      disabled={submitting}
                      style={({ pressed }) => [styles.saveBtn, submitting && { opacity: 0.6 }, pressed && styles.pressed]}
                   >
-                     <Save size={16} color={C.bg} />
+                     <Save size={16} color={T.onSolid} />
                      <Text style={styles.saveText}>Guardar Cambios</Text>
                   </Pressable>
                </View>
@@ -216,40 +208,40 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
    );
 };
 
+const btn = { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, height: 46, borderRadius: 10 };
+
 const styles = StyleSheet.create({
-   overlay,
-   card: { ...modalCard, maxWidth: 440 },
-   shape: { position: 'absolute', top: -70, right: -70, width: 180, height: 180, backgroundColor: '#161616', borderRadius: 30, transform: [{ rotate: '35deg' }] },
+   overlay: { flex: 1, backgroundColor: T.overlay, justifyContent: 'center', alignItems: 'center', padding: 16 },
+   card: { width: '100%', maxWidth: 440, backgroundColor: T.bg, borderRadius: 16, overflow: 'hidden' },
+   pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
 
-   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', padding: 20, paddingBottom: 16 },
-   accentLine: { width: 40, height: 4, backgroundColor: C.mute, marginBottom: 14 },
-   title: { ...caps, fontSize: 22, fontWeight: '900', color: C.white, letterSpacing: 3 },
-   subtitle: { fontSize: 11, color: C.mute, letterSpacing: 1, marginTop: 6 },
-   closeBtn: { ...box, padding: 8, borderColor: '#3A3A3A' },
+   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: 20, backgroundColor: T.bar },
+   title: { ...display, fontSize: 34, lineHeight: 34, fontWeight: '800', color: T.onBar, textTransform: 'uppercase' },
+   subtitle: { fontSize: 13, color: 'rgba(255,255,255,0.65)', marginTop: 4 },
+   closeBtn: { padding: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', borderRadius: 10 },
 
-   body: { paddingHorizontal: 20, gap: 16 },
-   label,
-   input: { ...box, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: C.white },
-   inputName: { fontSize: 18, fontWeight: '900', letterSpacing: 3 },
-   inputNum: { fontSize: 24, fontWeight: '900', textAlign: 'center' },
-   inputFocused: { borderColor: C.soft, backgroundColor: '#202020' },
+   body: { padding: 20, gap: 16 },
+   label: { fontSize: 13, fontWeight: '700', color: T.inkSoft, marginBottom: 6 },
+   input: { borderWidth: 1, borderColor: T.line, borderRadius: 10, backgroundColor: T.bg, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: T.ink },
+   inputName: { fontSize: 18, fontWeight: '800', letterSpacing: 1 },
+   inputNum: { ...display, fontSize: 32, lineHeight: 34, fontWeight: '800', textAlign: 'center' },
+   inputFocused: { borderColor: T.ink },
    rowInputs: { flexDirection: 'row', gap: 12 },
 
-   preview: { ...box, backgroundColor: '#0F0F0F', padding: 14 },
+   preview: { backgroundColor: T.surface, borderRadius: 12, padding: 14 },
    previewHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-   previewTitle: { ...caps, fontSize: 10, fontWeight: 'bold', color: C.mute },
-   previewTotal: { fontSize: 20, fontWeight: '900', color: C.white },
-   previewTotalSub: { ...caps, fontSize: 9, fontWeight: 'bold', color: C.mute },
+   previewTitle: { fontSize: 13, fontWeight: '700', color: T.inkSoft },
+   previewTotal: { ...display, fontSize: 30, lineHeight: 30, fontWeight: '800', color: T.ink },
+   previewTotalSub: { fontSize: 14, fontWeight: '600', color: T.inkMute },
    rackRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-   rackLabel: { width: 22, fontSize: 9, fontWeight: '900', color: C.mute },
-   rackCell: { flex: 1, height: 22, backgroundColor: C.raised, borderWidth: 1, borderColor: C.line, borderRadius: 2 },
-   rackCellOrigin: { backgroundColor: C.light, borderColor: C.light },
-   previewNote: { fontSize: 10, color: C.dim, marginTop: 10, letterSpacing: 1 },
+   rackLabel: { width: 24, fontSize: 10, fontWeight: '800', color: T.inkMute },
+   rackCell: { flex: 1, height: 22, backgroundColor: T.bg, borderWidth: 1, borderColor: T.line, borderRadius: 4 },
+   rackCellOrigin: { backgroundColor: T.solid, borderColor: T.solid },
+   previewNote: { fontSize: 11, color: T.inkMute, marginTop: 10 },
 
-   footer: { flexDirection: 'row', gap: 10, padding: 20, paddingTop: 18 },
-   cancelBtn: { ...btn, flex: 1, borderWidth: 1, borderColor: '#3A3A3A' },
-   cancelText: { ...btnText, color: C.soft },
-   saveBtn: { ...btn, flex: 2, gap: 6, backgroundColor: C.light },
-   saveText: { ...btnText, color: C.bg },
-   pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
+   footer: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingBottom: 20 },
+   cancelBtn: { ...btn, flex: 1, borderWidth: 1, borderColor: T.line },
+   cancelText: { fontSize: 14, fontWeight: '700', color: T.ink },
+   saveBtn: { ...btn, flex: 2, gap: 8, backgroundColor: T.solid },
+   saveText: { fontSize: 14, fontWeight: '800', color: T.onSolid },
 });

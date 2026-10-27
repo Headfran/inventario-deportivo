@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
    toggleBtnActive: { backgroundColor: T.solid, borderColor: T.solid },
 
    statusChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: T.line },
-   statusChipActive: { borderColor: T.ink, backgroundColor: 'rgba(255,255,255,0.1)' },
+   statusChipActive: { borderColor: T.ink, backgroundColor: T.surface },
    statusChipText: { fontSize: 12, fontWeight: '600', color: T.inkMute },
    statusChipTextActive: { color: T.ink, fontWeight: '700' },
 
