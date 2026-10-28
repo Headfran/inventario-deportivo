@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView } from 'react-native';
-import { X, MapPin, Eye, Check, Trash2, ChevronRight } from 'lucide-react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, Modal, ScrollView, Animated, Easing, Platform, AccessibilityInfo } from 'react-native';
+import { X, MapPin, Eye, Check, Trash2 } from 'lucide-react-native';
 import { Product, Shelf } from '../types/inventory';
 import { updateProduct } from '../services/productService';
 import { showAlert } from '../utils/alert';
+import { C, caps, box, activeBox, activeText, btn, btnText, overlay, modalCard } from '../theme';
 
 interface AssignLocationModalProps {
    product: Product | null;
@@ -11,6 +12,17 @@ interface AssignLocationModalProps {
    visible: boolean;
    onClose: () => void;
 }
+
+const ease = Easing.bezier(0.23, 1, 0.32, 1);
+const nd = Platform.OS !== 'web';
+
+// Encabezado numerado de cada paso del selector
+const Step = ({ n, text }: { n: string; text: string }) => (
+   <View style={styles.stepRow}>
+      <Text style={styles.stepNum}>{n}</Text>
+      <Text style={styles.pathLabel}>{text}</Text>
+   </View>
+);
 
 export const AssignLocationModal: React.FC<AssignLocationModalProps> = ({ product, shelves, visible, onClose }) => {
    const [submitting, setSubmitting] = useState(false);
@@ -21,8 +33,25 @@ export const AssignLocationModal: React.FC<AssignLocationModalProps> = ({ produc
    const [selRow, setSelRow] = useState<number | null>(null);
    const [selSpace, setSelSpace] = useState<number | null>(null);
 
+   // ---- SOLO DISEÑO: animación de entrada ----
+   const card = useRef(new Animated.Value(0)).current;
+   useEffect(() => {
+      if (!visible) {
+         card.setValue(0);
+         return;
+      }
+      AccessibilityInfo.isReduceMotionEnabled().then((reduce) => {
+         if (reduce) {
+            card.setValue(1);
+            return;
+         }
+         Animated.timing(card, { toValue: 1, duration: 240, easing: ease, useNativeDriver: nd }).start();
+      });
+   }, [visible]);
+
    if (!product) return null;
 
+   // ---- LÓGICA ORIGINAL (sin cambios) ----
    const handleToggleExhibition = async (variantIdx: number, displaySize: string) => {
       if (!product.id) return;
       try {
@@ -77,19 +106,43 @@ export const AssignLocationModal: React.FC<AssignLocationModalProps> = ({ produc
       }
    };
 
+   // Los tres "huecos" que muestran la ubicación elegida
+   const slots = [
+      { v: selShelf?.name, ph: 'Estante' },
+      { v: selRow ? `F${selRow}` : undefined, ph: 'Fila' },
+      { v: selSpace ? `E${selSpace}` : undefined, ph: 'Espacio' },
+   ];
+   const canSave = !!selShelf && !!selRow && !!selSpace;
+
    return (
-      <Modal visible={visible} animationType="slide" transparent>
+      <Modal visible={visible} animationType="fade" transparent>
          <View style={styles.overlay}>
-            <View style={styles.card}>
+            <Animated.View
+               style={[
+                  styles.card,
+                  {
+                     opacity: card,
+                     transform: [
+                        { scale: card.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+                        { translateY: card.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
+                     ],
+                  },
+               ]}
+            >
+               <View style={styles.shape} />
+
                <View style={styles.header}>
-                  <View>
-                     <Text style={styles.title}>{product.name}</Text>
-                     <Text style={styles.subtitle}>Gestión de Ubicaciones</Text>
+                  <View style={{ flex: 1 }}>
+                     <View style={styles.accentLine} />
+                     <Text style={styles.title} numberOfLines={2}>{product.name}</Text>
+                     <Text style={styles.subtitle}>Gestión de ubicaciones</Text>
                   </View>
-                  <TouchableOpacity onPress={onClose}><X size={20} color="#64748b" /></TouchableOpacity>
+                  <Pressable onPress={onClose} style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}>
+                     <X size={18} color={C.soft} />
+                  </Pressable>
                </View>
 
-               <ScrollView style={styles.body}>
+               <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 4 }}>
                   {(product.variants || []).map((variant, vIdx) => {
                      const exhibition = variant.exhibition || { isOnDisplay: false };
                      const isAssigningThis = activeVariantIdx === vIdx;
@@ -107,12 +160,12 @@ export const AssignLocationModal: React.FC<AssignLocationModalProps> = ({ produc
                                  return (
                                     <TouchableOpacity
                                        key={sObj.size}
-                                       style={[styles.exhibitionChip, isExhibited && styles.exhibitionChipActive]}
+                                       style={[styles.exhibitionChip, isExhibited && activeBox]}
                                        onPress={() => handleToggleExhibition(vIdx, sObj.size)}
                                     >
-                                       <Eye size={12} color={isExhibited ? '#fff' : '#64748b'} style={{ marginRight: 4 }} />
-                                       <Text style={[styles.exhibitionChipText, isExhibited && styles.exhibitionChipTextActive]}>Vitrina {sObj.size}</Text>
-                                       {isExhibited && <Check size={12} color="#fff" style={{ marginLeft: 4 }} />}
+                                       <Eye size={12} color={isExhibited ? C.bg : C.mute} style={{ marginRight: 4 }} />
+                                       <Text style={[styles.chipText, isExhibited && activeText]}>Vitrina {sObj.size}</Text>
+                                       {isExhibited && <Check size={12} color={C.bg} style={{ marginLeft: 4 }} />}
                                     </TouchableOpacity>
                                  );
                               })}
@@ -122,41 +175,55 @@ export const AssignLocationModal: React.FC<AssignLocationModalProps> = ({ produc
                               {(variant.locations || []).map((loc, lIdx) => (
                                  <View key={lIdx} style={styles.locBadge}>
                                     <Text style={styles.locBadgeText}>{loc.shelfId} • F{loc.rowIndex} • E{loc.rumaIndex}</Text>
-                                    <TouchableOpacity onPress={() => handleRemoveLocation(vIdx, lIdx)} style={{ marginLeft: 6 }}>
-                                       <Trash2 size={12} color="#ef4444" />
+                                    <TouchableOpacity onPress={() => handleRemoveLocation(vIdx, lIdx)} style={{ marginLeft: 8 }}>
+                                       <Trash2 size={12} color={C.mute} />
                                     </TouchableOpacity>
                                  </View>
                               ))}
                            </View>
 
-                           {/* Interfaz Paso a Paso para Asignar (Oculta hasta hacer clic en "Asignar Nueva") */}
+                           {/* Interfaz Paso a Paso para Asignar (Oculta hasta hacer clic en "Añadir a Estante") */}
                            {!isAssigningThis ? (
-                              <TouchableOpacity style={styles.startAssignBtn} onPress={() => {
-                                 setActiveVariantIdx(vIdx); setSelShelf(null); setSelRow(null); setSelSpace(null);
-                              }}>
-                                 <MapPin size={14} color="#2563eb" style={{ marginRight: 6 }} />
+                              <Pressable
+                                 style={({ pressed }) => [styles.startAssignBtn, pressed && styles.pressed]}
+                                 onPress={() => {
+                                    setActiveVariantIdx(vIdx); setSelShelf(null); setSelRow(null); setSelSpace(null);
+                                 }}
+                              >
+                                 <MapPin size={14} color={C.light} style={{ marginRight: 6 }} />
                                  <Text style={styles.startAssignText}>Añadir a Estante</Text>
-                              </TouchableOpacity>
+                              </Pressable>
                            ) : (
                               <View style={styles.assignPathContainer}>
-                                 <Text style={styles.pathLabel}>1. Estante:</Text>
+                                 {/* Ubicación elegida, en vivo */}
+                                 <View style={styles.slots}>
+                                    {slots.map((s, i) => (
+                                       <View key={i} style={[styles.slot, !!s.v && styles.slotFilled]}>
+                                          <Text style={[styles.slotText, s.v ? activeText : { color: C.dim }]} numberOfLines={1}>
+                                             {s.v || s.ph}
+                                          </Text>
+                                       </View>
+                                    ))}
+                                 </View>
+
+                                 <Step n="01" text="Estante" />
                                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pathScroll}>
                                     {shelves.map(s => (
-                                       <TouchableOpacity key={s.id} style={[styles.pathChip, selShelf?.id === s.id && styles.pathChipActive]}
+                                       <TouchableOpacity key={s.id} style={[styles.pathChip, selShelf?.id === s.id && activeBox]}
                                           onPress={() => { setSelShelf(s); setSelRow(null); setSelSpace(null); }}>
-                                          <Text style={[styles.pathChipText, selShelf?.id === s.id && styles.pathChipTextActive]}>{s.name}</Text>
+                                          <Text style={[styles.pathChipText, selShelf?.id === s.id && activeText]}>{s.name}</Text>
                                        </TouchableOpacity>
                                     ))}
                                  </ScrollView>
 
                                  {selShelf && (
                                     <>
-                                       <Text style={styles.pathLabel}>2. Fila / Nivel:</Text>
+                                       <Step n="02" text="Fila / Nivel" />
                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pathScroll}>
                                           {Array.from({ length: selShelf.rowsCount }).map((_, r) => (
-                                             <TouchableOpacity key={r} style={[styles.pathChip, selRow === r + 1 && styles.pathChipActive]}
+                                             <TouchableOpacity key={r} style={[styles.pathChip, selRow === r + 1 && activeBox]}
                                                 onPress={() => { setSelRow(r + 1); setSelSpace(null); }}>
-                                                <Text style={[styles.pathChipText, selRow === r + 1 && styles.pathChipTextActive]}>Fila {r + 1}</Text>
+                                                <Text style={[styles.pathChipText, selRow === r + 1 && activeText]}>Fila {r + 1}</Text>
                                              </TouchableOpacity>
                                           ))}
                                        </ScrollView>
@@ -165,12 +232,12 @@ export const AssignLocationModal: React.FC<AssignLocationModalProps> = ({ produc
 
                                  {selRow && (
                                     <>
-                                       <Text style={styles.pathLabel}>3. Espacio:</Text>
+                                       <Step n="03" text="Espacio" />
                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pathScroll}>
                                           {Array.from({ length: selShelf!.spacesPerRow }).map((_, s) => (
-                                             <TouchableOpacity key={s} style={[styles.pathChip, selSpace === s + 1 && styles.pathChipActive]}
+                                             <TouchableOpacity key={s} style={[styles.pathChip, selSpace === s + 1 && activeBox]}
                                                 onPress={() => setSelSpace(s + 1)}>
-                                                <Text style={[styles.pathChipText, selSpace === s + 1 && styles.pathChipTextActive]}>Espacio {s + 1}</Text>
+                                                <Text style={[styles.pathChipText, selSpace === s + 1 && activeText]}>Espacio {s + 1}</Text>
                                              </TouchableOpacity>
                                           ))}
                                        </ScrollView>
@@ -178,16 +245,16 @@ export const AssignLocationModal: React.FC<AssignLocationModalProps> = ({ produc
                                  )}
 
                                  <View style={styles.assignActions}>
-                                    <TouchableOpacity style={styles.cancelAssignBtn} onPress={() => setActiveVariantIdx(null)}>
+                                    <Pressable style={({ pressed }) => [styles.cancelAssignBtn, pressed && styles.pressed]} onPress={() => setActiveVariantIdx(null)}>
                                        <Text style={styles.cancelAssignText}>Cancelar</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                       style={[styles.confirmAssignBtn, (!selShelf || !selRow || !selSpace) && { opacity: 0.5 }]}
-                                       disabled={!selShelf || !selRow || !selSpace || submitting}
+                                    </Pressable>
+                                    <Pressable
+                                       style={({ pressed }) => [styles.confirmAssignBtn, !canSave && { opacity: 0.4 }, pressed && styles.pressed]}
+                                       disabled={!canSave || submitting}
                                        onPress={handleConfirmLocation}
                                     >
                                        <Text style={styles.confirmAssignText}>Guardar Ubicación</Text>
-                                    </TouchableOpacity>
+                                    </Pressable>
                                  </View>
                               </View>
                            )}
@@ -195,44 +262,57 @@ export const AssignLocationModal: React.FC<AssignLocationModalProps> = ({ produc
                      );
                   })}
                </ScrollView>
-            </View>
+            </Animated.View>
          </View>
       </Modal>
    );
 };
 
 const styles = StyleSheet.create({
-   overlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-   card: { width: '100%', maxWidth: 540, maxHeight: '85%', backgroundColor: '#ffffff', borderRadius: 16, padding: 20 },
-   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 12 },
-   title: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
-   subtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
-   body: { marginTop: 12 },
-   variantCard: { backgroundColor: '#f8fafc', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
-   variantCardActive: { borderColor: '#bfdbfe', backgroundColor: '#ffffff' },
-   colorRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-   colorDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: '#cbd5e1' },
-   colorTitle: { fontSize: 14, fontWeight: 'bold', color: '#334155' },
+   overlay,
+   card: { ...modalCard, maxWidth: 540, maxHeight: '85%' },
+   shape: { position: 'absolute', top: -70, right: -70, width: 180, height: 180, backgroundColor: '#161616', borderRadius: 30, transform: [{ rotate: '35deg' }] },
+
+   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', padding: 20, paddingBottom: 14, gap: 12 },
+   accentLine: { width: 40, height: 4, backgroundColor: C.mute, marginBottom: 14 },
+   title: { fontSize: 20, fontWeight: '900', color: C.white },
+   subtitle: { ...caps, fontSize: 10, color: C.mute, marginTop: 6, letterSpacing: 2 },
+   closeBtn: { ...box, padding: 8, borderColor: '#3A3A3A' },
+   pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
+
+   variantCard: { backgroundColor: '#161616', borderRadius: 4, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: C.border },
+   variantCardActive: { borderColor: C.soft, backgroundColor: C.surface },
+   colorRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+   colorDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
+   colorTitle: { ...caps, fontSize: 12, fontWeight: 'bold', color: C.soft },
+
    chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
-   exhibitionChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 16 },
-   exhibitionChipActive: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
-   exhibitionChipText: { fontSize: 11, color: '#475569', fontWeight: '500' },
-   exhibitionChipTextActive: { color: '#ffffff', fontWeight: 'bold' },
+   exhibitionChip: { ...box, flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 10 },
+   chipText: { fontSize: 11, color: C.soft, fontWeight: '500' },
+
    locationsList: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
-   locBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
-   locBadgeText: { fontSize: 11, fontWeight: '600', color: '#1e40af' },
-   startAssignBtn: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: '#e0e7ff', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
-   startAssignText: { fontSize: 12, fontWeight: '600', color: '#2563eb' },
-   assignPathContainer: { backgroundColor: '#f1f5f9', borderRadius: 8, padding: 12, marginTop: 8 },
-   pathLabel: { fontSize: 11, fontWeight: 'bold', color: '#475569', marginBottom: 6, marginTop: 4 },
-   pathScroll: { flexDirection: 'row', marginBottom: 6 },
-   pathChip: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, marginRight: 6 },
-   pathChipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   pathChipText: { fontSize: 12, color: '#475569', fontWeight: '600' },
-   pathChipTextActive: { color: '#ffffff' },
-   assignActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 12 },
-   cancelAssignBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6 },
-   cancelAssignText: { fontSize: 13, color: '#64748b', fontWeight: 'bold' },
-   confirmAssignBtn: { backgroundColor: '#2563eb', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6 },
-   confirmAssignText: { fontSize: 13, color: '#ffffff', fontWeight: 'bold' },
-});
+   locBadge: { ...box, flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8 },
+   locBadgeText: { fontSize: 11, fontWeight: '600', color: C.light },
+
+   startAssignBtn: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingVertical: 7, paddingHorizontal: 12, borderWidth: 1, borderColor: '#3A3A3A', borderRadius: 2 },
+   startAssignText: { ...caps, fontSize: 10, fontWeight: '900', color: C.light, letterSpacing: 1.5 },
+
+   assignPathContainer: { ...box, backgroundColor: '#0F0F0F', padding: 12, marginTop: 8 },
+   slots: { flexDirection: 'row', gap: 6, marginBottom: 4 },
+   slot: { flex: 1, paddingVertical: 10, paddingHorizontal: 4, alignItems: 'center', borderWidth: 1, borderStyle: 'dashed', borderColor: '#3A3A3A', borderRadius: 2 },
+   slotFilled: { ...activeBox, borderStyle: 'solid' },
+   slotText: { ...caps, fontSize: 11, fontWeight: '900', letterSpacing: 1 },
+
+   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, marginBottom: 6 },
+   stepNum: { fontSize: 10, fontWeight: '900', color: C.bg, backgroundColor: C.mute, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 2, overflow: 'hidden' },
+   pathLabel: { ...caps, fontSize: 10, fontWeight: 'bold', color: C.mute, letterSpacing: 1.5 },
+   pathScroll: { flexDirection: 'row', marginBottom: 2 },
+   pathChip: { ...box, paddingVertical: 6, paddingHorizontal: 12, marginRight: 6 },
+   pathChipText: { fontSize: 12, color: C.soft, fontWeight: '600' },
+
+   assignActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 16 },
+   cancelAssignBtn: { ...btn, paddingVertical: 9, paddingHorizontal: 14, borderWidth: 1, borderColor: '#3A3A3A' },
+   cancelAssignText: { ...btnText, fontSize: 11, color: C.soft },
+   confirmAssignBtn: { ...btn, paddingVertical: 9, paddingHorizontal: 14, backgroundColor: C.light },
+   confirmAssignText: { ...btnText, fontSize: 11, color: C.bg },
+});S
