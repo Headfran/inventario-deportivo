@@ -4,7 +4,9 @@ import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import { Product } from '../types/inventory';
 
-// ALGORITMO INTELIGENTE PARA ORDENAR TALLAS DE ROPA Y ZAPATOS
+// ==========================================
+// ORDEN INTELIGENTE DE TALLAS
+// ==========================================
 const sortSizes = (sizes: string[]): string[] => {
   const SIZE_ORDER = ['S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL'];
 
@@ -24,6 +26,9 @@ const sortSizes = (sizes: string[]): string[] => {
   });
 };
 
+// ==========================================
+// FORMATEO DE TEXTO
+// ==========================================
 export const formatProductShareText = (product: Product, selectedColors: string[] = []): string => {
   let msg = `📌 *Código:* ${product.code}\n\n`;
 
@@ -52,7 +57,62 @@ export const formatBulkShareText = (products: Product[]): string => {
   return msg.trim();
 };
 
-// MOTOR DE CACHÉ INTELIGENTE 
+// ==========================================
+// CONVERSIÓN A FILE (para Web Share API)
+// ==========================================
+const imageUrlToFile = async (url: string, fallbackName: string): Promise<File> => {
+  const response = await fetch(url, { mode: 'cors' });
+  if (!response.ok) throw new Error(`No se pudo descargar la imagen (${response.status})`);
+
+  const blob = await response.blob();
+  const mime = blob.type || 'image/jpeg';
+
+  const extMap: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/avif': 'avif',
+    'image/gif': 'gif',
+  };
+  const ext = extMap[mime] || 'jpg';
+  const baseName = fallbackName.replace(/\.[^.]+$/, '');
+
+  return new File([blob], `${baseName}.${ext}`, { type: mime });
+};
+
+// ==========================================
+// DESCARGA LOCAL (Web + Native)
+// ==========================================
+export const downloadImageLocal = async (url: string, filename: string): Promise<void> => {
+  try {
+    if (Platform.OS === 'web') {
+      const response = await fetch(url, { mode: 'cors' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } else {
+      const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!baseDir) throw new Error('No hay directorio disponible');
+      await FileSystem.downloadAsync(url, `${baseDir}${filename}`);
+    }
+  } catch (e) {
+    console.error('Error descargando imagen:', e);
+  }
+};
+
+// ==========================================
+// CACHÉ LOCAL (Native)
+// ==========================================
 const ensureImageCached = async (imageUrl: string, uniqueId: string, onStatus?: (s: string) => void): Promise<string> => {
   const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
   if (!baseDir) throw new Error('Sistema de archivos inalcanzable');
@@ -74,55 +134,87 @@ const ensureImageCached = async (imageUrl: string, uniqueId: string, onStatus?: 
   return uri;
 };
 
-export const advancedNativeShare = async (product: Product, selectedColors: string[] = [], selectedImage?: string, onStatus?: (s: string | null) => void) => {
+// ==========================================
+// COMPARTIR UN PRODUCTO
+// ==========================================
+export const advancedNativeShare = async (
+  product: Product,
+  selectedColors: string[] = [],
+  selectedImage?: string,
+  onStatus?: (s: string | null) => void
+) => {
   const text = formatProductShareText(product, selectedColors);
   const targetImage = selectedImage || (product.images && product.images[0]);
 
   try {
-    // ENTORNO PWA WEB (Chrome/Safari Móvil y Escritorio)
+    // ==========================================
+    // WEB PWA
+    // ==========================================
     if (Platform.OS === 'web') {
-      if (navigator.share) {
+      // ---- 1. Intentar Web Share API CON archivo ----
+      if (targetImage && typeof navigator !== 'undefined' && navigator.share && navigator.canShare) {
         try {
-          if (onStatus) onStatus('Preparando envío...');
-          let shareData: ShareData = {
-            title: product.code,
-            text: text,
-          };
+          if (onStatus) onStatus('Preparando imagen...');
+          const file = await imageUrlToFile(targetImage, `${product.code || 'producto'}.jpg`);
 
-          // MAGIA: Intentar compartir la foto en la Web PWA
-          if (targetImage && navigator.canShare) {
-            try {
-              const response = await fetch(targetImage);
-              const blob = await response.blob();
-              const file = new File([blob], `${product.code}.jpg`, { type: 'image/jpeg' });
-
-              if (navigator.canShare({ files: [file] })) {
-                shareData.files = [file];
-              }
-            } catch (imgError) {
-              console.log("La imagen no se pudo adjuntar en web, enviando solo texto.", imgError);
-            }
+          if (navigator.canShare({ files: [file] })) {
+            if (onStatus) onStatus('Abriendo menú de compartir...');
+            await navigator.share({
+              title: product.code || 'Producto',
+              text: text,
+              files: [file],
+            });
+            if (onStatus) onStatus(null);
+            return;
           }
-
-          await navigator.share(shareData);
-          if (onStatus) onStatus(null);
-          return;
         } catch (e: any) {
-          if (onStatus) onStatus(null);
-          // Si el usuario canceló el menú nativo, salimos sin hacer nada (No copiamos al portapapeles)
-          if (e.name === 'AbortError') return;
+          if (e.name === 'AbortError') {
+            if (onStatus) onStatus(null);
+            return;
+          }
+          console.warn('Web Share con archivo falló, usando fallback:', e);
         }
       }
 
-      // FALLBACK: Computadoras o móviles sin HTTPS (Local)
-      if (onStatus) onStatus('Generando enlace...');
+      // ---- 2. Intentar Web Share API SOLO texto (si el navegador no admite files) ----
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        try {
+          if (onStatus) onStatus('Abriendo menú de compartir...');
+          await navigator.share({ title: product.code || 'Producto', text });
+          if (onStatus) onStatus(null);
+          return;
+        } catch (e: any) {
+          if (e.name === 'AbortError') {
+            if (onStatus) onStatus(null);
+            return;
+          }
+          // Sigue al fallback
+        }
+      }
+
+      // ---- 3. Fallback definitivo: descargar imagen + copiar texto ----
+      if (onStatus) onStatus('Descargando imagen...');
+      if (targetImage) {
+        await downloadImageLocal(
+          targetImage,
+          `${(product.code || 'producto').replace(/\s+/g, '_')}_foto.jpg`
+        );
+      }
+
+      if (onStatus) onStatus('Copiando texto...');
       await Clipboard.setStringAsync(text);
-      alert('Texto copiado al portapapeles. Pégalo en tu chat.');
       if (onStatus) onStatus(null);
+
+      const msg =
+        '✅ Imagen descargada y texto copiado.\n\n' +
+        'Abre WhatsApp, adjunta la imagen desde tu galería/descargas y pega el texto en el chat.';
+      window.alert(msg);
       return;
     }
 
-    // ENTORNO APP / EXPO GO (Móvil Nativo)
+    // ==========================================
+    // NATIVE (App / Expo Go)
+    // ==========================================
     if (targetImage) {
       if (onStatus) onStatus('Copiando detalles... 📋');
       await Clipboard.setStringAsync(text);
@@ -134,13 +226,15 @@ export const advancedNativeShare = async (product: Product, selectedColors: stri
         Alert.alert(
           '¡Texto Copiado!',
           'La información se copió al portapapeles.\n\nAl abrir WhatsApp o Instagram, presiona en el cuadro de texto y dale a "Pegar".',
-          [{
-            text: 'Compartir Imagen',
-            onPress: async () => {
-              if (onStatus) onStatus(null);
-              await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', UTI: 'public.jpeg' });
-            }
-          }]
+          [
+            {
+              text: 'Compartir Imagen',
+              onPress: async () => {
+                if (onStatus) onStatus(null);
+                await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', UTI: 'public.jpeg' });
+              },
+            },
+          ]
         );
       } else {
         if (onStatus) onStatus(null);
@@ -156,13 +250,38 @@ export const advancedNativeShare = async (product: Product, selectedColors: stri
   }
 };
 
+// ==========================================
+// COMPARTIR EN WHATSAPP (SOLO TEXTO)
+// ==========================================
+export const openWhatsAppShare = async (
+  product: Product,
+  phone?: string,
+  selectedColors: string[] = []
+): Promise<void> => {
+  const text = formatProductShareText(product, selectedColors);
+  const cleanPhone = (phone || '').replace(/[^\d]/g, '');
+  const url = cleanPhone
+    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`
+    : `https://wa.me/?text=${encodeURIComponent(text)}`;
+
+  try {
+    await Linking.openURL(url);
+  } catch (e) {
+    console.error('Error abriendo WhatsApp:', e);
+    Alert.alert('Error', 'No se pudo abrir WhatsApp.');
+  }
+};
+
+// ==========================================
+// COMPARTIR MÚLTIPLES PRODUCTOS (bulk)
+// ==========================================
 export const advancedBulkNativeShare = async (products: Product[], onStatus?: (s: string | null) => void) => {
   const text = formatBulkShareText(products);
   try {
     if (Platform.OS === 'web') {
       if (navigator.share) {
         try {
-          await navigator.share({ title: 'Catálogo', text: text });
+          await navigator.share({ title: 'Catálogo', text });
           return;
         } catch (e: any) {
           if (e.name === 'AbortError') return;
@@ -170,7 +289,7 @@ export const advancedBulkNativeShare = async (products: Product[], onStatus?: (s
       }
 
       await Clipboard.setStringAsync(text);
-      alert('Catálogo copiado al portapapeles');
+      window.alert('Catálogo copiado al portapapeles');
       return;
     }
 
@@ -187,13 +306,15 @@ export const advancedBulkNativeShare = async (products: Product[], onStatus?: (s
         Alert.alert(
           '¡Catálogo Copiado!',
           'El texto del catálogo se copió.\n\nComparte esta portada y pega el texto en tu chat.',
-          [{
-            text: 'Continuar',
-            onPress: async () => {
-              if (onStatus) onStatus(null);
-              await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', UTI: 'public.jpeg' });
-            }
-          }]
+          [
+            {
+              text: 'Continuar',
+              onPress: async () => {
+                if (onStatus) onStatus(null);
+                await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', UTI: 'public.jpeg' });
+              },
+            },
+          ]
         );
         return;
       }

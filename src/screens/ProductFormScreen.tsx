@@ -1,24 +1,28 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
    View,
    Text,
    TextInput,
-   TouchableOpacity,
-   StyleSheet,
    ScrollView,
-   ActivityIndicator,
-   Alert,
+   Pressable,
+   StyleSheet,
    Modal,
-   Dimensions
+   ActivityIndicator,
+   useWindowDimensions,
+   Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { X, ChevronLeft, ChevronRight } from 'lucide-react-native';
-import { Product, ProductCategory, ProductVariant } from '../types/inventory';
-import { deleteImageFromR2, uploadImageToR2 } from '../services/storage';
-import { optimizeImage } from '../utils/imageOptimizer';
-import { createProduct, updateProduct } from '../services/productService';
 import * as ImagePicker from 'expo-image-picker';
+import {
+   X, Plus, Trash2, Check, ChevronLeft, ChevronRight,
+   AlertCircle, DollarSign, Package, Sparkles, Receipt,
+} from 'lucide-react-native';
+import { Product, ProductCategory, ProductVariant } from '../types/inventory';
+import { createProduct, updateProduct } from '../services/productService';
+import { uploadImageToR2, deleteImageFromR2 } from '../services/storage';
+import { optimizeImage } from '../utils/imageOptimizer';
 import { showConfirm, showAlert } from '../utils/alert';
+import { MONO as T, display } from '../design';
 
 interface ProductFormProps {
    initialProduct?: Product | null;
@@ -32,9 +36,19 @@ interface ImageItem {
    isNew: boolean;
 }
 
+interface FormErrors {
+   code?: string;
+   name?: string;
+   brand?: string;
+   price?: string;
+   wholesalePrice?: string;
+   variants?: string;
+}
+
 const CATEGORIES: ProductCategory[] = [
-   'Zapatos', 'Camisas', 'Camisas AAA', 'Franelillas', 'Franelillas AAA',
-   'Chemises', 'Sudaderas', 'Chaquetas', 'Shorts', 'Monos', 'Conjuntos', 'Accesorios', 'Otros'
+   'Camisas', 'Camisas AAA', 'Franelillas', 'Franelillas AAA',
+   'Chemises', 'Sudaderas', 'Chaquetas', 'Shorts', 'Monos',
+   'Conjuntos', 'Zapatos', 'Accesorios', 'Otros',
 ];
 
 const PRESET_COLORS = [
@@ -67,7 +81,7 @@ const normalizeVariants = (rawVariants?: any[]): ProductVariant[] => {
          colorHex: '#000000',
          sizes: [{ size: 'M', stock: 1 }],
          locations: [],
-         exhibition: { isOnDisplay: false }
+         exhibition: { isOnDisplay: false },
       }];
    }
    return rawVariants.map((v, idx) => {
@@ -78,7 +92,7 @@ const normalizeVariants = (rawVariants?: any[]): ProductVariant[] => {
             colorHex: v.colorHex || '#000000',
             sizes: v.sizes,
             locations: v.locations || [],
-            exhibition: v.exhibition || { isOnDisplay: false }
+            exhibition: v.exhibition || { isOnDisplay: false },
          };
       }
       return {
@@ -87,45 +101,70 @@ const normalizeVariants = (rawVariants?: any[]): ProductVariant[] => {
          colorHex: v.colorHex || '#000000',
          sizes: v.size ? [{ size: v.size, stock: Number(v.stock) || 0 }] : [],
          locations: v.locations || [],
-         exhibition: v.exhibition || { isOnDisplay: false }
+         exhibition: v.exhibition || { isOnDisplay: false },
       };
    });
 };
 
-export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, availableBrands = [], onClose }) => {
+export const ProductFormScreen: React.FC<ProductFormProps> = ({
+   initialProduct,
+   availableBrands = [],
+   onClose,
+}) => {
+   const { width } = useWindowDimensions();
+   const isMobile = width < 600;
+
+   // ---- Estado del formulario ----
    const [code, setCode] = useState(initialProduct?.code || '');
    const [name, setName] = useState(initialProduct?.name || '');
+   const [price, setPrice] = useState(initialProduct?.price ? String(initialProduct.price) : '');
+   const [wholesalePrice, setWholesalePrice] = useState(
+      initialProduct?.wholesalePrice ? String(initialProduct.wholesalePrice) : ''
+   );
 
-   // ¡Añadidas marcas 'On' y 'Alo' a la lista principal!
    const defaultBrands = ['Nike', 'Under Armour', 'Adidas', 'Puma', 'On', 'Alo', 'Ovejita', 'Columbia'];
-   const mergedBrands = Array.from(new Set([...defaultBrands, ...availableBrands])).slice(0, 15);
-
+   const mergedBrands = useMemo(
+      () => Array.from(new Set([...defaultBrands, ...availableBrands])).slice(0, 15),
+      [availableBrands]
+   );
    const isInitialBrandCustom = initialProduct?.brand && !mergedBrands.includes(initialProduct.brand);
    const [brand, setBrand] = useState(initialProduct?.brand || '');
    const [isCustomBrand, setIsCustomBrand] = useState<boolean>(!!isInitialBrandCustom);
 
    const [category, setCategory] = useState<ProductCategory>(initialProduct?.category || 'Camisas');
-   const [price, setPrice] = useState(initialProduct?.price ? String(initialProduct.price) : '');
-   const [uploadingImage, setUploadingImage] = useState(false);
-   const [submitting, setSubmitting] = useState(false);
-   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
    const [imageItems, setImageItems] = useState<ImageItem[]>(
       (initialProduct?.images || []).map((url, idx) => ({ id: `existing_${idx}`, url, isNew: false }))
    );
    const [variants, setVariants] = useState<ProductVariant[]>(normalizeVariants(initialProduct?.variants));
 
+   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+   // ---- Estado de guardado ----
+   const [submitting, setSubmitting] = useState(false);
+   const [saveStage, setSaveStage] = useState<string>('');
+   const [errors, setErrors] = useState<FormErrors>({});
+
+   // ---- Refs para scrolls ----
+   const formScrollRef = useRef<ScrollView>(null);
    const brandScrollRef = useRef<ScrollView>(null);
-   const [brandScrollX, setBrandScrollX] = useState(0);
    const categoryScrollRef = useRef<ScrollView>(null);
+   const [brandScrollX, setBrandScrollX] = useState(0);
    const [categoryScrollX, setCategoryScrollX] = useState(0);
 
-   const handleScroll = (ref: React.RefObject<ScrollView>, currentX: number, dir: 'left' | 'right') => {
+   const handleScroll = (
+      ref: React.RefObject<ScrollView | null>,
+      currentX: number,
+      dir: 'left' | 'right'
+   ) => {
       const step = 200;
       const newX = dir === 'left' ? Math.max(0, currentX - step) : currentX + step;
       ref.current?.scrollTo({ x: newX, animated: true });
    };
 
+   // ==========================================
+   // Imágenes
+   // ==========================================
    const handleSelectImage = async () => {
       if (imageItems.length >= 2) {
          showAlert('Límite alcanzado', 'Solo puedes incluir hasta 2 imágenes por prenda.');
@@ -139,15 +178,18 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
          });
          if (result.canceled || !result.assets || result.assets.length === 0) return;
 
-         setImageItems((prev) => [...prev, { id: `new_${Date.now()}`, url: result.assets[0].uri, isNew: true }]);
-      } catch (error: any) {
+         setImageItems((prev) => [
+            ...prev,
+            { id: `new_${Date.now()}`, url: result.assets[0].uri, isNew: true },
+         ]);
+      } catch {
          showAlert('Error', 'No se pudo abrir la galería.');
       }
    };
 
    const handleRemoveImage = (itemToRemove: ImageItem) => {
       if (itemToRemove.isNew) {
-         setImageItems(prev => prev.filter(item => item.id !== itemToRemove.id));
+         setImageItems((prev) => prev.filter((item) => item.id !== itemToRemove.id));
          return;
       }
       showConfirm(
@@ -156,362 +198,776 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({ initialProduct, 
          async () => {
             try {
                await deleteImageFromR2(itemToRemove.url);
-               setImageItems(prev => prev.filter(item => item.id !== itemToRemove.id));
+               setImageItems((prev) => prev.filter((item) => item.id !== itemToRemove.id));
                showAlert('Eliminado', 'La imagen fue borrada con éxito.');
-            } catch (error: any) {
+            } catch {
                showAlert('Error', 'No se pudo eliminar la imagen.');
             }
          }
       );
    };
 
+   // ==========================================
+   // Variantes
+   // ==========================================
    const handleAddColorGroup = () => {
-      setVariants(prev => [
+      setVariants((prev) => [
          ...prev,
          {
             id: `var_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-            color: 'Blanco', colorHex: '#ffffff',
-            sizes: [{ size: 'M', stock: 1 }], locations: [], exhibition: { isOnDisplay: false }
-         }
+            color: 'Blanco',
+            colorHex: '#ffffff',
+            sizes: [{ size: 'M', stock: 1 }],
+            locations: [],
+            exhibition: { isOnDisplay: false },
+         },
       ]);
    };
 
+   const handleRemoveColorGroup = (colorIdx: number) => {
+      if (variants.length <= 1) {
+         showAlert('Atención', 'Debes mantener al menos un color.');
+         return;
+      }
+      setVariants((prev) => prev.filter((_, i) => i !== colorIdx));
+   };
+
    const handleToggleSize = (colorIdx: number, sizeName: string) => {
-      setVariants(prev => {
+      setVariants((prev) => {
          const updated = [...prev];
          const currentSizes = updated[colorIdx].sizes || [];
-         const exists = currentSizes.find(s => s.size === sizeName);
-         if (exists) updated[colorIdx].sizes = currentSizes.filter(s => s.size !== sizeName);
-         else updated[colorIdx].sizes = [...currentSizes, { size: sizeName, stock: 1 }];
+         const exists = currentSizes.find((s) => s.size === sizeName);
+         if (exists) {
+            updated[colorIdx].sizes = currentSizes.filter((s) => s.size !== sizeName);
+         } else {
+            updated[colorIdx].sizes = [...currentSizes, { size: sizeName, stock: 1 }];
+         }
          return updated;
       });
    };
 
+   const handleUpdateStock = (colorIdx: number, sizeName: string, val: string) => {
+      setVariants((prev) => {
+         const updated = [...prev];
+         updated[colorIdx].sizes = updated[colorIdx].sizes.map((s) =>
+            s.size === sizeName ? { ...s, stock: Math.max(0, parseInt(val) || 0) } : s
+         );
+         return updated;
+      });
+   };
+
+   const handleUpdateColorName = (colorIdx: number, val: string) => {
+      setVariants((prev) => {
+         const updated = [...prev];
+         updated[colorIdx].color = val;
+         return updated;
+      });
+   };
+
+   const handleSetColorHex = (colorIdx: number, name: string, hex: string) => {
+      setVariants((prev) => {
+         const updated = [...prev];
+         updated[colorIdx].color = name;
+         updated[colorIdx].colorHex = hex;
+         return updated;
+      });
+   };
+
+   // ==========================================
+   // Validación
+   // ==========================================
+   const validate = (): FormErrors => {
+      const errs: FormErrors = {};
+
+      if (!code.trim()) errs.code = 'El código es obligatorio';
+      if (!name.trim()) errs.name = 'El nombre es obligatorio';
+      if (!brand.trim()) errs.brand = 'La marca es obligatoria';
+
+      if (!price.trim()) {
+         errs.price = 'El precio detal es obligatorio';
+      } else {
+         const p = parseFloat(price);
+         if (isNaN(p) || p <= 0) errs.price = 'Debe ser un número mayor a 0';
+      }
+
+      if (wholesalePrice.trim()) {
+         const w = parseFloat(wholesalePrice);
+         if (isNaN(w) || w <= 0) {
+            errs.wholesalePrice = 'Debe ser un número mayor a 0';
+         } else {
+            const p = parseFloat(price) || 0;
+            if (p > 0 && w > p) errs.wholesalePrice = 'Debe ser ≤ al precio detal';
+         }
+      }
+
+      const hasValidVariant = variants.some((v) => v.sizes && v.sizes.length > 0);
+      if (!hasValidVariant) errs.variants = 'Añade al menos una talla a un color';
+
+      return errs;
+   };
+
+   const clearError = (field: keyof FormErrors) => {
+      if (errors[field]) {
+         setErrors((prev) => {
+            const next = { ...prev };
+            delete next[field];
+            return next;
+         });
+      }
+   };
+
+   // ==========================================
+   // Guardado con etapas
+   // ==========================================
    const handleSubmit = async () => {
-      if (!code.trim() || !name.trim() || !brand.trim() || !price.trim()) {
-         Alert.alert('Campos incompletos', 'Por favor llena código, nombre, marca y precio.');
+      const errs = validate();
+      setErrors(errs);
+
+      if (Object.keys(errs).length > 0) {
+         showAlert('Faltan datos', 'Revisa los campos marcados en rojo.');
+         formScrollRef.current?.scrollTo({ y: 0, animated: true });
          return;
       }
-      const parsedPrice = parseFloat(price);
-      if (isNaN(parsedPrice) || parsedPrice <= 0) {
-         Alert.alert('Precio inválido', 'Ingresa un precio mayor a 0.');
-         return;
-      }
+
       try {
          setSubmitting(true);
+         setSaveStage('Optimizando datos...');
+
          const finalImageUrls: string[] = [];
+         const totalImages = imageItems.length;
+         let uploadedCount = 0;
+
          for (const item of imageItems) {
             if (!item.isNew) {
                finalImageUrls.push(item.url);
             } else {
+               uploadedCount += 1;
+               setSaveStage(`Subiendo imagen ${uploadedCount} de ${totalImages}...`);
                const webpBlob = await optimizeImage(item.url, 800, 0.65);
                const uploadedUrl = await uploadImageToR2(webpBlob);
                finalImageUrls.push(uploadedUrl);
             }
          }
+
+         setSaveStage('Guardando en el sistema...');
+
+         const parsedPrice = parseFloat(price);
+         const parsedWholesale = wholesalePrice.trim() ? parseFloat(wholesalePrice) : undefined;
+
          const productPayload: Omit<Product, 'id'> = {
-            code: code.trim().toUpperCase(), name: name.trim(), brand: brand.trim(), category,
-            price: parsedPrice, images: finalImageUrls, variants,
+            code: code.trim().toUpperCase(),
+            name: name.trim(),
+            brand: brand.trim(),
+            category,
+            price: parsedPrice,
+            ...(parsedWholesale !== undefined && { wholesalePrice: parsedWholesale }),
+            images: finalImageUrls,
+            variants,
          };
-         if (initialProduct?.id) await updateProduct(initialProduct.id, productPayload);
-         else await createProduct(productPayload);
+
+         if (initialProduct?.id) {
+            await updateProduct(initialProduct.id, productPayload);
+         } else {
+            await createProduct(productPayload);
+         }
+
+         setSaveStage('Finalizando...');
+         await new Promise((r) => setTimeout(r, 400));
+
          onClose();
       } catch (error: any) {
-         Alert.alert('Error', error.message || 'No se pudo completar el registro.');
+         showAlert('Error', error.message || 'No se pudo completar el registro.');
       } finally {
          setSubmitting(false);
+         setSaveStage('');
       }
    };
 
    const availableSizes = category === 'Zapatos' ? PRESET_SIZES_SHOES : PRESET_SIZES_CLOTHING;
 
+   // ==========================================
+   // Render
+   // ==========================================
    return (
-      <>
-         <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-            <View style={styles.header}>
-               <Text style={styles.title}>{initialProduct ? 'Editar Prenda' : 'Nueva Prenda'}</Text>
-               <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-                  <X size={24} color="#64748b" />
-               </TouchableOpacity>
+      <View style={styles.container}>
+         <View style={styles.header}>
+            <Text style={styles.headerTitle}>
+               {initialProduct ? 'EDITAR PRENDA' : 'NUEVA PRENDA'}
+            </Text>
+            <Pressable
+               style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
+               onPress={onClose}
+            >
+               <X size={20} color={T.ink} />
+            </Pressable>
+         </View>
+
+         <ScrollView
+            ref={formScrollRef}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+         >
+            {/* CÓDIGO + NOMBRE */}
+            <View style={[styles.row, isMobile && styles.rowMobile]}>
+               <View style={[styles.inputGroup, !isMobile && { flex: 1 }]}>
+                  <Text style={styles.label}>CÓDIGO / SKU *</Text>
+                  <TextInput
+                     style={[styles.input, errors.code && styles.inputError]}
+                     placeholder="Ej: 9619"
+                     placeholderTextColor={T.inkMute}
+                     value={code}
+                     onChangeText={(v) => { setCode(v); clearError('code'); }}
+                     autoCapitalize="characters"
+                  />
+                  {errors.code && <Text style={styles.errorText}>{errors.code}</Text>}
+               </View>
+
+               <View style={[styles.inputGroup, !isMobile && { flex: 2 }]}>
+                  <Text style={styles.label}>NOMBRE DE LA PRENDA *</Text>
+                  <TextInput
+                     style={[styles.input, errors.name && styles.inputError]}
+                     placeholder="Ej: Short UnderArmour"
+                     placeholderTextColor={T.inkMute}
+                     value={name}
+                     onChangeText={(v) => { setName(v); clearError('name'); }}
+                  />
+                  {errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
+               </View>
             </View>
 
-            <View style={styles.row}>
-               <View style={styles.flex1}>
-                  <Text style={styles.label}>Código / SKU *</Text>
-                  <TextInput style={styles.input} placeholder="NK-DFT-01" value={code} onChangeText={setCode} autoCapitalize="characters" />
+            {/* PRECIOS (DETAL + MAYOR) */}
+            <View style={[styles.row, isMobile && styles.rowMobile]}>
+               <View style={[styles.inputGroup, !isMobile && { flex: 1 }]}>
+                  <View style={styles.priceLabelRow}>
+                     <Receipt size={12} color={T.inkMute} />
+                     <Text style={styles.label}>PRECIO DETAL ($) *</Text>
+                  </View>
+                  <TextInput
+                     style={[styles.input, errors.price && styles.inputError]}
+                     placeholder="0.00"
+                     placeholderTextColor={T.inkMute}
+                     keyboardType="numeric"
+                     value={price}
+                     onChangeText={(v) => { setPrice(v); clearError('price'); }}
+                  />
+                  {errors.price && <Text style={styles.errorText}>{errors.price}</Text>}
                </View>
-               <View style={styles.flex1}>
-                  <Text style={styles.label}>Precio ($) *</Text>
-                  <TextInput style={styles.input} placeholder="25.00" value={price} onChangeText={setPrice} keyboardType="numeric" />
+
+               <View style={[styles.inputGroup, !isMobile && { flex: 1 }]}>
+                  <View style={styles.priceLabelRow}>
+                     <Package size={12} color="#10B981" />
+                     <Text style={[styles.label, { color: '#059669' }]}>PRECIO MAYOR ($)</Text>
+                     <View style={styles.wholesaleBadge}>
+                        <Text style={styles.wholesaleBadgeText}>12+ uds</Text>
+                     </View>
+                  </View>
+                  <TextInput
+                     style={[
+                        styles.input,
+                        styles.inputWholesale,
+                        errors.wholesalePrice && styles.inputError,
+                     ]}
+                     placeholder="0.00"
+                     placeholderTextColor="#A7F3D0"
+                     keyboardType="numeric"
+                     value={wholesalePrice}
+                     onChangeText={(v) => { setWholesalePrice(v); clearError('wholesalePrice'); }}
+                  />
+                  {errors.wholesalePrice && <Text style={styles.errorText}>{errors.wholesalePrice}</Text>}
                </View>
             </View>
 
-            <Text style={styles.label}>Nombre de la prenda *</Text>
-            <TextInput style={styles.input} placeholder="Franelilla Running Dri-FIT" value={name} onChangeText={setName} />
-
-            <Text style={styles.label}>Marca *</Text>
-            <View style={styles.horizontalScrollWrapper}>
-               <TouchableOpacity style={styles.scrollArrow} onPress={() => handleScroll(brandScrollRef, brandScrollX, 'left')}>
-                  <ChevronLeft size={20} color="#64748b" />
-               </TouchableOpacity>
-               <ScrollView
-                  ref={brandScrollRef}
-                  horizontal showsHorizontalScrollIndicator={false}
-                  style={styles.flex1}
-                  onScroll={(e) => setBrandScrollX(e.nativeEvent.contentOffset.x)}
-                  scrollEventThrottle={16}
-               >
-                  {mergedBrands.map((b) => {
-                     const isActive = brand === b && !isCustomBrand;
-                     return (
-                        <TouchableOpacity
-                           key={b} style={[styles.chip, isActive && styles.chipActive]}
-                           onPress={() => { setBrand(b); setIsCustomBrand(false); }}
-                        >
-                           <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{b}</Text>
-                        </TouchableOpacity>
-                     );
-                  })}
-                  <TouchableOpacity
-                     style={[styles.chip, isCustomBrand && styles.chipActive]}
-                     onPress={() => { setBrand(''); setIsCustomBrand(true); }}
+            {/* MARCA */}
+            <View style={styles.inputGroup}>
+               <Text style={styles.label}>MARCA *</Text>
+               <View style={styles.scrollRow}>
+                  <Pressable
+                     style={({ pressed }) => [styles.scrollArrow, pressed && styles.pressed]}
+                     onPress={() => handleScroll(brandScrollRef, brandScrollX, 'left')}
                   >
-                     <Text style={[styles.chipText, isCustomBrand && styles.chipTextActive]}>Otra...</Text>
-                  </TouchableOpacity>
-               </ScrollView>
-               <TouchableOpacity style={styles.scrollArrow} onPress={() => handleScroll(brandScrollRef, brandScrollX, 'right')}>
-                  <ChevronRight size={20} color="#64748b" />
-               </TouchableOpacity>
-            </View>
-
-            {isCustomBrand && (
-               <TextInput style={[styles.input, { marginTop: 8 }]} placeholder="Escribe la marca nueva..." value={brand} onChangeText={setBrand} />
-            )}
-
-            <Text style={[styles.label, { marginTop: 12 }]}>Categoría *</Text>
-            <View style={styles.horizontalScrollWrapper}>
-               <TouchableOpacity style={styles.scrollArrow} onPress={() => handleScroll(categoryScrollRef, categoryScrollX, 'left')}>
-                  <ChevronLeft size={20} color="#64748b" />
-               </TouchableOpacity>
-               <ScrollView
-                  ref={categoryScrollRef}
-                  horizontal showsHorizontalScrollIndicator={false}
-                  style={styles.flex1}
-                  onScroll={(e) => setCategoryScrollX(e.nativeEvent.contentOffset.x)}
-                  scrollEventThrottle={16}
-               >
-                  {CATEGORIES.map((cat) => (
-                     <TouchableOpacity
-                        key={cat} style={[styles.chip, category === cat && styles.chipActive]}
-                        onPress={() => setCategory(cat)}
-                     >
-                        <Text style={[styles.chipText, category === cat && styles.chipTextActive]}>{cat}</Text>
-                     </TouchableOpacity>
-                  ))}
-               </ScrollView>
-               <TouchableOpacity style={styles.scrollArrow} onPress={() => handleScroll(categoryScrollRef, categoryScrollX, 'right')}>
-                  <ChevronRight size={20} color="#64748b" />
-               </TouchableOpacity>
-            </View>
-
-            <Text style={styles.sectionTitle}>Imágenes de la Prenda (Máx. 2)</Text>
-            <View style={styles.imageGrid}>
-               {imageItems.map((item) => (
-                  <View key={item.id} style={styles.imageCard}>
-                     {/* Solución de Layout: La imagen abarca todo, y el botón es una capa invisible encima */}
-                     <Image source={{ uri: item.url }} style={styles.previewImage} contentFit="cover" />
-                     <TouchableOpacity
-                        style={StyleSheet.absoluteFill}
-                        activeOpacity={0.1}
-                        onPress={() => setLightboxImage(item.url)}
-                     />
-                     <TouchableOpacity style={styles.removeImgBtn} onPress={() => handleRemoveImage(item)}>
-                        <X size={14} color="#ffffff" />
-                     </TouchableOpacity>
-                  </View>
-               ))}
-               {imageItems.length < 2 && (
-                  <TouchableOpacity style={styles.uploadCard} onPress={handleSelectImage} disabled={uploadingImage}>
-                     {uploadingImage ? (
-                        <ActivityIndicator color="#2563eb" />
-                     ) : (
-                        <>
-                           <Text style={styles.uploadIcon}>📷</Text>
-                           <Text style={styles.uploadText}>Subir Foto</Text>
-                        </>
-                     )}
-                  </TouchableOpacity>
-               )}
-            </View>
-
-            <View style={styles.variantHeader}>
-               <Text style={styles.sectionTitle}>Colores, Tallas y Stock</Text>
-               <TouchableOpacity style={styles.addColorBtn} onPress={handleAddColorGroup}>
-                  <Text style={styles.addColorText}>+ Agregar Color</Text>
-               </TouchableOpacity>
-            </View>
-
-            {variants.map((variant, colorIdx) => {
-               const sizesList = variant.sizes || [];
-               return (
-                  <View key={variant.id || colorIdx} style={styles.colorCard}>
-                     <View style={styles.colorHeader}>
-                        <Text style={styles.subLabel}>Color Seleccionado:</Text>
-                        <TouchableOpacity style={styles.removeColorBtn} onPress={() => {
-                           if (variants.length <= 1) { Alert.alert('Atención', 'Debes mantener al menos un color.'); return; }
-                           setVariants(prev => prev.filter((_, i) => i !== colorIdx));
-                        }}>
-                           <Text style={styles.removeColorText}>Eliminar Color 🗑️</Text>
-                        </TouchableOpacity>
-                     </View>
-
-                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.paletteRow}>
-                        {PRESET_COLORS.map((c) => (
-                           <TouchableOpacity
-                              key={c.name}
-                              style={[
-                                 styles.colorBadge, { backgroundColor: c.hex },
-                                 variant.color === c.name && styles.colorBadgeActive
-                              ]}
-                              onPress={() => {
-                                 setVariants(prev => {
-                                    const updated = [...prev];
-                                    updated[colorIdx].color = c.name;
-                                    updated[colorIdx].colorHex = c.hex;
-                                    return updated;
-                                 });
-                              }}
+                     <ChevronLeft size={18} color={T.inkSoft} />
+                  </Pressable>
+                  <ScrollView
+                     ref={brandScrollRef}
+                     horizontal
+                     showsHorizontalScrollIndicator={false}
+                     style={{ flex: 1 }}
+                     contentContainerStyle={{ gap: 6 }}
+                     onScroll={(e) => setBrandScrollX(e.nativeEvent.contentOffset.x)}
+                     scrollEventThrottle={16}
+                  >
+                     {mergedBrands.map((b) => {
+                        const isActive = brand === b && !isCustomBrand;
+                        return (
+                           <Pressable
+                              key={b}
+                              style={[styles.chip, isActive && styles.chipActive]}
+                              onPress={() => { setBrand(b); setIsCustomBrand(false); clearError('brand'); }}
                            >
-                              {variant.color === c.name && (
-                                 <Text style={{ color: ['#ffffff', '#f5f5dc', '#d1d5db', '#d4b895', '#20c997'].includes(c.hex.toLowerCase()) ? '#000' : '#fff', fontWeight: 'bold' }}>✓</Text>
-                              )}
-                           </TouchableOpacity>
-                        ))}
-                     </ScrollView>
+                              <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{b}</Text>
+                           </Pressable>
+                        );
+                     })}
+                     <Pressable
+                        style={[styles.chip, isCustomBrand && styles.chipActive]}
+                        onPress={() => { setBrand(''); setIsCustomBrand(true); }}
+                     >
+                        <Text style={[styles.chipText, isCustomBrand && styles.chipTextActive]}>Otra...</Text>
+                     </Pressable>
+                  </ScrollView>
+                  <Pressable
+                     style={({ pressed }) => [styles.scrollArrow, pressed && styles.pressed]}
+                     onPress={() => handleScroll(brandScrollRef, brandScrollX, 'right')}
+                  >
+                     <ChevronRight size={18} color={T.inkSoft} />
+                  </Pressable>
+               </View>
+               {isCustomBrand && (
+                  <TextInput
+                     style={[styles.input, { marginTop: 8 }, errors.brand && styles.inputError]}
+                     placeholder="Escribe la marca..."
+                     placeholderTextColor={T.inkMute}
+                     value={brand}
+                     onChangeText={(v) => { setBrand(v); clearError('brand'); }}
+                  />
+               )}
+               {errors.brand && <Text style={styles.errorText}>{errors.brand}</Text>}
+            </View>
 
-                     <TextInput
-                        style={styles.colorInputCustom} placeholder="O escribe un color (ej. Azul Turquesa)" value={variant.color}
-                        onChangeText={(val) => {
-                           setVariants(prev => {
-                              const updated = [...prev];
-                              updated[colorIdx].color = val;
-                              return updated;
-                           });
-                        }}
-                     />
+            {/* CATEGORÍA */}
+            <View style={styles.inputGroup}>
+               <Text style={styles.label}>CATEGORÍA *</Text>
+               <View style={styles.scrollRow}>
+                  <Pressable
+                     style={({ pressed }) => [styles.scrollArrow, pressed && styles.pressed]}
+                     onPress={() => handleScroll(categoryScrollRef, categoryScrollX, 'left')}
+                  >
+                     <ChevronLeft size={18} color={T.inkSoft} />
+                  </Pressable>
+                  <ScrollView
+                     ref={categoryScrollRef}
+                     horizontal
+                     showsHorizontalScrollIndicator={false}
+                     style={{ flex: 1 }}
+                     contentContainerStyle={{ gap: 6 }}
+                     onScroll={(e) => setCategoryScrollX(e.nativeEvent.contentOffset.x)}
+                     scrollEventThrottle={16}
+                  >
+                     {CATEGORIES.map((cat) => {
+                        const active = category === cat;
+                        return (
+                           <Pressable
+                              key={cat}
+                              style={[styles.chip, active && styles.chipActive]}
+                              onPress={() => setCategory(cat)}
+                           >
+                              <Text style={[styles.chipText, active && styles.chipTextActive]}>{cat}</Text>
+                           </Pressable>
+                        );
+                     })}
+                  </ScrollView>
+                  <Pressable
+                     style={({ pressed }) => [styles.scrollArrow, pressed && styles.pressed]}
+                     onPress={() => handleScroll(categoryScrollRef, categoryScrollX, 'right')}
+                  >
+                     <ChevronRight size={18} color={T.inkSoft} />
+                  </Pressable>
+               </View>
+            </View>
 
-                     <Text style={styles.subLabel}>Tallas Disponibles para {variant.color}:</Text>
-                     <View style={styles.sizeChipsGrid}>
-                        {availableSizes.map((sz) => {
-                           const activeSize = sizesList.find(s => s.size === sz);
-                           return (
-                              <TouchableOpacity key={sz} style={[styles.sizeChip, activeSize && styles.sizeChipActive]} onPress={() => handleToggleSize(colorIdx, sz)}>
-                                 <Text style={[styles.sizeChipText, activeSize && styles.sizeChipTextActive]}>{sz}</Text>
-                              </TouchableOpacity>
-                           );
-                        })}
-                     </View>
-
-                     {sizesList.length > 0 && (
-                        <View style={styles.stockInputsContainer}>
-                           <Text style={styles.subLabel}>Stock por Talla:</Text>
-                           <View style={styles.stockRowGrid}>
-                              {sizesList.map((sItem) => (
-                                 <View key={sItem.size} style={styles.stockBox}>
-                                    <Text style={styles.stockSizeLabel}>{sItem.size}</Text>
-                                    <TextInput
-                                       style={styles.stockInput} value={String(sItem.stock)} keyboardType="number-pad"
-                                       onChangeText={(val) => {
-                                          setVariants(prev => {
-                                             const updated = [...prev];
-                                             updated[colorIdx].sizes = updated[colorIdx].sizes.map(s => s.size === sItem.size ? { ...s, stock: Math.max(0, parseInt(val) || 0) } : s);
-                                             return updated;
-                                          });
-                                       }}
-                                    />
-                                 </View>
-                              ))}
+            {/* IMÁGENES */}
+            <View style={styles.inputGroup}>
+               <Text style={styles.label}>IMÁGENES (MÁX. 2)</Text>
+               <View style={styles.imageRow}>
+                  {imageItems.map((item) => (
+                     <View key={item.id} style={styles.imagePreviewBox}>
+                        <Image source={{ uri: item.url }} style={styles.previewImg} contentFit="cover" />
+                        <Pressable
+                           style={StyleSheet.absoluteFill}
+                           onPress={() => setLightboxImage(item.url)}
+                        />
+                        <Pressable style={styles.removeImgBtn} onPress={() => handleRemoveImage(item)}>
+                           <X size={12} color="#FFFFFF" />
+                        </Pressable>
+                        {item.isNew && (
+                           <View style={styles.newBadge}>
+                              <Text style={styles.newBadgeText}>NUEVA</Text>
                            </View>
-                        </View>
-                     )}
-                  </View>
-               );
-            })}
+                        )}
+                     </View>
+                  ))}
+                  {imageItems.length < 2 && (
+                     <Pressable
+                        style={({ pressed }) => [styles.addImgBox, pressed && styles.pressed]}
+                        onPress={handleSelectImage}
+                     >
+                        <Plus size={20} color={T.inkMute} />
+                        <Text style={styles.addImgText}>Subir foto</Text>
+                     </Pressable>
+                  )}
+               </View>
+            </View>
 
-            <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit} disabled={submitting || uploadingImage}>
-               {submitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitBtnText}>{initialProduct ? 'Guardar Cambios' : 'Registrar Prenda'}</Text>}
-            </TouchableOpacity>
+            {/* COLORES, TALLAS Y STOCK */}
+            <View style={styles.sectionContainer}>
+               <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>COLORES, TALLAS Y STOCK</Text>
+                  <Pressable
+                     style={({ pressed }) => [styles.addSmallBtn, pressed && styles.pressed]}
+                     onPress={handleAddColorGroup}
+                  >
+                     <Plus size={14} color={T.onSolid} />
+                     <Text style={styles.addSmallBtnText}>Agregar color</Text>
+                  </Pressable>
+               </View>
+
+               {errors.variants && (
+                  <View style={styles.errorBanner}>
+                     <AlertCircle size={14} color="#B91C1C" />
+                     <Text style={styles.errorBannerText}>{errors.variants}</Text>
+                  </View>
+               )}
+
+               {variants.map((variant, colorIdx) => {
+                  const sizesList = variant.sizes || [];
+                  return (
+                     <View key={variant.id || colorIdx} style={styles.colorCard}>
+                        <View style={styles.colorHeader}>
+                           <Text style={styles.colorHeaderTitle}>
+                              Color #{colorIdx + 1}:{' '}
+                              <Text style={{ color: T.ink }}>{variant.color || 'Sin nombre'}</Text>
+                           </Text>
+                           <Pressable
+                              style={styles.removeColorBtn}
+                              onPress={() => handleRemoveColorGroup(colorIdx)}
+                           >
+                              <Trash2 size={13} color="#EF4444" />
+                              <Text style={styles.removeColorText}>Eliminar</Text>
+                           </Pressable>
+                        </View>
+
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 6 }}>
+                           {PRESET_COLORS.map((c) => {
+                              const isActive = variant.color === c.name;
+                              const checkColor = ['#ffffff', '#d1d5db', '#d4b895', '#20c997', '#eab308']
+                                 .includes(c.hex.toLowerCase())
+                                 ? '#000'
+                                 : '#fff';
+                              return (
+                                 <Pressable
+                                    key={c.name}
+                                    style={[
+                                       styles.colorBadge,
+                                       { backgroundColor: c.hex },
+                                       isActive && styles.colorBadgeActive,
+                                    ]}
+                                    onPress={() => handleSetColorHex(colorIdx, c.name, c.hex)}
+                                 >
+                                    {isActive && <Check size={14} color={checkColor} />}
+                                 </Pressable>
+                              );
+                           })}
+                        </ScrollView>
+
+                        <TextInput
+                           style={styles.colorInputCustom}
+                           placeholder="O escribe un color (ej. Azul Turquesa)"
+                           placeholderTextColor={T.inkMute}
+                           value={variant.color}
+                           onChangeText={(v) => handleUpdateColorName(colorIdx, v)}
+                        />
+
+                        <Text style={styles.subLabel}>Tallas disponibles:</Text>
+                        <View style={styles.sizeChipsGrid}>
+                           {availableSizes.map((sz) => {
+                              const active = sizesList.find((s) => s.size === sz);
+                              return (
+                                 <Pressable
+                                    key={sz}
+                                    style={[styles.sizeChip, active && styles.sizeChipActive]}
+                                    onPress={() => handleToggleSize(colorIdx, sz)}
+                                 >
+                                    <Text style={[styles.sizeChipText, active && styles.sizeChipTextActive]}>{sz}</Text>
+                                 </Pressable>
+                              );
+                           })}
+                        </View>
+
+                        {sizesList.length > 0 && (
+                           <View style={styles.stockGrid}>
+                              <Text style={styles.subLabel}>Stock por talla:</Text>
+                              <View style={styles.stockRow}>
+                                 {sizesList.map((s) => (
+                                    <View key={s.size} style={styles.stockBox}>
+                                       <Text style={styles.stockSizeLabel}>{s.size}</Text>
+                                       <TextInput
+                                          style={styles.stockInput}
+                                          value={String(s.stock)}
+                                          keyboardType="number-pad"
+                                          onChangeText={(v) => handleUpdateStock(colorIdx, s.size, v)}
+                                       />
+                                    </View>
+                                 ))}
+                              </View>
+                           </View>
+                        )}
+                     </View>
+                  );
+               })}
+            </View>
+
+            {/* BOTÓN GUARDAR */}
+            <Pressable
+               style={({ pressed }) => [
+                  styles.saveBtn,
+                  pressed && !submitting && styles.pressed,
+                  submitting && { opacity: 0.7 },
+               ]}
+               onPress={handleSubmit}
+               disabled={submitting}
+            >
+               {submitting ? (
+                  <ActivityIndicator color={T.onSolid} />
+               ) : (
+                  <>
+                     <Check size={16} color={T.onSolid} />
+                     <Text style={styles.saveBtnText}>
+                        {initialProduct ? 'Guardar Cambios' : 'Registrar Prenda'}
+                     </Text>
+                  </>
+               )}
+            </Pressable>
          </ScrollView>
 
-         {/* MODAL LIGHTBOX */}
-         <Modal visible={!!lightboxImage} transparent={true} animationType="fade" onRequestClose={() => setLightboxImage(null)}>
-            <View style={styles.lightboxContainer}>
-               <TouchableOpacity style={styles.lightboxClose} onPress={() => setLightboxImage(null)}>
-                  <X size={32} color="#ffffff" />
-               </TouchableOpacity>
+         {/* LIGHTBOX */}
+         <Modal visible={!!lightboxImage} transparent animationType="fade" onRequestClose={() => setLightboxImage(null)}>
+            <View style={styles.lightboxOverlay}>
+               <Pressable style={styles.lightboxClose} onPress={() => setLightboxImage(null)}>
+                  <X size={28} color="#FFFFFF" />
+               </Pressable>
                {lightboxImage && (
-                  <Image source={{ uri: lightboxImage }} style={styles.lightboxImageFull} contentFit="contain" />
+                  <Image
+                     source={{ uri: lightboxImage }}
+                     style={styles.lightboxImage}
+                     contentFit="contain"
+                  />
                )}
             </View>
          </Modal>
-      </>
+
+         {/* OVERLAY DE PROGRESO DE GUARDADO */}
+         <Modal visible={submitting} transparent animationType="fade">
+            <View style={styles.savingOverlay}>
+               <View style={styles.savingCard}>
+                  <ActivityIndicator size="large" color={T.ink} />
+                  <Text style={styles.savingTitle}>Guardando prenda</Text>
+                  <Text style={styles.savingStage}>{saveStage || 'Preparando...'}</Text>
+               </View>
+            </View>
+         </Modal>
+      </View>
    );
 };
 
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: '#ffffff' },
-   content: { padding: 20 },
-   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-   title: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
-   closeBtn: { padding: 8 },
-   sectionTitle: { fontSize: 16, fontWeight: '600', color: '#334155', marginTop: 16, marginBottom: 12 },
-   row: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-   flex1: { flex: 1 },
-   label: { fontSize: 13, fontWeight: '500', color: '#475569', marginBottom: 6 },
-   subLabel: { fontSize: 12, fontWeight: '600', color: '#64748b', marginTop: 10, marginBottom: 6 },
-   input: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, fontSize: 15, color: '#0f172a' },
+   container: { flex: 1, backgroundColor: T.bg },
+   header: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      paddingHorizontal: 16, paddingVertical: 12,
+      borderBottomWidth: 1, borderBottomColor: T.line, backgroundColor: T.surface,
+   },
+   headerTitle: { ...display, fontSize: 20, fontWeight: '800', color: T.ink, letterSpacing: 0.5, textTransform: 'uppercase' },
+   closeBtn: {
+      width: 32, height: 32, borderRadius: 8,
+      alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: T.line,
+   },
+   pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
-   horizontalScrollWrapper: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, marginHorizontal: -4 },
-   scrollArrow: { padding: 6, backgroundColor: '#f1f5f9', borderRadius: 8, marginHorizontal: 4 },
+   scrollContent: {
+      padding: 16, gap: 14, paddingBottom: 40,
+      maxWidth: 900, width: '100%', alignSelf: 'center',
+   },
+   row: { flexDirection: 'row', gap: 10 },
+   rowMobile: { flexDirection: 'column', gap: 12 },
 
-   chip: { backgroundColor: '#f1f5f9', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20, marginRight: 8, borderWidth: 1, borderColor: '#e2e8f0' },
-   chipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   chipText: { fontSize: 13, color: '#475569', fontWeight: '500' },
-   chipTextActive: { color: '#ffffff', fontWeight: 'bold' },
+   inputGroup: { gap: 4 },
+   label: {
+      fontSize: 10, fontWeight: '700', color: T.inkMute,
+      letterSpacing: 0.5, textTransform: 'uppercase',
+   },
+   input: {
+      height: 44,
+      minHeight: 44,
+      borderWidth: 1,
+      borderColor: T.line,
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 0,
+      fontSize: 14,
+      color: T.ink,
+      backgroundColor: T.surface,
+      textAlignVertical: 'center',
+   },
+   inputError: { borderColor: '#EF4444', backgroundColor: '#FEF2F2' },
+   inputWholesale: {
+      backgroundColor: '#ECFDF5', borderColor: '#10B981', color: '#047857',
+   },
+   errorText: { fontSize: 11, color: '#DC2626', fontWeight: '600', marginTop: 2 },
+   errorBanner: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      padding: 8, backgroundColor: '#FEF2F2', borderRadius: 6,
+      borderWidth: 1, borderColor: '#FECACA',
+   },
+   errorBannerText: { fontSize: 12, color: '#B91C1C', fontWeight: '600' },
 
-   imageGrid: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-   imageCard: { width: 110, height: 110, borderRadius: 12, overflow: 'hidden', position: 'relative', borderWidth: 1, borderColor: '#e2e8f0' },
-   previewImage: { width: '100%', height: '100%' },
-   removeImgBtn: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.7)', width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
-   uploadCard: { width: 110, height: 110, borderRadius: 12, borderWidth: 2, borderColor: '#cbd5e1', borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' },
-   uploadIcon: { fontSize: 26 },
-   uploadText: { fontSize: 12, color: '#64748b', marginTop: 6, fontWeight: '500' },
+   priceLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+   wholesaleBadge: {
+      marginLeft: 4, paddingHorizontal: 5, paddingVertical: 1,
+      backgroundColor: '#10B981', borderRadius: 4,
+   },
+   wholesaleBadgeText: { fontSize: 9, fontWeight: '800', color: '#FFFFFF' },
 
-   variantHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-   addColorBtn: { paddingVertical: 4 },
-   addColorText: { color: '#2563eb', fontSize: 14, fontWeight: 'bold' },
-   colorCard: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16, padding: 16, marginBottom: 16 },
+   scrollRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+   scrollArrow: {
+      width: 32, height: 32, borderRadius: 8,
+      alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: T.line, backgroundColor: T.surface,
+   },
+   chip: {
+      paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+      borderWidth: 1, borderColor: T.line, backgroundColor: T.surface,
+   },
+   chipActive: { backgroundColor: T.solid, borderColor: T.solid },
+   chipText: { fontSize: 12, fontWeight: '600', color: T.inkSoft },
+   chipTextActive: { color: T.onSolid, fontWeight: '800' },
+
+   imageRow: { flexDirection: 'row', gap: 8 },
+   imagePreviewBox: {
+      width: 72, height: 90, borderRadius: 8, overflow: 'hidden',
+      position: 'relative', borderWidth: 1, borderColor: T.line,
+   },
+   previewImg: { width: '100%', height: '100%' },
+   removeImgBtn: {
+      position: 'absolute', top: 4, right: 4,
+      backgroundColor: 'rgba(0,0,0,0.75)', borderRadius: 8, padding: 3,
+   },
+   newBadge: {
+      position: 'absolute', bottom: 4, left: 4,
+      backgroundColor: '#2563EB', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3,
+   },
+   newBadgeText: { color: '#FFFFFF', fontSize: 8, fontWeight: '800' },
+   addImgBox: {
+      width: 72, height: 90, borderRadius: 8,
+      borderWidth: 1, borderStyle: 'dashed', borderColor: T.line,
+      alignItems: 'center', justifyContent: 'center', gap: 2, backgroundColor: T.surface,
+   },
+   addImgText: { fontSize: 9, fontWeight: '600', color: T.inkMute },
+
+   sectionContainer: {
+      borderWidth: 1, borderColor: T.line, borderRadius: 10,
+      padding: 10, backgroundColor: T.surface, gap: 8,
+   },
+   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+   sectionTitle: { fontSize: 11, fontWeight: '800', color: T.ink, letterSpacing: 0.5 },
+   addSmallBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 4,
+      backgroundColor: T.solid, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6,
+   },
+   addSmallBtnText: { fontSize: 11, fontWeight: '700', color: T.onSolid },
+
+   colorCard: {
+      borderWidth: 1, borderColor: T.line, borderRadius: 8,
+      padding: 10, backgroundColor: T.bg, gap: 6,
+   },
    colorHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-   removeColorBtn: { padding: 4 },
-   removeColorText: { fontSize: 12, color: '#ef4444', fontWeight: 'bold' },
-   paletteRow: { flexDirection: 'row', marginVertical: 12 },
-   colorBadge: { width: 36, height: 36, borderRadius: 18, marginRight: 10, borderWidth: 1, borderColor: '#cbd5e1', justifyContent: 'center', alignItems: 'center' },
-   colorBadgeActive: { borderWidth: 3, borderColor: '#2563eb', transform: [{ scale: 1.1 }] },
-   colorInputCustom: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 10, fontSize: 13, marginBottom: 12 },
-   sizeChipsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-   sizeChip: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 },
-   sizeChipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   sizeChipText: { fontSize: 13, color: '#334155', fontWeight: 'bold' },
-   sizeChipTextActive: { color: '#ffffff' },
-   stockInputsContainer: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 12 },
-   stockRowGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-   stockBox: { width: 65, alignItems: 'center' },
-   stockSizeLabel: { fontSize: 12, fontWeight: '900', color: '#475569', marginBottom: 4 },
-   stockInput: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 8, textAlign: 'center', width: '100%', fontSize: 15, fontWeight: 'bold' },
-   submitBtn: { backgroundColor: '#2563eb', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 24, marginBottom: 40, shadowColor: '#2563eb', shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
-   submitBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '900', letterSpacing: 0.5 },
+   colorHeaderTitle: { fontSize: 12, fontWeight: '700', color: T.inkMute },
+   removeColorBtn: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+   removeColorText: { fontSize: 11, fontWeight: '600', color: '#EF4444' },
 
-   lightboxContainer: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.95)', justifyContent: 'center', alignItems: 'center' },
-   lightboxClose: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 10, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 },
-   lightboxImageFull: { width: Dimensions.get('window').width, height: Dimensions.get('window').height * 0.8 },
+   colorBadge: {
+      width: 32, height: 32, borderRadius: 16,
+      borderWidth: 1, borderColor: 'rgba(0,0,0,0.2)',
+      alignItems: 'center', justifyContent: 'center',
+   },
+   colorBadgeActive: { borderWidth: 3, borderColor: T.ink },
+
+   colorInputCustom: {
+      height: 38,
+      backgroundColor: T.surface,
+      borderWidth: 1,
+      borderColor: T.line,
+      borderRadius: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 0,
+      fontSize: 13,
+      color: T.ink,
+      textAlignVertical: 'center',
+   },
+
+   subLabel: { fontSize: 11, fontWeight: '700', color: T.inkMute, textTransform: 'uppercase', marginTop: 4 },
+
+   sizeChipsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+   sizeChip: {
+      minWidth: 44, paddingVertical: 6, paddingHorizontal: 10,
+      borderRadius: 6, borderWidth: 1, borderColor: T.line, backgroundColor: T.surface,
+      alignItems: 'center',
+   },
+   sizeChipActive: { backgroundColor: T.solid, borderColor: T.solid },
+   sizeChipText: { fontSize: 12, fontWeight: '700', color: T.ink },
+   sizeChipTextActive: { color: T.onSolid },
+
+   stockGrid: { marginTop: 6, borderTopWidth: 1, borderTopColor: T.line, paddingTop: 6 },
+   stockRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+   stockBox: { width: 54, alignItems: 'center' },
+   stockSizeLabel: { fontSize: 10, fontWeight: '800', color: T.inkSoft, marginBottom: 3 },
+   stockInput: {
+      width: '100%',
+      height: 32,
+      backgroundColor: T.surface,
+      borderWidth: 1,
+      borderColor: T.line,
+      borderRadius: 6,
+      textAlign: 'center',
+      textAlignVertical: 'center',
+      fontSize: 13,
+      fontWeight: '800',
+      color: T.ink,
+      padding: 0,
+   },
+
+   saveBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+      height: 48, backgroundColor: T.solid, borderRadius: 10, marginTop: 6,
+   },
+   saveBtnText: { fontSize: 13, fontWeight: '800', color: T.onSolid, textTransform: 'uppercase', letterSpacing: 0.5 },
+
+   // Lightbox
+   lightboxOverlay: {
+      flex: 1, backgroundColor: 'rgba(0,0,0,0.95)',
+      justifyContent: 'center', alignItems: 'center', padding: 24,
+   },
+   lightboxClose: {
+      position: 'absolute', top: 30, right: 20, zIndex: 10,
+      padding: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 22,
+   },
+   lightboxImage: { width: '100%', height: '85%', maxWidth: 900 },
+
+   // Saving overlay
+   savingOverlay: {
+      flex: 1, backgroundColor: 'rgba(10,10,10,0.7)',
+      justifyContent: 'center', alignItems: 'center', padding: 24,
+   },
+   savingCard: {
+      backgroundColor: T.surface, borderRadius: 16,
+      paddingHorizontal: 32, paddingVertical: 28,
+      alignItems: 'center', gap: 12, minWidth: 260,
+      borderWidth: 1, borderColor: T.line,
+   },
+   savingTitle: {
+      ...display, fontSize: 18, fontWeight: '800',
+      color: T.ink, letterSpacing: 0.5, textTransform: 'uppercase',
+   },
+   savingStage: { fontSize: 12, color: T.inkMute, fontWeight: '600', textAlign: 'center' },
 });

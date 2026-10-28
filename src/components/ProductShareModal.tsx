@@ -1,42 +1,67 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Modal, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, ScrollView } from 'react-native';
-import { Share2, X, Check } from 'lucide-react-native';
+import {
+   View, Text, Modal, StyleSheet, TouchableOpacity, TextInput,
+   ScrollView, Platform, ActivityIndicator,
+} from 'react-native';
 import { Image } from 'expo-image';
+import { MessageCircle, X, Check, Copy, Share2 } from 'lucide-react-native';
 import { Product } from '../types/inventory';
-import { formatProductShareText, advancedNativeShare } from '../utils/shareUtils';
+import {
+   formatProductShareText,
+   advancedNativeShare,
+   openWhatsAppShare,
+} from '../utils/shareUtils';
+import { C, caps, box, activeBox, activeText, label, btn, btnText, overlay, modalCard } from '../theme';
 
-interface Props { product: Product | null; visible: boolean; onClose: () => void; }
+interface Props {
+   product: Product | null;
+   visible: boolean;
+   onClose: () => void;
+}
 
 export const ProductShareModal: React.FC<Props> = ({ product, visible, onClose }) => {
    if (!product) return null;
 
-   // AHORA SOPORTA MÚLTIPLES COLORES
+   const [phone, setPhone] = useState('');
    const [selectedColors, setSelectedColors] = useState<string[]>([]);
-
-   // AHORA PERMITE ELEGIR LA IMAGEN A COMPARTIR (por defecto la primera)
    const [selectedImage, setSelectedImage] = useState<string>('');
-
+   const [copied, setCopied] = useState(false);
    const [statusText, setStatusText] = useState<string | null>(null);
 
    useEffect(() => {
       if (visible && product) {
-         setSelectedColors([]); // Resetear selección (Todas)
-         setSelectedImage(product.images?.[0] || ''); // Seleccionar primera foto por defecto
+         setSelectedColors([]);
+         setSelectedImage(product.images?.[0] || '');
+         setPhone('');
+         setCopied(false);
+         setStatusText(null);
       }
    }, [visible, product]);
 
    const toggleColor = (color: string) => {
-      if (selectedColors.includes(color)) {
-         setSelectedColors(prev => prev.filter(c => c !== color));
-      } else {
-         setSelectedColors(prev => [...prev, color]);
-      }
+      setSelectedColors((prev) =>
+         prev.includes(color) ? prev.filter((c) => c !== color) : [...prev, color]
+      );
    };
 
    const formattedMessage = formatProductShareText(product, selectedColors);
 
-   const handleShare = async () => {
+   const handleCopyText = () => {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+         navigator.clipboard.writeText(formattedMessage);
+         setCopied(true);
+         setTimeout(() => setCopied(false), 2000);
+      }
+   };
+
+   const handleShareWithImage = async () => {
       await advancedNativeShare(product, selectedColors, selectedImage, setStatusText);
+      onClose();
+   };
+
+   const handleWhatsAppOnly = async () => {
+      await openWhatsAppShare(product, phone, selectedColors);
+      onClose();
    };
 
    return (
@@ -44,7 +69,7 @@ export const ProductShareModal: React.FC<Props> = ({ product, visible, onClose }
          <View style={styles.overlay}>
             {statusText && (
                <View style={styles.loadingOverlay}>
-                  <ActivityIndicator size="large" color="#ffffff" />
+                  <ActivityIndicator size="large" color={C.white} />
                   <Text style={styles.loadingText}>{statusText}</Text>
                </View>
             )}
@@ -52,71 +77,102 @@ export const ProductShareModal: React.FC<Props> = ({ product, visible, onClose }
             <View style={styles.card}>
                <View style={styles.header}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                     <Share2 size={20} color="#2563eb" />
-                     <Text style={styles.title}>Compartir Inventario</Text>
+                     <Share2 size={20} color={C.light} />
+                     <Text style={styles.title}>Compartir Producto</Text>
                   </View>
-                  <TouchableOpacity onPress={onClose}><X size={20} color="#64748b" /></TouchableOpacity>
+                  <TouchableOpacity onPress={onClose}>
+                     <X size={20} color={C.soft} />
+                  </TouchableOpacity>
                </View>
-               <View style={styles.body}>
 
+               <ScrollView style={{ padding: 16, flexGrow: 0 }}>
                   {/* SELECTOR DE IMAGEN */}
                   {product.images && product.images.length > 0 && (
                      <>
-                        <Text style={styles.label}>1. Selecciona la foto para enviar:</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScroll}>
+                        <Text style={styles.label}>Foto a enviar:</Text>
+                        <View style={styles.wrapRow}>
                            {product.images.map((img, idx) => (
                               <TouchableOpacity
                                  key={idx}
-                                 activeOpacity={0.8}
+                                 style={[styles.photo, selectedImage === img && styles.photoActive]}
                                  onPress={() => setSelectedImage(img)}
-                                 style={[styles.imageThumbnail, selectedImage === img && styles.imageThumbnailActive]}
+                                 activeOpacity={0.8}
                               >
-                                 <Image source={{ uri: img }} style={styles.thumbnailImg} contentFit="cover" />
+                                 <Image
+                                    source={{ uri: img }}
+                                    style={{ width: '100%', height: '100%' }}
+                                    contentFit="cover"
+                                 />
                                  {selectedImage === img && (
-                                    <View style={styles.thumbnailCheck}>
-                                       <Check size={18} color="#ffffff" />
+                                    <View style={styles.photoCheck}>
+                                       <Check size={16} color={C.white} />
                                     </View>
                                  )}
                               </TouchableOpacity>
                            ))}
-                        </ScrollView>
+                        </View>
                      </>
                   )}
 
                   {/* SELECTOR MÚLTIPLE DE COLORES */}
-                  <Text style={styles.label}>2. Elige qué colores incluir (Toca varios):</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                  <Text style={styles.label}>Colores a incluir:</Text>
+                  <View style={[styles.wrapRow, { marginBottom: 14 }]}>
                      <TouchableOpacity
-                        style={[styles.colorChip, selectedColors.length === 0 && styles.colorChipActive]}
+                        style={[styles.chip, selectedColors.length === 0 && activeBox]}
                         onPress={() => setSelectedColors([])}
                      >
-                        <Text style={[styles.colorChipText, selectedColors.length === 0 && styles.colorChipTextActive]}>Todos</Text>
+                        <Text style={[styles.chipText, selectedColors.length === 0 && activeText]}>
+                           Todos
+                        </Text>
                      </TouchableOpacity>
-
-                     {product.variants.map((v, i) => (
+                     {product.variants.map((v, idx) => (
                         <TouchableOpacity
-                           key={i}
-                           style={[styles.colorChip, selectedColors.includes(v.color) && styles.colorChipActive]}
+                           key={idx}
+                           style={[styles.chip, selectedColors.includes(v.color) && activeBox]}
                            onPress={() => toggleColor(v.color)}
                         >
-                           <Text style={[styles.colorChipText, selectedColors.includes(v.color) && styles.colorChipTextActive]}>{v.color}</Text>
+                           <Text style={[styles.chipText, selectedColors.includes(v.color) && activeText]}>
+                              {v.color}
+                           </Text>
                         </TouchableOpacity>
                      ))}
                   </View>
 
-                  <View style={styles.nativeShareBox}>
-                     <Text style={styles.nativeShareTitle}>Compartir Directo</Text>
-                     <Text style={styles.nativeShareDesc}>Enviará la foto seleccionada y el texto con las tallas ya organizadas a WhatsApp o Instagram.</Text>
-                     <TouchableOpacity style={styles.nativeShareBtn} onPress={handleShare}>
-                        <Share2 size={16} color="#ffffff" style={{ marginRight: 8 }} />
-                        <Text style={styles.nativeShareBtnText}>Compartir Ahora</Text>
+                  {/* TELÉFONO (opcional) */}
+                  <Text style={styles.label}>WhatsApp del cliente (opcional):</Text>
+                  <TextInput
+                     style={styles.input}
+                     placeholder="Ej: +584121234567"
+                     placeholderTextColor={C.dim}
+                     value={phone}
+                     onChangeText={setPhone}
+                     keyboardType="phone-pad"
+                  />
+
+                  {/* PREVIEW DEL MENSAJE */}
+                  <Text style={styles.label}>Vista previa del mensaje:</Text>
+                  <View style={styles.previewBox}>
+                     <Text style={styles.previewText}>{formattedMessage}</Text>
+                     <TouchableOpacity style={styles.copyBtn} onPress={handleCopyText}>
+                        {copied ? (
+                           <Check size={14} color={C.light} />
+                        ) : (
+                           <Copy size={14} color={C.mute} />
+                        )}
+                        <Text style={styles.copyBtnText}>{copied ? '¡Copiado!' : 'Copiar texto'}</Text>
                      </TouchableOpacity>
                   </View>
+               </ScrollView>
 
-                  <View style={styles.previewBox}>
-                     <Text style={styles.previewTitle}>Vista Previa del Texto:</Text>
-                     <Text style={styles.previewText} numberOfLines={5}>{formattedMessage}</Text>
-                  </View>
+               <View style={styles.footer}>
+                  <TouchableOpacity style={styles.secondaryBtn} onPress={handleWhatsAppOnly}>
+                     <MessageCircle size={16} color={C.light} style={{ marginRight: 6 }} />
+                     <Text style={styles.secondaryText}>Solo texto</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.primaryBtn} onPress={handleShareWithImage}>
+                     <Share2 size={16} color={C.bg} style={{ marginRight: 6 }} />
+                     <Text style={styles.primaryText}>Compartir con foto</Text>
+                  </TouchableOpacity>
                </View>
             </View>
          </View>
@@ -125,33 +181,49 @@ export const ProductShareModal: React.FC<Props> = ({ product, visible, onClose }
 };
 
 const styles = StyleSheet.create({
-   overlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-   loadingOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100, justifyContent: 'center', alignItems: 'center' },
-   loadingText: { color: '#ffffff', marginTop: 12, fontSize: 15, fontWeight: 'bold' },
-   card: { width: '100%', maxWidth: 440, backgroundColor: '#ffffff', borderRadius: 16, overflow: 'hidden' },
-   header: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, backgroundColor: '#f8fafc', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-   title: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
-   body: { padding: 16 },
-   label: { fontSize: 12, fontWeight: 'bold', color: '#475569', marginBottom: 8 },
+   overlay,
+   card: { ...modalCard, overflow: 'hidden' },
+   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#161616', borderBottomWidth: 1, borderBottomColor: C.border },
+   title: { ...caps, fontSize: 13, fontWeight: '900', color: C.white },
+   label,
+   input: { ...box, paddingHorizontal: 12, height: 40, fontSize: 13, color: C.white, marginBottom: 12 },
+   wrapRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 14,
+   },
 
-   imageScroll: { flexDirection: 'row', marginBottom: 16, marginHorizontal: -4 },
-   imageThumbnail: { width: 70, height: 70, borderRadius: 8, marginHorizontal: 4, overflow: 'hidden', borderWidth: 2, borderColor: '#e2e8f0', position: 'relative' },
-   imageThumbnailActive: { borderColor: '#2563eb' },
-   thumbnailImg: { width: '100%', height: '100%' },
-   thumbnailCheck: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(37,99,235,0.4)', justifyContent: 'center', alignItems: 'center' },
+   photo: {
+      width: 70,
+      height: 70,
+      borderRadius: 4,
+      overflow: 'hidden',
+      borderWidth: 2,
+      borderColor: C.line,
+      position: 'relative',
+   },
+   photoActive: { borderColor: C.light },
+   photoCheck: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
 
-   colorChip: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
-   colorChipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   colorChipText: { fontSize: 12, color: '#334155', fontWeight: '500' },
-   colorChipTextActive: { color: '#ffffff', fontWeight: 'bold' },
+   chip: {
+      ...box,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+   },
+   chipText: { fontSize: 11, color: C.soft },
 
-   nativeShareBox: { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', borderRadius: 12, padding: 16, marginBottom: 16 },
-   nativeShareTitle: { fontSize: 14, fontWeight: 'bold', color: '#1e3a8a', marginBottom: 4 },
-   nativeShareDesc: { fontSize: 11, color: '#3b82f6', marginBottom: 12 },
-   nativeShareBtn: { flexDirection: 'row', backgroundColor: '#2563eb', padding: 12, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
-   nativeShareBtnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 14 },
+   previewBox: { ...box, padding: 12 },
+   previewText: { fontSize: 12, color: C.light, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', lineHeight: 18 },
+   copyBtn: { ...box, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, alignSelf: 'flex-end', marginTop: 8 },
+   copyBtnText: { fontSize: 11, color: C.soft, marginLeft: 4, fontWeight: '600' },
 
-   previewBox: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, padding: 12 },
-   previewTitle: { fontSize: 10, color: '#64748b', fontWeight: 'bold', marginBottom: 6, textTransform: 'uppercase' },
-   previewText: { fontSize: 11, color: '#475569', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
+   footer: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, padding: 16, backgroundColor: '#161616', borderTopWidth: 1, borderTopColor: C.border },
+   secondaryBtn: { ...btn, paddingHorizontal: 14, borderWidth: 1, borderColor: '#3A3A3A' },
+   secondaryText: { ...btnText, color: C.soft },
+   primaryBtn: { ...btn, paddingHorizontal: 14, backgroundColor: C.light },
+   primaryText: { ...btnText, color: C.bg },
+
+   loadingOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.9)', zIndex: 100, justifyContent: 'center', alignItems: 'center', padding: 24 },
+   loadingText: { color: C.white, marginTop: 12, fontSize: 12, fontWeight: '700', letterSpacing: 1.5, textTransform: 'uppercase', textAlign: 'center' },
 });

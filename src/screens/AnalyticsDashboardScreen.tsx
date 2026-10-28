@@ -1,61 +1,44 @@
 import React, { useState, useEffect } from 'react';
-import {
-   View,
-   Text,
-   ScrollView,
-   TouchableOpacity,
-   StyleSheet,
-   ActivityIndicator,
-} from 'react-native';
-import { Image } from 'expo-image';
-import {
-   DollarSign,
-   ShoppingBag,
-   TrendingUp,
-   CreditCard,
-   Award,
-   PieChart,
-   CalendarRange,
-   Sparkles,
-   Shirt
-} from 'lucide-react-native';
-
+import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { DollarSign, ShoppingBag, TrendingUp, CreditCard, Award, PieChart, CalendarRange, Shirt } from 'lucide-react-native';
 import { Sale, subscribeToSales } from '../services/salesHistoryService';
 import { subscribeToProducts } from '../services/productService';
 import { Product } from '../types/inventory';
-import {
-   TimeRangeOption,
-   filterSalesByTimeRange,
-   calculateAnalytics,
-} from '../services/analyticsService';
+import { TimeRangeOption, filterSalesByTimeRange, calculateAnalytics } from '../services/analyticsService';
 import { DateRangePickerModal } from '../components/DateRangePickerModal';
+import { Cover } from '../components/Cover';
+import { MONO as T, display } from '../design';
+
+const MAX = 1180;
 
 const formatDateShort = (date: Date | null) => {
-   if (!date) return '--/--/----';
-   return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
+   if (!date) return '--/--/--';
+   return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear().toString().slice(-2)}`;
 };
+
+const P = ({ style, ...rest }: any) => (
+   <Pressable {...rest} style={({ pressed }: any) => [style, pressed && styles.pressed]} />
+);
 
 export const AnalyticsDashboardScreen = () => {
    const [allSales, setAllSales] = useState<Sale[]>([]);
-   const [catalog, setCatalog] = useState<Product[]>([]); // <- ESTADO DEL CATÁLOGO
+   const [catalog, setCatalog] = useState<Product[]>([]);
    const [timeRange, setTimeRange] = useState<TimeRangeOption>('30days');
    const [loading, setLoading] = useState(true);
 
-   // Estados del Calendario Custom
    const [showDateRangeModal, setShowDateRangeModal] = useState(false);
-   const [customDateRange, setCustomDateRange] = useState<{ start: Date, end: Date } | null>(null);
+   const [customDateRange, setCustomDateRange] = useState<{ start: Date; end: Date } | null>(null);
+
+   const { width } = useWindowDimensions();
+   const mobile = width < 600;
+   const wide = width >= 1000;
 
    useEffect(() => {
-      // Suscribimos a las ventas
       const unsubSales = subscribeToSales((sales) => {
          setAllSales(sales);
          setLoading(false);
       });
-      // Suscribimos al catálogo de productos en tiempo real
-      const unsubProducts = subscribeToProducts((products) => {
-         setCatalog(products);
-      });
-
+      const unsubProducts = subscribeToProducts(setCatalog);
       return () => {
          unsubSales();
          unsubProducts();
@@ -68,188 +51,207 @@ export const AnalyticsDashboardScreen = () => {
    if (loading) {
       return (
          <View style={styles.centered}>
-            <ActivityIndicator size="large" color="#2563eb" />
+            <ActivityIndicator size="large" color={T.ink} />
             <Text style={styles.loadingText}>Recopilando datos financieros...</Text>
          </View>
       );
    }
 
+   const kpis = [
+      { Icon: DollarSign, tag: 'Ingresos', value: `$${analytics.totalRevenue.toFixed(2)}`, sub: 'Total recaudado en el período', color: '#6366F1', lightBg: '#EEF2FF' },
+      { Icon: ShoppingBag, tag: 'Prendas', value: String(analytics.totalUnitsSold), sub: 'Unidades descontadas', color: '#0EA5E9', lightBg: '#F0F9FF' },
+      { Icon: TrendingUp, tag: 'Ventas', value: String(analytics.totalTransactions), sub: 'Transacciones cerradas', color: '#10B981', lightBg: '#ECFDF5' },
+      { Icon: CreditCard, tag: 'Ticket Promedio', value: `$${analytics.averageTicket.toFixed(2)}`, sub: 'Promedio por transacción', color: '#F59E0B', lightBg: '#FFFBEB' },
+   ];
+
    return (
       <View style={styles.container}>
-         <ScrollView contentContainerStyle={styles.content}>
-            {/* CABECERA Y FILTROS */}
+         <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={[styles.content, { paddingHorizontal: mobile ? 14 : 22 }]}
+            showsVerticalScrollIndicator={false}
+         >
+            {/* HEADER */}
             <View style={styles.headerRow}>
-               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <View style={styles.titleIconBg}><PieChart size={24} color="#2563eb" /></View>
-                  <View>
-                     <Text style={styles.pageTitle}>Dashboard Analítico</Text>
-                     <Text style={styles.pageSubtitle}>Desempeño general de ventas</Text>
+               <View style={{ flex: 1, minWidth: 160 }}>
+                  <Text style={[styles.pageTitle, mobile && styles.pageTitleMobile]}>Analítica</Text>
+                  <Text style={styles.pageSubtitle}>Rendimiento de ventas e inventario</Text>
+               </View>
+
+               <View style={styles.timeRangeWrap}>
+                  <View style={styles.timeRangeContainer}>
+                     {[
+                        { id: 'today', label: 'Hoy' },
+                        { id: '7days', label: '7D' },
+                        { id: '30days', label: '30D' },
+                        { id: 'all', label: 'Todo' },
+                     ].map((item) => {
+                        const isSelected = timeRange === item.id;
+                        return (
+                           <P
+                              key={item.id}
+                              style={[styles.rangeChip, isSelected && styles.rangeOn]}
+                              onPress={() => setTimeRange(item.id as TimeRangeOption)}
+                           >
+                              <Text style={[styles.rangeChipText, isSelected && styles.rangeOnText]}>
+                                 {item.label}
+                              </Text>
+                           </P>
+                        );
+                     })}
+                     <P
+                        style={[styles.rangeChip, styles.rangeChipCustom, timeRange === 'custom' && styles.rangeOn]}
+                        onPress={() => setShowDateRangeModal(true)}
+                     >
+                        <CalendarRange size={13} color={timeRange === 'custom' ? T.onSolid : T.inkSoft} />
+                        <Text style={[styles.rangeChipText, timeRange === 'custom' && styles.rangeOnText]}>
+                           {timeRange === 'custom' && customDateRange ? formatDateShort(customDateRange.start) : 'Rango'}
+                        </Text>
+                     </P>
                   </View>
                </View>
             </View>
 
-            <View style={styles.timeRangeWrapper}>
-               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[
-                     { id: 'today', label: 'Hoy' },
-                     { id: '7days', label: '7 Días' },
-                     { id: '30days', label: '30 Días' },
-                     { id: 'all', label: 'Histórico' },
-                  ].map((item) => {
-                     const isSelected = timeRange === item.id;
-                     return (
-                        <TouchableOpacity
-                           key={item.id}
-                           style={[styles.rangeChip, isSelected && styles.rangeChipActive]}
-                           onPress={() => setTimeRange(item.id as TimeRangeOption)}
+            {/* KPIs */}
+            <View style={styles.kpiGrid}>
+               {kpis.map(({ Icon, tag, value, sub, color, lightBg }, i) => {
+                  const hero = i === 0;
+                  return (
+                     <View
+                        key={tag}
+                        style={[
+                           styles.kpiCard,
+                           { flexBasis: mobile ? '47%' : '22%' },
+                           hero
+                              ? styles.kpiHero
+                              : { backgroundColor: lightBg, borderColor: color + '30', borderWidth: 1 },
+                           hero && !mobile && { flexGrow: 1.6 },
+                        ]}
+                     >
+                        <View style={styles.kpiHeader}>
+                           <View style={[styles.kpiIconBox, hero ? styles.kpiIconHero : { backgroundColor: color + '20' }]}>
+                              <Icon size={18} color={hero ? T.onSolid : color} />
+                           </View>
+                           <Text style={[styles.kpiTag, hero ? { color: 'rgba(255,255,255,0.8)' } : { color: '#4B5563' }]}>
+                              {tag}
+                           </Text>
+                        </View>
+                        <Text
+                           style={[
+                              styles.kpiValue,
+                              hero
+                                 ? { color: T.onSolid, fontSize: mobile ? 44 : 60, lineHeight: mobile ? 42 : 56 }
+                                 : { color: '#1F2937' },
+                           ]}
                         >
-                           <Text style={[styles.rangeChipText, isSelected && styles.rangeChipTextActive]}>{item.label}</Text>
-                        </TouchableOpacity>
-                     );
-                  })}
-                  <TouchableOpacity
-                     style={[styles.rangeChip, timeRange === 'custom' && styles.rangeChipActive]}
-                     onPress={() => setShowDateRangeModal(true)}
-                  >
-                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                        <CalendarRange size={14} color={timeRange === 'custom' ? '#ffffff' : '#64748b'} />
-                        <Text style={[styles.rangeChipText, timeRange === 'custom' && styles.rangeChipTextActive]}>
-                           {timeRange === 'custom' && customDateRange ? formatDateShort(customDateRange.start) : 'Rango...'}
+                           {value}
+                        </Text>
+                        <Text style={[styles.kpiSubtext, hero ? { color: 'rgba(255,255,255,0.7)' } : { color: '#6B7280' }]}>
+                           {sub}
                         </Text>
                      </View>
-                  </TouchableOpacity>
-               </ScrollView>
+                  );
+               })}
             </View>
 
-            {/* TARJETAS DE INDICADORES CLAVE (KPIs) */}
-            <View style={styles.kpiGrid}>
-               <View style={styles.kpiCardPrimary}>
-                  <View style={styles.kpiHeader}>
-                     <View style={[styles.kpiIconBox, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
-                        <DollarSign size={20} color="#ffffff" />
-                     </View>
-                     <Sparkles size={16} color="#ffffff" style={{ opacity: 0.5 }} />
-                  </View>
-                  <Text style={styles.kpiTagLight}>Ingresos Netos</Text>
-                  <Text style={styles.kpiValueLight}>${analytics.totalRevenue.toFixed(2)}</Text>
-               </View>
-
-               <View style={{ flex: 1, gap: 12 }}>
-                  <View style={[styles.kpiCardSecondary]}>
-                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <View style={[styles.kpiIconBox, { backgroundColor: '#fef9c3' }]}><CreditCard size={16} color="#ca8a04" /></View>
-                        <View>
-                           <Text style={styles.kpiTagDark}>Ticket Promedio</Text>
-                           <Text style={styles.kpiValueDark}>${analytics.averageTicket.toFixed(2)}</Text>
-                        </View>
-                     </View>
-                  </View>
-
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
-                     <View style={[styles.kpiCardSecondary, { flex: 1, padding: 12 }]}>
-                        <View style={[styles.kpiIconBox, { backgroundColor: '#f3e8ff', marginBottom: 8 }]}><TrendingUp size={16} color="#7c3aed" /></View>
-                        <Text style={styles.kpiTagDark}>Ventas</Text>
-                        <Text style={styles.kpiValueDark}>{analytics.totalTransactions}</Text>
-                     </View>
-                     <View style={[styles.kpiCardSecondary, { flex: 1, padding: 12 }]}>
-                        <View style={[styles.kpiIconBox, { backgroundColor: '#dbeafe', marginBottom: 8 }]}><ShoppingBag size={16} color="#2563eb" /></View>
-                        <Text style={styles.kpiTagDark}>Prendas</Text>
-                        <Text style={styles.kpiValueDark}>{analytics.totalUnitsSold}</Text>
-                     </View>
-                  </View>
-               </View>
-            </View>
-
-            {/* SECCIÓN DOS COLUMNAS */}
-            <View style={styles.dashboardLayout}>
-               {/* DISTRIBUCIÓN POR MÉTODO DE PAGO */}
-               <View style={styles.panelCard}>
+            {/* PANELES */}
+            <View style={[styles.panels, wide && { flexDirection: 'row', alignItems: 'flex-start' }]}>
+               {/* PAYMENT BREAKDOWN */}
+               <View style={[styles.panelCard, wide && { flex: 1 }]}>
                   <View style={styles.panelHeader}>
-                     <PieChart size={18} color="#2563eb" style={{ marginRight: 8 }} />
+                     <View style={styles.panelIconBox}>
+                        <PieChart size={18} color={T.ink} />
+                     </View>
                      <Text style={styles.panelTitle}>Balance por Método de Pago</Text>
                   </View>
 
                   {analytics.paymentBreakdown.length === 0 ? (
-                     <Text style={styles.emptyText}>No hay flujos de caja en este período.</Text>
+                     <Text style={styles.emptyText}>No hay registros de ventas en este rango de tiempo.</Text>
                   ) : (
-                     analytics.paymentBreakdown.map((item) => (
-                        <View key={item.method} style={styles.paymentRow}>
-                           <View style={styles.paymentRowInfo}>
-                              <Text style={styles.paymentLabel}>{item.label}</Text>
-                              <Text style={styles.paymentSubtext}>
-                                 {item.count} venta(s) • {item.percentage.toFixed(1)}%
-                              </Text>
-                           </View>
+                     analytics.paymentBreakdown.map((item, index) => {
+                        const barColors = ['#050F78', '#08BB2C', '#AC0707', '#F59E0B', '#EC4899'];
+                        const activeColor = barColors[index % barColors.length];
 
-                           <View style={styles.paymentBarContainer}>
-                              <View style={styles.paymentBarBackground}>
-                                 <View
-                                    style={[
-                                       styles.paymentBarFill,
-                                       { width: `${Math.min(100, Math.max(0, item.percentage))}%` },
-                                    ]}
-                                 />
+                        return (
+                           <View key={item.method} style={{ marginBottom: 14 }}>
+                              <View style={styles.paymentRowInfo}>
+                                 <Text style={styles.paymentLabel}>{item.label}</Text>
+                                 <Text style={styles.paymentSubtext}>
+                                    {item.count} venta(s) • {item.percentage.toFixed(1)}%
+                                 </Text>
                               </View>
-                              <Text style={styles.paymentAmount}>${item.totalAmount.toFixed(2)}</Text>
+
+                              <View style={styles.paymentBarContainer}>
+                                 <View style={styles.paymentBarBackground}>
+                                    <View
+                                       style={[
+                                          styles.paymentBarFill,
+                                          { width: `${Math.min(100, Math.max(0, item.percentage))}%`, backgroundColor: activeColor },
+                                       ]}
+                                    />
+                                 </View>
+                                 <Text style={styles.paymentAmount}>${item.totalAmount.toFixed(2)}</Text>
+                              </View>
                            </View>
-                        </View>
-                     ))
+                        );
+                     })
                   )}
                </View>
 
-               {/* RANKING DE PRENDAS MÁS VENDIDAS */}
-               <View style={styles.panelCard}>
+               {/* TOP PRODUCTS */}
+               <View style={[styles.panelCard, wide && { flex: 1 }]}>
                   <View style={styles.panelHeader}>
-                     <Award size={18} color="#16a34a" style={{ marginRight: 8 }} />
-                     <Text style={styles.panelTitle}>Top Prendas Estelares</Text>
+                     <View style={styles.panelIconBox}>
+                        <Award size={18} color={T.ink} />
+                     </View>
+                     <Text style={styles.panelTitle}>Top Prendas Más Vendidas</Text>
                   </View>
 
                   {analytics.topProducts.length === 0 ? (
-                     <Text style={styles.emptyText}>El catálogo espera su próxima venta.</Text>
+                     <Text style={styles.emptyText}>Aún no hay prendas vendidas en el período.</Text>
                   ) : (
                      analytics.topProducts.slice(0, 5).map((prod, index) => {
-                        // AQUÍ OCURRE LA MAGIA: Buscamos la prenda actual en el catálogo
-                        const currentProduct = catalog.find(p => p.id === prod.productId);
-                        // Usamos la imagen del catálogo, o la heredada de la venta vieja, o null
+                        const currentProduct = catalog.find((p) => p.id === prod.productId);
                         const imageUrl = currentProduct?.images?.[0] || prod.image || null;
 
                         return (
                            <View key={`${prod.productId}_${index}`} style={styles.topProductRow}>
-                              {/* MEDALLA */}
                               <View
                                  style={[
                                     styles.rankBadge,
-                                    index === 0 && styles.rankGold,
-                                    index === 1 && styles.rankSilver,
-                                    index === 2 && styles.rankBronze,
+                                    index === 0
+                                       ? styles.rankFirst
+                                       : index === 1
+                                          ? styles.rankSecond
+                                          : index === 2
+                                             ? styles.rankThird
+                                             : styles.rankNormal,
                                  ]}
                               >
-                                 <Text style={[styles.rankText, index <= 2 && { color: '#ffffff' }]}>
-                                    #{index + 1}
+                                 <Text style={[styles.rankText, index === 0 && { color: T.onSolid }]}>
+                                    {index + 1}
                                  </Text>
                               </View>
 
-                              {/* IMAGEN O PLACEHOLDER FASHION */}
                               {imageUrl ? (
-                                 <Image
-                                    source={{ uri: imageUrl }}
+                                 <Cover
+                                    uri={imageUrl}
+                                    name={prod.name}
+                                    bg={T.imgBg}
+                                    fg={T.line}
                                     style={styles.topProductImg}
-                                    contentFit="cover"
-                                    cachePolicy="memory-disk"
                                  />
                               ) : (
-                                 <View style={[styles.topProductImg, styles.imgPlaceholder]}>
-                                    <Shirt size={20} color="#94a3b8" />
+                                 <View style={[styles.topProductImg, styles.topProductImgPlaceholder]}>
+                                    <Shirt size={18} color={T.inkMute} />
                                  </View>
                               )}
 
-                              <View style={{ flex: 1 }}>
+                              <View style={{ flex: 1, minWidth: 0 }}>
                                  <Text style={styles.topProductBrand}>{prod.brand}</Text>
-                                 <Text style={styles.topProductName} numberOfLines={1}>
-                                    {prod.name}
-                                 </Text>
+                                 <Text style={styles.topProductName} numberOfLines={1}>{prod.name}</Text>
                                  <Text style={styles.topProductDetail}>
-                                    {prod.variantColor} • Talla {prod.size}
+                                    Color: {prod.variantColor} • Talla: {prod.size}
                                  </Text>
                               </View>
 
@@ -265,7 +267,6 @@ export const AnalyticsDashboardScreen = () => {
             </View>
          </ScrollView>
 
-         {/* MODAL DEL CALENDARIO REUTILIZABLE */}
          <DateRangePickerModal
             visible={showDateRangeModal}
             initialRange={customDateRange}
@@ -281,66 +282,186 @@ export const AnalyticsDashboardScreen = () => {
 };
 
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: '#f8fafc' },
-   content: { padding: 16, paddingBottom: 40 },
-   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', padding: 20 },
-   loadingText: { marginTop: 12, color: '#64748b', fontSize: 13, fontWeight: '500' },
+   container: { flex: 1, backgroundColor: T.bg },
+   scroll: { flex: 1 },
+   content: { width: '100%', maxWidth: MAX, alignSelf: 'center', paddingTop: 22, paddingBottom: 48 },
+   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: T.bg, padding: 20 },
+   loadingText: { marginTop: 10, color: T.inkMute, fontSize: 13 },
+   pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
-   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-   titleIconBg: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center' },
-   pageTitle: { fontSize: 22, fontWeight: '900', color: '#0f172a', letterSpacing: -0.5 },
-   pageSubtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
+   // Header
+   headerRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-end',
+      marginBottom: 18,
+      flexWrap: 'wrap',
+      gap: 14,
+   },
+   pageTitle: {
+      ...display,
+      fontSize: 46,
+      lineHeight: 44,
+      fontWeight: '800',
+      color: T.ink,
+      textTransform: 'uppercase',
+   },
+   pageTitleMobile: { fontSize: 34, lineHeight: 33 },
+   pageSubtitle: { fontSize: 13, color: T.inkSoft, marginTop: 4 },
 
-   timeRangeWrapper: { marginBottom: 20 },
-   rangeChip: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#f1f5f9', marginRight: 8, borderWidth: 1, borderColor: '#e2e8f0' },
-   rangeChipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb', shadowColor: '#2563eb', shadowOpacity: 0.3, shadowRadius: 6, elevation: 4 },
-   rangeChipText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
-   rangeChipTextActive: { color: '#ffffff', fontWeight: 'bold' },
+   // Time ranges
+   timeRangeWrap: { flexShrink: 0 },
+   timeRangeContainer: {
+      flexDirection: 'row',
+      backgroundColor: T.surface,
+      borderRadius: 12,
+      padding: 4,
+      gap: 4,
+      borderWidth: 1,
+      borderColor: T.line,
+   },
+   rangeChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingVertical: 9,
+      paddingHorizontal: 12,
+      borderRadius: 9,
+   },
+   rangeChipCustom: { paddingHorizontal: 12 },
+   rangeOn: { backgroundColor: T.solid },
+   rangeChipText: { fontSize: 12, fontWeight: '700', color: T.inkSoft },
+   rangeOnText: { color: T.onSolid },
 
-   /* KPIs FASHION */
-   kpiGrid: { flexDirection: 'row', gap: 12, marginBottom: 20 },
-   kpiCardPrimary: { flex: 1, backgroundColor: '#2563eb', borderRadius: 20, padding: 20, justifyContent: 'space-between', shadowColor: '#2563eb', shadowOpacity: 0.3, shadowRadius: 10, elevation: 6 },
-   kpiCardSecondary: { backgroundColor: '#ffffff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', justifyContent: 'center' },
-   kpiHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
-   kpiIconBox: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+   // KPIs
+   kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 },
+   kpiCard: {
+      flexGrow: 1,
+      minWidth: 150,
+      borderRadius: 16,
+      padding: 18,
+      borderWidth: 0,
+   },
+   kpiHero: { backgroundColor: T.bar },
+   kpiHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+   },
+   kpiIconBox: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      justifyContent: 'center',
+      alignItems: 'center',
+   },
+   kpiIconHero: { backgroundColor: 'rgba(255,255,255,0.2)' },
+   kpiTag: { fontSize: 13, fontWeight: '700' },
+   kpiValue: { ...display, fontSize: 40, lineHeight: 38, fontWeight: '800' },
+   kpiSubtext: { fontSize: 12, marginTop: 4, fontWeight: '500' },
 
-   kpiTagLight: { fontSize: 12, fontWeight: '600', color: '#bfdbfe', textTransform: 'uppercase', letterSpacing: 1 },
-   kpiValueLight: { fontSize: 32, fontWeight: '900', color: '#ffffff', marginTop: 4 },
+   // Panels
+   panels: { gap: 16 },
+   panelCard: {
+      backgroundColor: T.surface,
+      borderRadius: 16,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: T.line,
+   },
+   panelHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 18,
+   },
+   panelIconBox: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      backgroundColor: T.bg,
+      borderWidth: 1,
+      borderColor: T.line,
+      justifyContent: 'center',
+      alignItems: 'center',
+   },
+   panelTitle: {
+      ...display,
+      fontSize: 22,
+      lineHeight: 22,
+      fontWeight: '800',
+      color: T.ink,
+      textTransform: 'uppercase',
+      flexShrink: 1,
+   },
+   emptyText: {
+      fontSize: 13,
+      color: T.inkMute,
+      fontStyle: 'italic',
+      paddingVertical: 10,
+      textAlign: 'center',
+   },
 
-   kpiTagDark: { fontSize: 11, fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase' },
-   kpiValueDark: { fontSize: 20, fontWeight: '900', color: '#0f172a', marginTop: 2 },
-
-   /* LAYOUT DE PANELES */
-   dashboardLayout: { gap: 16 },
-   panelCard: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16, padding: 16, shadowColor: '#000', shadowOpacity: 0.02, shadowRadius: 8, elevation: 1 },
-   panelHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 12 },
-   panelTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
-   emptyText: { fontSize: 13, color: '#94a3b8', fontStyle: 'italic', paddingVertical: 20, textAlign: 'center' },
-
-   /* MÉTODOS DE PAGO */
-   paymentRow: { marginBottom: 14 },
+   // Payment Breakdown
    paymentRowInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-   paymentLabel: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
-   paymentSubtext: { fontSize: 11, color: '#64748b', fontWeight: '500' },
+   paymentLabel: { fontSize: 14, fontWeight: '700', color: T.ink },
+   paymentSubtext: { fontSize: 12, color: T.inkSoft },
    paymentBarContainer: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-   paymentBarBackground: { flex: 1, height: 8, backgroundColor: '#f1f5f9', borderRadius: 4, overflow: 'hidden' },
-   paymentBarFill: { height: '100%', backgroundColor: '#2563eb', borderRadius: 4 },
-   paymentAmount: { fontSize: 13, fontWeight: '900', color: '#16a34a', minWidth: 70, textAlign: 'right' },
+   paymentBarBackground: {
+      flex: 1,
+      height: 10,
+      backgroundColor: T.line,
+      borderRadius: 5,
+      overflow: 'hidden',
+   },
+   paymentBarFill: { height: '100%', borderRadius: 5 },
+   paymentAmount: {
+      ...display,
+      fontSize: 20,
+      fontWeight: '800',
+      color: T.ink,
+      minWidth: 74,
+      textAlign: 'right',
+   },
 
-   /* TOP PRODUCTOS */
-   topProductRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f8fafc', gap: 12 },
-   rankBadge: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' },
-   rankGold: { backgroundColor: '#eab308', shadowColor: '#eab308', shadowOpacity: 0.4, shadowRadius: 4, elevation: 2 },
-   rankSilver: { backgroundColor: '#94a3b8' },
-   rankBronze: { backgroundColor: '#d97706' },
-   rankText: { fontSize: 12, color: '#475569', fontWeight: '900' },
-
-   topProductImg: { width: 44, height: 44, borderRadius: 8, backgroundColor: '#f1f5f9' },
-   imgPlaceholder: { justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0' },
-
-   topProductBrand: { fontSize: 10, fontWeight: 'bold', color: '#2563eb', textTransform: 'uppercase' },
-   topProductName: { fontSize: 14, fontWeight: 'bold', color: '#0f172a', marginBottom: 2 },
-   topProductDetail: { fontSize: 11, color: '#64748b' },
-   topProductUnits: { fontSize: 14, fontWeight: '900', color: '#0f172a', textAlign: 'right' },
-   topProductRevenue: { fontSize: 12, color: '#16a34a', fontWeight: 'bold', textAlign: 'right', marginTop: 2 },
+   // Top Products
+   topProductRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: T.line,
+      gap: 12,
+   },
+   rankBadge: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      justifyContent: 'center',
+      alignItems: 'center',
+   },
+   rankFirst: { backgroundColor: '#373440' },
+   rankSecond: { backgroundColor: '#020203' },
+   rankThird: { backgroundColor: '#373440' },
+   rankNormal: { backgroundColor: '#000000' },
+   rankText: { ...display, fontSize: 14, fontWeight: '800', color: T.onSolid },
+   topProductImg: { width: 42, height: 54, borderRadius: 6 },
+   topProductImgPlaceholder: {
+      backgroundColor: T.bg,
+      borderWidth: 1,
+      borderColor: T.line,
+      justifyContent: 'center',
+      alignItems: 'center',
+   },
+   topProductBrand: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: T.inkMute,
+      textTransform: 'uppercase',
+   },
+   topProductName: { fontSize: 14, fontWeight: '700', color: T.ink },
+   topProductDetail: { fontSize: 11, color: T.inkSoft },
+   topProductUnits: { fontSize: 13, fontWeight: '700', color: T.ink },
+   topProductRevenue: { fontSize: 12, color: '#6366F1', fontWeight: '700' },
 });

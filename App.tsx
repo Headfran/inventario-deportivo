@@ -1,6 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, SafeAreaView, Platform, Modal, Pressable, useWindowDimensions, ScrollView } from 'react-native';
-import { Package, MapPin, Lock, LogOut, ShoppingBag, BarChart3, Bell, Receipt, Clock, Users, Wifi, WifiOff, RefreshCw, Menu, X, ChevronRight } from 'lucide-react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+   View,
+   Text,
+   StyleSheet,
+   Pressable,
+   ActivityIndicator,
+   Modal,
+   Animated,
+   useWindowDimensions,
+   Platform,
+} from 'react-native';
+import { Package, MapPin, Lock, LogOut, ShoppingBag, BarChart3, Bell, Menu, X, Receipt, Clock, Users, Wifi, WifiOff, RefreshCw } from 'lucide-react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { LoginScreen } from './src/screens/LoginScreen';
@@ -16,146 +26,116 @@ import { SellerPerformanceScreen } from './src/screens/SellerPerformanceScreen';
 import { requestNotificationPermission, listenForegroundMessages } from './src/services/notificationService';
 import { getPendingSales, syncPendingSalesWithFirestore } from './src/services/offlineSyncService';
 import { showConfirm, showAlert } from './src/utils/alert';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
+import { MONO as T, display, ease, nd, reduced } from './src/design';
+
+// Navegación persistente
+const NAV_STORAGE_KEY = 'jdstore.activeTab.v1';
+
+const getStoredTab = (): StaffTab | null => {
+   if (typeof window === 'undefined' || !window.localStorage) return null;
+   const saved = window.localStorage.getItem(NAV_STORAGE_KEY);
+   // Validación: solo aceptamos tabs que existan en NAV
+   const validTabs: StaffTab[] = ['inventory', 'shelves', 'sales', 'layaways', 'history', 'sellers', 'analytics'];
+   return saved && validTabs.includes(saved as StaffTab) ? (saved as StaffTab) : null;
+};
+
+const storeTab = (tab: StaffTab) => {
+   if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(NAV_STORAGE_KEY, tab);
+   }
+};
+
+const PORTAL_STORAGE_KEY = 'jdstore.showStaffPortal.v1';
+
+const getStoredPortal = (): boolean => {
+   if (typeof window === 'undefined' || !window.localStorage) return false;
+   return window.localStorage.getItem(PORTAL_STORAGE_KEY) === 'true';
+};
+
+const storePortal = (open: boolean) => {
+   if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(PORTAL_STORAGE_KEY, String(open));
+   }
+};
+
+// Persistencia de Sesión
+const UNLOCK_STORAGE_KEY = 'jdstore.unlockedAt.v1';
+const UNLOCK_TTL_MS = 8 * 60 * 60 * 1000;
+
+const getStoredSession = (): boolean => {
+   if (typeof window === 'undefined' || !window.localStorage) return false;
+   const raw = window.localStorage.getItem(UNLOCK_STORAGE_KEY);
+   if (!raw) return false;
+   const ts = Number(raw);
+   return Number.isFinite(ts) && Date.now() - ts < UNLOCK_TTL_MS;
+};
+
+const markSessionUnlocked = () => {
+   if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(UNLOCK_STORAGE_KEY, String(Date.now()));
+   }
+};
+
+const clearSessionUnlocked = () => {
+   if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(UNLOCK_STORAGE_KEY);
+   }
+};
 
 type StaffTab = 'inventory' | 'shelves' | 'sales' | 'layaways' | 'history' | 'sellers' | 'analytics';
 
 // ==========================================
-// DEFINICIÓN DE LAS TABS (una sola fuente de verdad)
+// 7 opciones del menú lateral (de tu rama)
 // ==========================================
-interface MenuItem { id: StaffTab; label: string; icon: any; }
+const NAV: { id: StaffTab; label: string; Icon: any }[] = [
+   { id: 'inventory', label: 'Inventario', Icon: Package },
+   { id: 'shelves', label: 'Mapa Estantes', Icon: MapPin },
+   { id: 'sales', label: 'Registro de Ventas', Icon: ShoppingBag },
 
-const MENU_ITEMS: MenuItem[] = [
-   { id: 'inventory', label: 'Inventario', icon: Package },
-   { id: 'shelves', label: 'Mapa Estantes', icon: MapPin },
-   { id: 'sales', label: 'Registro de Venta', icon: ShoppingBag },
-   { id: 'layaways', label: 'Apartados', icon: Clock },
-   { id: 'history', label: 'Historial', icon: Receipt },
-   { id: 'sellers', label: 'Vendedores', icon: Users },
-   { id: 'analytics', label: 'Analíticas', icon: BarChart3 },
+   { id: 'history', label: 'Historial', Icon: Receipt },
+   { id: 'sellers', label: 'Vendedores', Icon: Users },
+   { id: 'analytics', label: 'Analíticas', Icon: BarChart3 },
 ];
 
-// ==========================================
-// PWA: TIPOS Y HOOK DE INSTALACIÓN
-// ==========================================
-interface BeforeInstallPromptEvent extends Event {
-   readonly platforms: string[];
-   readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
-   prompt(): Promise<void>;
-}
+// Botón con respuesta al presionar
+const P = ({ style, ...rest }: any) => (
+   <Pressable {...rest} style={({ pressed }: any) => [style, pressed && styles.pressed]} />
+);
 
-const usePWAInstall = () => {
-   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-   const [isInstallable, setIsInstallable] = useState(false);
-   const [isInstalled, setIsInstalled] = useState(false);
-   const [isIOS, setIsIOS] = useState(false);
-
-   useEffect(() => {
-      if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-      const standalone =
-         window.matchMedia('(display-mode: standalone)').matches ||
-         (window.navigator as any).standalone === true;
-      setIsInstalled(standalone);
-
-      const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-      setIsIOS(ios);
-
-      const onBeforeInstall = (e: Event) => {
-         e.preventDefault();
-         setDeferredPrompt(e as BeforeInstallPromptEvent);
-         setIsInstallable(true);
-      };
-      const onInstalled = () => {
-         setIsInstalled(true);
-         setIsInstallable(false);
-         setDeferredPrompt(null);
-      };
-
-      window.addEventListener('beforeinstallprompt', onBeforeInstall);
-      window.addEventListener('appinstalled', onInstalled);
-      return () => {
-         window.removeEventListener('beforeinstallprompt', onBeforeInstall);
-         window.removeEventListener('appinstalled', onInstalled);
-      };
-   }, []);
-
-   const promptInstall = useCallback(async (): Promise<'accepted' | 'dismissed' | 'unavailable'> => {
-      if (!deferredPrompt) return 'unavailable';
-      await deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') {
-         setIsInstalled(true);
-         setIsInstallable(false);
-      }
-      setDeferredPrompt(null);
-      return outcome;
-   }, [deferredPrompt]);
-
-   return { isInstallable, isInstalled, isIOS, promptInstall };
-};
-
-// ==========================================
-// PWA: BOTÓN FLOTANTE DE INSTALACIÓN
-// ==========================================
-const InstallPWAButton: React.FC<{ install: ReturnType<typeof usePWAInstall> }> = ({ install }) => {
-   const [showIOSHint, setShowIOSHint] = useState(false);
-
-   if (install.isInstalled) return null;
-   if (!install.isInstallable && !install.isIOS) return null;
-
-   const onPress = async () => {
-      if (install.isIOS) {
-         setShowIOSHint(true);
-         return;
-      }
-      await install.promptInstall();
-   };
-
-   return (
-      <>
-         <TouchableOpacity style={styles.installBtn} onPress={onPress}>
-            <Text style={styles.installBtnText}>📲 Instalar App</Text>
-         </TouchableOpacity>
-
-         {showIOSHint && (
-            <View style={styles.iosHintOverlay}>
-               <View style={styles.iosHintCard}>
-                  <Text style={styles.iosHintTitle}>Instalar en iOS</Text>
-                  <Text style={styles.iosHintText}>
-                     1. Toca el botón <Text style={{ fontWeight: 'bold' }}>Compartir</Text> (⬆️) de Safari.{'\n\n'}
-                     2. Selecciona <Text style={{ fontWeight: 'bold' }}>Añadir a pantalla de inicio</Text>.{'\n\n'}
-                     3. Confirma con <Text style={{ fontWeight: 'bold' }}>Añadir</Text>.
-                  </Text>
-                  <TouchableOpacity style={styles.iosHintClose} onPress={() => setShowIOSHint(false)}>
-                     <Text style={styles.iosHintCloseText}>Entendido</Text>
-                  </TouchableOpacity>
-               </View>
-            </View>
-         )}
-      </>
-   );
-};
-
-// ==========================================
-// APLICACIÓN PRINCIPAL
-// ==========================================
 const MainApp = () => {
-   const { user, loading, isLocked, hasPin, unlockWithPin, setupPin, logout, lockSession } = useAuth();
-   const [showStaffPortal, setShowStaffPortal] = useState(false);
-   const [activeTab, setActiveTab] = useState<StaffTab>('inventory');
+   const {
+      user,
+      loading,
+      isLocked,
+      hasPin,
+      unlockWithPin,
+      setupPin,
+      logout,
+      lockSession
+   } = useAuth();
+
+   const [showStaffPortal, setShowStaffPortal] = useState<boolean>(() => {
+      return getStoredPortal();
+   });
+   const [activeTab, setActiveTab] = useState<StaffTab>(() => {
+      return getStoredTab() ?? 'inventory';
+   });
    const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-   const [menuOpen, setMenuOpen] = useState(false);
 
-   const { width } = useWindowDimensions();
-   const isMobile = width < 900;
-
+   // ---- Offline sync (backend de tu rama) ----
    const [isOnline, setIsOnline] = useState<boolean>(true);
    const [pendingCount, setPendingCount] = useState<number>(0);
    const [isSyncing, setIsSyncing] = useState<boolean>(false);
+   const [sessionUnlocked, setSessionUnlocked] = useState<boolean>(() => getStoredSession());
 
    const checkPendingSales = async () => {
-      try { const pending = await getPendingSales(); setPendingCount(pending.length); }
-      catch (e) { console.warn('Error al verificar cola offline:', e); }
+      try {
+         const pending = await getPendingSales();
+         setPendingCount(pending.length);
+      } catch (e) {
+         console.warn('Error al verificar cola offline:', e);
+      }
    };
 
    const handleManualSync = async () => {
@@ -181,7 +161,9 @@ const MainApp = () => {
          const handleOnline = async () => {
             setIsOnline(true);
             const result = await syncPendingSalesWithFirestore();
-            if (result.success > 0) showAlert('🔄 Sincronización Automática', `Se han enviado ${result.success} ventas pendientes.`);
+            if (result.success > 0) {
+               showAlert('🔄 Sincronización Automática', `Se han enviado ${result.success} ventas pendientes.`);
+            }
             checkPendingSales();
          };
          const handleOffline = () => setIsOnline(false);
@@ -197,247 +179,404 @@ const MainApp = () => {
       }
    }, []);
 
+   // Solicitar permisos de notificación FCM al ingresar
    useEffect(() => {
       if (user && !isLocked) {
-         requestNotificationPermission(user.uid).then((token) => { if (token) setNotificationsEnabled(true); });
-         const unsubscribeFCM = listenForegroundMessages((payload) => {
-            showAlert(payload.notification?.title || '⚠️ Alerta', payload.notification?.body || 'Actualización recibida.');
+         requestNotificationPermission(user.uid).then((token) => {
+            if (token) setNotificationsEnabled(true);
          });
+
+         const unsubscribeFCM = listenForegroundMessages((payload) => {
+            showAlert(
+               payload.notification?.title || '⚠️ Alerta de Inventario',
+               payload.notification?.body || 'Se ha recibido una actualización de stock.'
+            );
+         });
+
          return () => unsubscribeFCM();
       }
    }, [user, isLocked]);
 
-   if (loading) return <View style={styles.centered}><ActivityIndicator size="large" color="#2563eb" /></View>;
-   if (!showStaffPortal) return <PublicCatalogScreen onOpenStaffAccess={() => setShowStaffPortal(true)} />;
-   if (!user) return <LoginScreen />;
-   if (!hasPin) return <PinScreen mode="SETUP" onSuccess={async (pin) => { if (pin) await setupPin(pin); }} />;
-   if (isLocked) return <PinScreen mode="UNLOCK" onSuccess={async (pin) => { if (pin) { const valid = await unlockWithPin(pin); if (!valid) showAlert('PIN Incorrecto', 'Verifica el código ingresado'); } }} onCancelLogin={() => setShowStaffPortal(false)} />;
+   useEffect(() => {
+      storePortal(showStaffPortal);
+   }, [showStaffPortal]);
 
-   const currentTabLabel = MENU_ITEMS.find(m => m.id === activeTab)?.label || 'Panel';
+   useEffect(() => {
+      if (user && hasPin && !isLocked) {
+         storeTab(activeTab);
+      }
+   }, [activeTab, user, hasPin, isLocked]);
 
+   useEffect(() => {
+      const check = () => {
+         if (sessionUnlocked && !getStoredSession()) {
+            setSessionUnlocked(false);
+         }
+      };
+      const id = setInterval(check, 60 * 1000);
+      if (typeof document !== 'undefined') {
+         document.addEventListener('visibilitychange', check);
+      }
+      return () => {
+         clearInterval(id);
+         if (typeof document !== 'undefined') {
+            document.removeEventListener('visibilitychange', check);
+         }
+      };
+   }, [sessionUnlocked]);
+
+   // ---- Solo diseño: menú lateral ----
+   const { width } = useWindowDimensions();
+   const narrow = width < 520;
+   const drawerW = Math.min(310, Math.round(width * (narrow ? 0.84 : 0.34)));
+   const [menuOpen, setMenuOpen] = useState(false);
+   const menuAnim = useRef(new Animated.Value(0)).current;
+
+   useEffect(() => {
+      if (!menuOpen) return;
+      if (reduced()) {
+         menuAnim.setValue(1);
+         return;
+      }
+      Animated.timing(menuAnim, { toValue: 1, duration: 240, easing: ease, useNativeDriver: nd }).start();
+   }, [menuOpen]);
+
+   const openMenu = () => {
+      menuAnim.setValue(0);
+      setMenuOpen(true);
+   };
+
+   const closeMenu = () => {
+      if (reduced()) {
+         setMenuOpen(false);
+         return;
+      }
+      Animated.timing(menuAnim, { toValue: 0, duration: 160, easing: ease, useNativeDriver: nd }).start(({ finished }) => {
+         if (finished) setMenuOpen(false);
+      });
+   };
+
+   const goCatalog = () => {
+      lockSession();
+      clearSessionUnlocked();
+      setSessionUnlocked(false);
+      setShowStaffPortal(false);
+      storePortal(false);
+   };
+
+   const confirmLogout = () => {
+      showConfirm(
+         'Cerrar Sesión',
+         '¿Deseas salir del sistema y eliminar el acceso rápido por PIN?',
+         async () => {
+            await logout();
+            clearSessionUnlocked();
+            setSessionUnlocked(false);
+            setShowStaffPortal(false);
+            storePortal(false);
+         }
+      );
+   };
+
+   if (loading) {
+      return (
+         <View style={styles.centered}>
+            <ActivityIndicator size="large" color={T.onBar} />
+         </View>
+      );
+   }
+
+   // 1. Catálogo Público
+   if (!showStaffPortal) {
+      return (
+         <PublicCatalogScreen
+            onOpenStaffAccess={() => setShowStaffPortal(true)}
+         />
+      );
+   }
+
+   // 2. Login Firebase
+   if (!user) {
+      return <LoginScreen />;
+   }
+
+   // 3. Configuración PIN
+   if (!hasPin) {
+      return (
+         <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+            <PinScreen
+               mode="SETUP"
+               onSuccess={async (pin) => {
+                  if (pin) await setupPin(pin);
+               }}
+               onCancelLogin={() => setShowStaffPortal(false)}
+            />
+         </View>
+      );
+   }
+
+   // 4. Desbloqueo PIN
+   if (isLocked && !sessionUnlocked) {
+      return (
+         <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+            <PinScreen
+               mode="UNLOCK"
+               onSuccess={async (pin) => {
+                  if (pin) {
+                     const valid = await unlockWithPin(pin);
+                     if (valid) {
+                        markSessionUnlocked();
+                        setSessionUnlocked(true);
+                     } else {
+                        showAlert('PIN Incorrecto', 'Verifica el código ingresado');
+                     }
+                  }
+               }}
+               onCancelLogin={() => {
+                  clearSessionUnlocked();
+                  setSessionUnlocked(false);
+                  setShowStaffPortal(false);
+                  storePortal(false);
+               }}
+               onLogout={confirmLogout}
+            />
+         </View>
+      );
+   }
+
+   const current = NAV.find((n) => n.id === activeTab);
+
+   // 5. Panel Administrativo del Personal
    return (
       <SafeAreaView style={styles.container}>
-         <View style={[styles.topBar, isMobile && styles.topBarMobile]}>
+         {/* Barra Superior del Panel (banner negro) */}
+         <View style={styles.topBar}>
+            <P style={styles.iconBtn} onPress={openMenu} accessibilityLabel="Abrir menú">
+               <Menu size={22} color={T.onBar} />
+            </P>
+
             <View style={styles.staffInfoGroup}>
-               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.staffTitle} numberOfLines={1}>Panel del Personal</Text>
-                  {notificationsEnabled && <View style={styles.bellBadge}><Bell size={12} color="#16a34a" /></View>}
+               <View style={styles.titleRow}>
+                  <Text style={styles.staffTitle}>Panel del Personal</Text>
+                  {notificationsEnabled && (
+                     <View style={styles.bellBadge}>
+                        <Bell size={12} color={T.onBar} />
+                     </View>
+                  )}
+                  {!narrow && current && (
+                     <View style={styles.sectionPill}>
+                        <Text style={styles.sectionPillText}>{current.label}</Text>
+                     </View>
+                  )}
                </View>
                <Text style={styles.staffEmail} numberOfLines={1}>{user.email}</Text>
             </View>
 
             <View style={styles.topActionsGroup}>
-               <View style={styles.connectionStatusGroup}>
-                  {!isOnline ? (
-                     <View style={styles.offlineBanner}>
-                        <WifiOff size={13} color="#ef4444" />
-                        {!isMobile && <Text style={styles.offlineBannerText}>Modo Offline</Text>}
-                     </View>
-                  ) : (
-                     <View style={styles.onlineBanner}>
-                        <Wifi size={13} color="#16a34a" />
-                        {!isMobile && <Text style={styles.onlineBannerText}>En Línea</Text>}
-                     </View>
-                  )}
-                  {pendingCount > 0 && (
-                     <TouchableOpacity style={styles.syncPendingBtn} onPress={handleManualSync} disabled={isSyncing}>
-                        <RefreshCw size={12} color="#ffffff" />
-                        {!isMobile && <Text style={styles.syncPendingText}>{isSyncing ? 'Sincronizando...' : `${pendingCount} Pendientes`}</Text>}
-                     </TouchableOpacity>
-                  )}
-               </View>
-               <TouchableOpacity style={styles.lockButton} onPress={() => { lockSession(); setShowStaffPortal(false); }}>
-                  <Lock size={15} color="#cbd5e1" style={!isMobile ? { marginRight: 6 } : undefined} />
-                  {!isMobile && <Text style={styles.lockButtonText}>Ver Catálogo</Text>}
-               </TouchableOpacity>
-               <TouchableOpacity style={styles.logoutIconButton} onPress={() => { showConfirm('Cerrar Sesión', '¿Deseas salir del sistema y eliminar el acceso rápido por PIN?', async () => { await logout(); setShowStaffPortal(false); }); }}>
-                  <LogOut size={16} color="#ef4444" />
-               </TouchableOpacity>
+               {/* Indicador Online/Offline */}
+               {!narrow && (
+                  <View style={isOnline ? styles.onlineChip : styles.offlineChip}>
+                     {isOnline ? <Wifi size={12} color={T.onBar} /> : <WifiOff size={12} color={T.onBar} />}
+                     <Text style={styles.connectionText}>{isOnline ? 'En Línea' : 'Offline'}</Text>
+                  </View>
+               )}
+
+               {/* Botón de Sincronización (solo si hay pendientes) */}
+               {pendingCount > 0 && (
+                  <P style={styles.syncBtn} onPress={handleManualSync} accessibilityLabel="Sincronizar ventas pendientes">
+                     <RefreshCw size={13} color={T.onBar} />
+                     {!narrow && (
+                        <Text style={styles.syncBtnText}>
+                           {isSyncing ? 'Sincronizando...' : `${pendingCount} Pend.`}
+                        </Text>
+                     )}
+                  </P>
+               )}
+
+               <P style={styles.lockButton} onPress={goCatalog} accessibilityLabel="Volver al catálogo">
+                  <Lock size={16} color={T.onBar} />
+                  {!narrow && <Text style={styles.lockButtonText}>Ver Catálogo</Text>}
+               </P>
+
+               <P style={styles.iconBtn} onPress={confirmLogout} accessibilityLabel="Cerrar Sesión">
+                  <LogOut size={17} color={T.onBar} />
+               </P>
             </View>
          </View>
 
-         {/* ==========================================
-             NAV RESPONSIVE: DRAWER EN MÓVIL / TABS EN DESKTOP
-             ========================================== */}
-         {isMobile ? (
-            <View style={styles.mobileNavBar}>
-               <TouchableOpacity
-                  onPress={() => setMenuOpen(true)}
-                  style={styles.hamburgerBtn}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-               >
-                  <Menu size={22} color="#ffffff" />
-               </TouchableOpacity>
-               <Text style={styles.mobileNavTitle} numberOfLines={1}>{currentTabLabel}</Text>
-               <View style={{ width: 42 }} />
-            </View>
-         ) : (
-            <View style={styles.tabNavRow}>
-               {MENU_ITEMS.map(item => {
-                  const Icon = item.icon;
-                  const active = activeTab === item.id;
-                  return (
-                     <TouchableOpacity
-                        key={item.id}
-                        style={[styles.tabButton, active && styles.tabButtonActive]}
-                        onPress={() => setActiveTab(item.id)}
-                     >
-                        <Icon size={18} color={active ? '#2563eb' : '#64748b'} style={{ marginRight: 8 }} />
-                        <Text style={[styles.tabText, active && styles.tabTextActive]}>{item.label}</Text>
-                     </TouchableOpacity>
-                  );
-               })}
-            </View>
-         )}
-
+         {/* Renderizado de la Pantalla Activa */}
          <View style={styles.tabContent}>
             {activeTab === 'inventory' && <InventoryListScreen />}
             {activeTab === 'shelves' && <ShelfMapScreen />}
             {activeTab === 'sales' && <SalesRegisterScreen isOnline={isOnline} />}
+            {activeTab === 'layaways' && (
+               <LayawayScreen
+                  currentSellerName={user?.email || 'Vendedor'}
+                  currentSellerId={user?.uid}
+               />
+            )}
             {activeTab === 'history' && <SalesHistoryScreen />}
-            {activeTab === 'analytics' && <AnalyticsDashboardScreen />}
-            {activeTab === 'layaways' && <LayawayScreen currentSellerName={user?.email || 'Vendedor'} currentSellerId={user?.uid} />}
             {activeTab === 'sellers' && <SellerPerformanceScreen />}
+            {activeTab === 'analytics' && <AnalyticsDashboardScreen />}
          </View>
 
-         {/* ==========================================
-             DRAWER LATERAL (solo en móvil)
-             ========================================== */}
-         <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-            <Pressable style={styles.drawerBackdrop} onPress={() => setMenuOpen(false)}>
-               <Pressable style={styles.drawer} onPress={e => e.stopPropagation()}>
-                  <SafeAreaView style={{ flex: 1 }}>
-                     <View style={styles.drawerHeader}>
-                        <Text style={styles.drawerTitle}>Menú</Text>
-                        <TouchableOpacity
-                           onPress={() => setMenuOpen(false)}
-                           style={styles.drawerCloseBtn}
-                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                           <X size={22} color="#0f172a" />
-                        </TouchableOpacity>
+         {/* Menú lateral desplegable */}
+         <Modal visible={menuOpen} transparent animationType="none" onRequestClose={closeMenu}>
+            <View style={styles.menuRoot}>
+               <Animated.View style={[styles.backdrop, { opacity: menuAnim }]}>
+                  <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} accessibilityLabel="Cerrar menú" />
+               </Animated.View>
+
+               <Animated.View
+                  style={[
+                     styles.drawer,
+                     { width: drawerW, transform: [{ translateX: menuAnim.interpolate({ inputRange: [0, 1], outputRange: [-drawerW, 0] }) }] },
+                  ]}
+               >
+                  <View style={styles.drawerHead}>
+                     <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.drawerTitle}>Panel del Personal</Text>
+                        <Text style={styles.staffEmail} numberOfLines={1}>{user.email}</Text>
                      </View>
-                     <ScrollView>
-                        {MENU_ITEMS.map(item => {
-                           const Icon = item.icon;
-                           const active = activeTab === item.id;
-                           return (
-                              <TouchableOpacity
-                                 key={item.id}
-                                 style={[styles.drawerItem, active && styles.drawerItemActive]}
-                                 onPress={() => { setActiveTab(item.id); setMenuOpen(false); }}
-                              >
-                                 <Icon size={20} color={active ? '#2563eb' : '#64748b'} />
-                                 <Text style={[styles.drawerItemText, active && styles.drawerItemTextActive]}>{item.label}</Text>
-                                 {active && <ChevronRight size={18} color="#2563eb" />}
-                              </TouchableOpacity>
-                           );
-                        })}
-                     </ScrollView>
-                  </SafeAreaView>
-               </Pressable>
-            </Pressable>
+                     <P style={styles.iconBtn} onPress={closeMenu} accessibilityLabel="Cerrar menú">
+                        <X size={20} color={T.onBar} />
+                     </P>
+                  </View>
+
+                  <View style={styles.drawerItems}>
+                     {NAV.map(({ id, label, Icon }) => {
+                        const active = activeTab === id;
+                        return (
+                           <P
+                              key={id}
+                              style={[styles.navItem, active && styles.navItemActive]}
+                              onPress={() => {
+                                 setActiveTab(id);
+                                 closeMenu();
+                              }}
+                           >
+                              <Icon size={24} color={active ? T.ink : T.onBar} />
+                              <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+                           </P>
+                        );
+                     })}
+                  </View>
+
+                  <View style={styles.drawerFooter}>
+                     <P
+                        style={styles.footerBtn}
+                        onPress={() => {
+                           closeMenu();
+                           goCatalog();
+                        }}
+                     >
+                        <Lock size={17} color={T.onBar} />
+                        <Text style={styles.footerBtnText}>Ver Catálogo</Text>
+                     </P>
+                     <P
+                        style={styles.footerBtn}
+                        onPress={() => {
+                           closeMenu();
+                           confirmLogout();
+                        }}
+                     >
+                        <LogOut size={17} color={T.onBar} />
+                        <Text style={styles.footerBtnText}>Cerrar Sesión</Text>
+                     </P>
+                  </View>
+               </Animated.View>
+            </View>
          </Modal>
       </SafeAreaView>
    );
 };
 
-// ==========================================
-// APP RAÍZ
-// ==========================================
 export default function App() {
-   const pwa = usePWAInstall();
-
    useEffect(() => {
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-         // Registrar SIN esperar 'load' → Chrome lo prefiere para instalabilidad
-         navigator.serviceWorker.register('/firebase-messaging-sw.js')
-            .then((reg) => console.log('Service Worker registrado:', reg.scope))
-            .catch((err) => console.warn('Error Service Worker:', err));
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+         window.addEventListener('load', () => {
+            navigator.serviceWorker
+               .register('/firebase-messaging-sw.js')
+               .then((reg) => console.log('Service Worker registrado correctamente:', reg.scope))
+               .catch((err) => console.warn('Error al registrar Service Worker en inicio:', err));
+         });
       }
    }, []);
 
    return (
       <GestureHandlerRootView style={{ flex: 1 }}>
-         <AuthProvider>
-            <MainApp />
-            <InstallPWAButton install={pwa} />
-         </AuthProvider>
+         <SafeAreaProvider>
+            <AuthProvider>
+               <MainApp />
+            </AuthProvider>
+         </SafeAreaProvider>
       </GestureHandlerRootView>
    );
 }
 
+const line = 'rgba(255,255,255,0.3)';
+
 const styles = StyleSheet.create({
-   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' },
-   container: { flex: 1, backgroundColor: '#f8fafc' },
+   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: T.bar },
+   container: { flex: 1, backgroundColor: T.bg },
+   pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
-   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#0f172a' },
-   topBarMobile: { paddingHorizontal: 10, paddingVertical: 10 },
-   staffInfoGroup: { flex: 1, marginRight: 8 },
-   staffTitle: { color: '#ffffff', fontSize: 15, fontWeight: 'bold' },
-   bellBadge: { backgroundColor: '#dcfce7', borderRadius: 10, padding: 3 },
-   staffEmail: { color: '#94a3b8', fontSize: 11 },
+   // Banner negro
+   topBar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: T.bar },
+   iconBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: line, borderRadius: 10 },
+   staffInfoGroup: { flex: 1, minWidth: 0 },
+   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+   staffTitle: { ...display, color: T.onBar, fontSize: 24, lineHeight: 24, fontWeight: '800', textTransform: 'uppercase' },
+   bellBadge: { backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 10, padding: 4 },
+   sectionPill: { borderWidth: 1, borderColor: line, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2 },
+   sectionPillText: { color: T.onBar, fontSize: 12, fontWeight: '700' },
+   staffEmail: { color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 },
    topActionsGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-   connectionStatusGroup: { flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 4 },
-   offlineBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, gap: 4 },
-   offlineBannerText: { fontSize: 11, color: '#ef4444', fontWeight: 'bold' },
-   onlineBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0fdf4', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, gap: 4 },
-   onlineBannerText: { fontSize: 11, color: '#16a34a', fontWeight: 'bold' },
-   syncPendingBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eab308', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, gap: 4 },
-   syncPendingText: { fontSize: 11, color: '#ffffff', fontWeight: 'bold' },
-   lockButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1e293b', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6 },
-   lockButtonText: { color: '#cbd5e1', fontSize: 12, fontWeight: '500' },
-   logoutIconButton: { padding: 6, backgroundColor: '#1e293b', borderRadius: 6 },
-
-   // Tabs desktop
-   tabNavRow: { flexDirection: 'row', backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-   tabButton: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-   tabButtonActive: { borderBottomColor: '#2563eb', backgroundColor: '#f8fafc' },
-   tabText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
-   tabTextActive: { color: '#2563eb' },
-
-   // Barra de navegación móvil (con hamburguesa)
-   mobileNavBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#1e293b', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#334155' },
-   hamburgerBtn: { padding: 6 },
-   mobileNavTitle: { flex: 1, textAlign: 'center', color: '#ffffff', fontSize: 15, fontWeight: 'bold' },
-
-   // Drawer
-   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
-   drawer: { width: '80%', maxWidth: 340, height: '100%', backgroundColor: '#ffffff' },
-   drawerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-   drawerTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
-   drawerCloseBtn: { padding: 4 },
-   drawerItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, gap: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-   drawerItemActive: { backgroundColor: '#eff6ff', borderLeftWidth: 3, borderLeftColor: '#2563eb' },
-   drawerItemText: { flex: 1, fontSize: 15, color: '#334155', fontWeight: '500' },
-   drawerItemTextActive: { color: '#2563eb', fontWeight: 'bold' },
-
+   lockButton: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 42, paddingHorizontal: 14, borderWidth: 1, borderColor: line, borderRadius: 10 },
+   lockButtonText: { color: T.onBar, fontSize: 13, fontWeight: '700' },
    tabContent: { flex: 1 },
 
-   // PWA: botón flotante
-   installBtn: {
+   // Indicadores Online/Offline (integrados con la estética de main)
+   onlineChip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 42, paddingHorizontal: 12, borderWidth: 1, borderColor: line, borderRadius: 10 },
+   offlineChip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 42, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(239,68,68,0.55)', borderRadius: 10, backgroundColor: 'rgba(239,68,68,0.15)' },
+   connectionText: { color: T.onBar, fontSize: 12, fontWeight: '700' },
+   syncBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 42, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(234,179,8,0.65)', borderRadius: 10, backgroundColor: 'rgba(234,179,8,0.18)' },
+   syncBtnText: { color: T.onBar, fontSize: 12, fontWeight: '700' },
+
+   // Menú lateral
+   menuRoot: { flex: 1 },
+   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: T.overlay },
+   drawer: {
       position: 'absolute',
-      bottom: 20,
-      right: 20,
-      backgroundColor: '#2563eb',
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      borderRadius: 24,
-      shadowColor: '#000',
-      shadowOpacity: 0.3,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 8,
-      zIndex: 9999,
+      top: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: '#34383D',
+      paddingVertical: 16,
+      borderTopRightRadius: 18,
+      borderBottomRightRadius: 18,
+      overflow: 'hidden',
+      borderRightWidth: 1,
+      borderRightColor: '#4B5056',
    },
-   installBtnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 14 },
-   iosHintOverlay: {
-      position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-      backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', zIndex: 10000, padding: 20,
-   },
-   iosHintCard: { backgroundColor: '#ffffff', borderRadius: 16, padding: 20, maxWidth: 340 },
-   iosHintTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#0f172a' },
-   iosHintText: { fontSize: 14, color: '#334155', lineHeight: 22 },
-   iosHintClose: { marginTop: 16, alignSelf: 'flex-end', paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#2563eb', borderRadius: 8 },
-   iosHintCloseText: { color: '#ffffff', fontWeight: 'bold' },
+
+   drawerHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.14)' },
+
+   drawerTitle: { ...display, color: '#F5F6F7', fontSize: 18, lineHeight: 22, fontWeight: '800', textTransform: 'uppercase' },
+
+   drawerItems: { flex: 1, paddingTop: 14, paddingHorizontal: 10, gap: 5 },
+
+   navItem: { flexDirection: 'row', alignItems: 'center', gap: 11, minHeight: 48, paddingVertical: 10, paddingHorizontal: 13, borderRadius: 10 },
+
+   navItemActive: { backgroundColor: '#E5E7EB', borderWidth: 1, borderColor: '#FFFFFF' },
+
+   navText: { ...display, color: '#F1F3F5', fontSize: 16, lineHeight: 20, fontWeight: '700', textTransform: 'uppercase', flexShrink: 1 },
+
+   navTextActive: { color: '#25292D' },
+
+   drawerFooter: { paddingHorizontal: 10, gap: 7, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.12)' },
+
+   footerBtn: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 42, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)' },
+
+   footerBtnText: { color: '#F1F3F5', fontSize: 12, fontWeight: '700' },
 });

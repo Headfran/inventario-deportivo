@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
    View, Text, Modal, StyleSheet, TouchableOpacity, Switch,
-   TextInput, ScrollView, ActivityIndicator, Platform,
+   TextInput, ScrollView, ActivityIndicator, Platform, Animated,
 } from 'react-native';
-import { Printer, X, FileText, DollarSign, CheckCircle2, AlertCircle, Clock, Zap } from 'lucide-react-native';
+import { Printer, X, FileText, DollarSign, CheckCircle2, AlertCircle, Clock } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { generateCatalogPrint, CatalogPrintProgress } from '../utils/printCatalog';
+import { C, caps, box, label, btn, btnText, overlay, modalCard } from '../theme';
 import Constants from 'expo-constants';
 
 interface Props {
@@ -25,8 +26,8 @@ const formatElapsed = (seconds: number): string => {
 export const CatalogPrintModal: React.FC<Props> = ({
    products, visible, onClose, activeCategoryName,
 }) => {
-   const [showPrices, setShowPrices] = useState(true);
-   const [storeName, setStoreName] = useState('Mi Tienda de Ropa');
+   const [showPrices, setShowPrices] = useState(false);
+   const [storeName, setStoreName] = useState('JD Store');
    const [customSubtitle, setCustomSubtitle] = useState('');
    const [isGenerating, setIsGenerating] = useState(false);
    const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -34,10 +35,15 @@ export const CatalogPrintModal: React.FC<Props> = ({
    const [elapsed, setElapsed] = useState(0);
    const cancelRef = useRef(false);
 
+   // Animación de barra indeterminada (para cuando el util no reporta done/total)
+   const shimmerAnim = useRef(new Animated.Value(0)).current;
+
    const isExpoGo = Platform.OS !== 'web' && (
       Constants?.executionEnvironment === 'storeClient' ||
       String((Constants as any)?.executionEnvironment || '').toLowerCase().includes('storeclient')
    );
+
+   const hasGranularProgress = !!(progress && progress.total > 0);
 
    // Timer de tiempo transcurrido
    useEffect(() => {
@@ -49,6 +55,24 @@ export const CatalogPrintModal: React.FC<Props> = ({
       const t = setInterval(() => setElapsed((e) => e + 1), 1000);
       return () => clearInterval(t);
    }, [isGenerating]);
+
+   // Animación del shimmer: solo cuando estamos generando y NO hay progreso granular
+   useEffect(() => {
+      if (isGenerating && !hasGranularProgress) {
+         shimmerAnim.setValue(0);
+         const loop = Animated.loop(
+            Animated.timing(shimmerAnim, {
+               toValue: 1,
+               duration: 1400,
+               useNativeDriver: true,
+            })
+         );
+         loop.start();
+         return () => loop.stop();
+      } else {
+         shimmerAnim.setValue(0);
+      }
+   }, [isGenerating, hasGranularProgress]);
 
    // Reset al cerrar
    useEffect(() => {
@@ -101,16 +125,12 @@ export const CatalogPrintModal: React.FC<Props> = ({
 
    const handleCancel = () => {
       cancelRef.current = true;
-      // Feedback inmediato
-      setProgress((prev) =>
-         prev ? { ...prev, message: 'Cancelando…' } : prev
-      );
+      setProgress((prev) => prev ? { ...prev, message: 'Cancelando…' } : prev);
    };
 
-   const percent =
-      progress && progress.total > 0
-         ? Math.min(100, Math.round((progress.done / progress.total) * 100))
-         : 0;
+   const percent = hasGranularProgress
+      ? Math.min(100, Math.round((progress!.done / progress!.total) * 100))
+      : 0;
 
    const showLongWarning = products.length > 30;
 
@@ -120,72 +140,101 @@ export const CatalogPrintModal: React.FC<Props> = ({
             <View style={styles.card}>
                <View style={styles.header}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                     <Printer size={20} color="#2563eb" />
+                     <Printer size={20} color={C.light} />
                      <Text style={styles.title}>Exportar / Imprimir Catálogo</Text>
                   </View>
                   <TouchableOpacity onPress={onClose} disabled={isGenerating}>
-                     <X size={20} color={isGenerating ? '#cbd5e1' : '#64748b'} />
+                     <X size={20} color={isGenerating ? C.dim : C.soft} />
                   </TouchableOpacity>
                </View>
 
-               {/* 🔧 PROGRESO VISIBLE SIEMPRE — fuera del ScrollView */}
+               {/* PROGRESO */}
                {isGenerating && (
                   <View style={styles.progressCardFloating}>
+                     {/* Encabezado: mensaje + timer grande */}
                      <View style={styles.progressHeader}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-                           <ActivityIndicator size="small" color="#2563eb" />
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                           <ActivityIndicator size="small" color={C.light} />
                            <Text style={styles.progressLabel} numberOfLines={1}>
-                              {progress?.message || 'Preparando…'}
+                              {progress?.message || 'Procesando…'}
                            </Text>
                         </View>
-                        <Text style={styles.progressTimer}>{formatElapsed(elapsed)}</Text>
+                        <View style={styles.timerBox}>
+                           <Clock size={11} color={C.mute} />
+                           <Text style={styles.progressTimer}>{formatElapsed(elapsed)}</Text>
+                        </View>
                      </View>
 
-                     {progress && progress.total > 0 && (
-                        <>
-                           <View style={styles.progressBar}>
-                              <View style={[styles.progressFill, { width: `${percent}%` }]} />
-                           </View>
-                           <View style={styles.progressFooter}>
-                              <Text style={styles.progressCounter}>
-                                 {progress.done} / {progress.total} ({percent}%)
-                              </Text>
-                              <TouchableOpacity
-                                 style={styles.cancelProgressBtn}
-                                 onPress={handleCancel}
-                                 disabled={cancelRef.current}
-                              >
-                                 <Text style={styles.cancelProgressText}>
-                                    {cancelRef.current ? 'Cancelando…' : 'Cancelar'}
-                                 </Text>
-                              </TouchableOpacity>
-                           </View>
-                        </>
-                     )}
+                     {/* Barra: determinate si hay datos, indeterminada si no */}
+                     <View style={styles.progressBar}>
+                        {hasGranularProgress ? (
+                           <View style={[styles.progressFill, { width: `${percent}%` }]} />
+                        ) : (
+                           <Animated.View
+                              style={[
+                                 styles.progressFillIndeterminate,
+                                 {
+                                    transform: [{
+                                       translateX: shimmerAnim.interpolate({
+                                          inputRange: [0, 1],
+                                          outputRange: [-120, 400],
+                                       }),
+                                    }],
+                                 },
+                              ]}
+                           />
+                        )}
+                     </View>
 
-                     {(!progress || progress.total === 0) && (
-                        <Text style={styles.progressHint}>
-                           Esto puede tardar 1-2 minutos con muchas prendas…
-                        </Text>
+                     {/* Footer: contador real o aviso de "trabajando" */}
+                     {hasGranularProgress ? (
+                        <View style={styles.progressFooter}>
+                           <Text style={styles.progressCounter}>
+                              {progress!.done} / {progress!.total} imágenes ({percent}%)
+                           </Text>
+                           <TouchableOpacity
+                              style={styles.cancelProgressBtn}
+                              onPress={handleCancel}
+                              disabled={cancelRef.current}
+                           >
+                              <Text style={styles.cancelProgressText}>
+                                 {cancelRef.current ? 'Cancelando…' : 'Cancelar'}
+                              </Text>
+                           </TouchableOpacity>
+                        </View>
+                     ) : (
+                        <View style={styles.progressFooter}>
+                           <Text style={styles.progressCounter} numberOfLines={1}>
+                              Trabajando en {products.length} prendas…
+                           </Text>
+                           <TouchableOpacity
+                              style={styles.cancelProgressBtn}
+                              onPress={handleCancel}
+                              disabled={cancelRef.current}
+                           >
+                              <Text style={styles.cancelProgressText}>
+                                 {cancelRef.current ? 'Cancelando…' : 'Cancelar'}
+                              </Text>
+                           </TouchableOpacity>
+                        </View>
                      )}
                   </View>
                )}
 
-               <ScrollView style={styles.body}>
+               <ScrollView style={{ padding: 16 }}>
                   <View style={styles.summaryBanner}>
-                     <CheckCircle2 size={18} color="#2563eb" style={{ marginRight: 8 }} />
+                     <CheckCircle2 size={18} color={C.light} style={{ marginRight: 8 }} />
                      <Text style={styles.summaryText}>
-                        Se incluirán <Text style={{ fontWeight: 'bold' }}>{products.length}</Text> prendas
+                        Se incluirán <Text style={{ fontWeight: 'bold', color: C.white }}>{products.length}</Text> prendas
                         {activeCategoryName && activeCategoryName !== 'all'
                            ? ` de la categoría "${activeCategoryName}"`
                            : ' del filtro actual'}.
                      </Text>
                   </View>
 
-                  {/* Advertencia si hay muchas prendas */}
                   {showLongWarning && !isGenerating && (
                      <View style={styles.warningBanner}>
-                        <Clock size={16} color="#d97706" style={{ marginRight: 8 }} />
+                        <Clock size={16} color={C.light} style={{ marginRight: 8 }} />
                         <Text style={styles.warningText}>
                            Con {products.length} prendas puede tardar 1-2 minutos.
                            Usa una conexión Wi-Fi para mayor velocidad.
@@ -205,7 +254,7 @@ export const CatalogPrintModal: React.FC<Props> = ({
 
                   {errorMsg && (
                      <View style={styles.errorBanner}>
-                        <AlertCircle size={18} color="#dc2626" style={{ marginRight: 8 }} />
+                        <AlertCircle size={18} color={C.white} style={{ marginRight: 8 }} />
                         <View style={{ flex: 1 }}>
                            <Text style={styles.errorTitle}>No se pudo generar el catálogo</Text>
                            <Text style={styles.errorText}>{errorMsg}</Text>
@@ -216,7 +265,7 @@ export const CatalogPrintModal: React.FC<Props> = ({
                   <View style={[styles.optionRow, isGenerating && styles.disabled]}>
                      <View style={{ flex: 1, marginRight: 12 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                           <DollarSign size={16} color="#16a34a" />
+                           <DollarSign size={16} color={C.soft} />
                            <Text style={styles.optionTitle}>Mostrar Precios de Venta</Text>
                         </View>
                         <Text style={styles.optionDescription}>
@@ -226,8 +275,8 @@ export const CatalogPrintModal: React.FC<Props> = ({
                      <Switch
                         value={showPrices}
                         onValueChange={setShowPrices}
-                        trackColor={{ false: '#cbd5e1', true: '#93c5fd' }}
-                        thumbColor={showPrices ? '#2563eb' : '#f1f5f9'}
+                        trackColor={{ false: C.line, true: C.mute }}
+                        thumbColor={showPrices ? C.light : C.dim}
                         disabled={isGenerating}
                      />
                   </View>
@@ -238,7 +287,7 @@ export const CatalogPrintModal: React.FC<Props> = ({
                      value={storeName}
                      onChangeText={setStoreName}
                      placeholder="Ej: Boutique Elegance"
-                     placeholderTextColor="#94a3b8"
+                     placeholderTextColor={C.dim}
                      editable={!isGenerating}
                   />
 
@@ -248,7 +297,7 @@ export const CatalogPrintModal: React.FC<Props> = ({
                      value={customSubtitle}
                      onChangeText={setCustomSubtitle}
                      placeholder="Ej: Colección Temporada Invierno / Promoción"
-                     placeholderTextColor="#94a3b8"
+                     placeholderTextColor={C.dim}
                      editable={!isGenerating}
                   />
                </ScrollView>
@@ -259,7 +308,7 @@ export const CatalogPrintModal: React.FC<Props> = ({
                      onPress={onClose}
                      disabled={isGenerating}
                   >
-                     <Text style={styles.cancelBtnText}>Cerrar</Text>
+                     <Text style={styles.cancelText}>Cancelar</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -269,13 +318,13 @@ export const CatalogPrintModal: React.FC<Props> = ({
                   >
                      {isGenerating ? (
                         <>
-                           <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
-                           <Text style={styles.printBtnText}>Generando…</Text>
+                           <ActivityIndicator size="small" color={C.bg} style={{ marginRight: 8 }} />
+                           <Text style={styles.printText}>Generando…</Text>
                         </>
                      ) : (
                         <>
-                           <Zap size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                           <Text style={styles.printBtnText}>Generar Vista / PDF</Text>
+                           <FileText size={16} color={C.bg} style={{ marginRight: 6 }} />
+                           <Text style={styles.printText}>Generar Vista / PDF</Text>
                         </>
                      )}
                   </TouchableOpacity>
@@ -287,80 +336,48 @@ export const CatalogPrintModal: React.FC<Props> = ({
 };
 
 const styles = StyleSheet.create({
-   overlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-   card: { width: '100%', maxWidth: 440, backgroundColor: '#ffffff', borderRadius: 16, overflow: 'hidden', maxHeight: '90%' },
-   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#f8fafc', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-   title: { fontSize: 15, fontWeight: 'bold', color: '#0f172a' },
-   body: { padding: 16 },
-   summaryBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eff6ff', borderRadius: 8, padding: 10, marginBottom: 16 },
-   summaryText: { fontSize: 12, color: '#1e40af', flex: 1 },
-   warningBanner: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fde68a', borderRadius: 8, padding: 10, marginBottom: 16 },
-   warningText: { fontSize: 11, color: '#78350f', flex: 1, lineHeight: 16 },
-   errorBanner: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 8, padding: 10, marginBottom: 16 },
-   errorTitle: { fontSize: 12, fontWeight: 'bold', color: '#dc2626', marginBottom: 2 },
-   errorText: { fontSize: 11, color: '#7f1d1d', lineHeight: 15 },
+   overlay,
+   card: { ...modalCard, maxHeight: '90%' },
+   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#161616', borderBottomWidth: 1, borderBottomColor: C.border },
+   title: { ...caps, fontSize: 13, fontWeight: '900', color: C.white },
+
+   // Banners
+   summaryBanner: { ...box, flexDirection: 'row', alignItems: 'center', padding: 10, marginBottom: 16 },
+   summaryText: { fontSize: 12, color: C.soft, flex: 1 },
+   warningBanner: { ...box, flexDirection: 'row', alignItems: 'flex-start', padding: 10, marginBottom: 16, borderColor: C.light },
+   warningText: { fontSize: 11, color: C.soft, flex: 1, lineHeight: 16 },
+   infoBanner: { ...box, padding: 10, marginBottom: 16 },
+   infoText: { fontSize: 11, color: C.mute, lineHeight: 16 },
+   errorBanner: { ...box, flexDirection: 'row', alignItems: 'flex-start', padding: 10, marginBottom: 16, borderColor: C.light },
+   errorTitle: { fontSize: 12, fontWeight: 'bold', color: C.white, marginBottom: 2 },
+   errorText: { fontSize: 11, color: C.soft, lineHeight: 15 },
 
    // Progreso
-   progressCard: { backgroundColor: '#f0f9ff', borderWidth: 1, borderColor: '#bae6fd', borderRadius: 10, padding: 12, marginBottom: 16 },
-   progressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-   progressLabel: { fontSize: 12, fontWeight: '600', color: '#0c4a6e', flexShrink: 1 },
-   progressTimer: { fontSize: 11, color: '#0369a1', fontWeight: 'bold', marginLeft: 8 },
-   progressBar: { height: 8, backgroundColor: '#e0f2fe', borderRadius: 4, overflow: 'hidden', marginBottom: 6 },
-   progressFill: { height: '100%', backgroundColor: '#0284c7', borderRadius: 4 },
-   progressCounter: { fontSize: 10, color: '#0369a1', textAlign: 'center', marginBottom: 8 },
-   cancelProgressText: { fontSize: 11, fontWeight: 'bold', color: '#dc2626' },
+   progressCardFloating: { backgroundColor: C.raised, borderBottomWidth: 1, borderBottomColor: C.line, paddingHorizontal: 16, paddingVertical: 12 },
+   progressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+   progressLabel: { fontSize: 12, fontWeight: '600', color: C.soft, flexShrink: 1 },
+   timerBox: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 3, borderWidth: 1, borderColor: C.line, borderRadius: 2 },
+   progressTimer: { fontSize: 11, color: C.light, fontWeight: 'bold' },
+   progressBar: { height: 6, backgroundColor: C.line, borderRadius: 2, overflow: 'hidden', marginBottom: 8 },
+   progressFill: { height: '100%', backgroundColor: C.light, borderRadius: 2 },
+   progressFillIndeterminate: { width: 120, height: '100%', backgroundColor: C.light, opacity: 0.85, borderRadius: 2 },
+   progressFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+   progressCounter: { fontSize: 11, color: C.mute, flex: 1, marginRight: 8 },
+   cancelProgressBtn: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 2, borderWidth: 1, borderColor: C.light },
+   cancelProgressText: { fontSize: 11, fontWeight: 'bold', color: C.white },
 
-   progressCardFloating: {
-      backgroundColor: '#f0f9ff',
-      borderBottomWidth: 1,
-      borderBottomColor: '#bae6fd',
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-   },
-   progressFooter: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginTop: 6,
-   },
-   progressHint: {
-      fontSize: 11,
-      color: '#0369a1',
-      fontStyle: 'italic',
-      marginTop: 6,
-      textAlign: 'center',
-   },
-   cancelProgressBtn: {
-      paddingVertical: 5,
-      paddingHorizontal: 12,
-      borderRadius: 6,
-      backgroundColor: '#fee2e2',
-   },
-
-   optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 16 },
-   optionTitle: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
-   optionDescription: { fontSize: 11, color: '#64748b', marginTop: 2, lineHeight: 16 },
-   label: { fontSize: 11, fontWeight: 'bold', color: '#475569', marginBottom: 6 },
-   input: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 12, height: 40, fontSize: 13, color: '#0f172a', marginBottom: 12 },
+   // Opciones
+   optionRow: { ...box, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, marginBottom: 16 },
+   optionTitle: { fontSize: 13, fontWeight: 'bold', color: C.white },
+   optionDescription: { fontSize: 11, color: C.mute, marginTop: 2, lineHeight: 16 },
+   label,
+   input: { ...box, paddingHorizontal: 12, height: 40, fontSize: 13, color: C.white, marginBottom: 12 },
    disabled: { opacity: 0.55 },
 
-   footer: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, padding: 16, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0' },
-   cancelBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#f1f5f9' },
-   cancelBtnText: { color: '#475569', fontSize: 13, fontWeight: 'bold' },
-   printBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#2563eb' },
-   printBtnText: { color: '#ffffff', fontSize: 13, fontWeight: 'bold' },
-
-   infoBanner: {
-      backgroundColor: '#fef3c7',
-      borderWidth: 1,
-      borderColor: '#fcd34d',
-      borderRadius: 8,
-      padding: 10,
-      marginBottom: 16,
-   },
-   infoText: {
-      fontSize: 11,
-      color: '#78350f',
-      lineHeight: 16,
-   },
+   // Footer
+   footer: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, padding: 16, backgroundColor: '#161616', borderTopWidth: 1, borderTopColor: C.border },
+   cancelBtn: { ...btn, paddingHorizontal: 16, borderWidth: 1, borderColor: '#3A3A3A' },
+   cancelText: { ...btnText, color: C.soft },
+   printBtn: { ...btn, paddingHorizontal: 16, backgroundColor: C.light },
+   printText: { ...btnText, color: C.bg },
 });
