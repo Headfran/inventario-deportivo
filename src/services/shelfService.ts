@@ -25,6 +25,7 @@ export const subscribeToShelves = (callback: (shelves: Shelf[]) => void) => {
         description: data.description || '',
         rowsCount: Number(data.rowsCount) || 1,
         spacesPerRow: Number(data.spacesPerRow) || 3,
+        unknownCells: Array.isArray(data.unknownCells) ? data.unknownCells : [],
       } as Shelf;
     });
     callback(shelves);
@@ -42,12 +43,13 @@ export const createShelf = async (
     rowsCount: Math.max(1, rowsCount),
     spacesPerRow: Math.max(1, spacesPerRow),
     description: description?.trim() || '',
+    unknownCells: [],
   });
   return docRef.id;
 };
 
 /**
- * Actualiza los datos de un estante existente (nombre, filas, espacios).
+ * Actualiza los datos de un estante existente (nombre, filas, espacios, celdas desconocidas).
  */
 export const updateShelf = async (
   shelfId: string,
@@ -60,6 +62,9 @@ export const updateShelf = async (
   if (updatedData.rowsCount !== undefined) payload.rowsCount = Math.max(1, updatedData.rowsCount);
   if (updatedData.spacesPerRow !== undefined) payload.spacesPerRow = Math.max(1, updatedData.spacesPerRow);
   if (updatedData.description !== undefined) payload.description = updatedData.description.trim();
+  if (updatedData.unknownCells !== undefined) {
+    payload.unknownCells = Array.isArray(updatedData.unknownCells) ? updatedData.unknownCells : [];
+  }
 
   await updateDoc(shelfRef, payload);
 };

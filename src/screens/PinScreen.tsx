@@ -4,18 +4,22 @@ import {
    Text,
    TouchableOpacity,
    StyleSheet,
-   Alert,
    Animated,
    StatusBar,
+   SafeAreaView,
+   Platform,
+   useWindowDimensions,
 } from 'react-native';
+import { ChevronLeft } from 'lucide-react-native';
 
 interface PinScreenProps {
    mode: 'SETUP' | 'UNLOCK';
    onSuccess: (pin?: string) => void;
    onCancelLogin?: () => void;
+   onLogout?: () => void;
 }
 
-export const PinScreen: React.FC<PinScreenProps> = ({ mode, onSuccess, onCancelLogin }) => {
+export const PinScreen: React.FC<PinScreenProps> = ({ mode, onSuccess, onCancelLogin, onLogout }) => {
    // ---- LÓGICA ORIGINAL (sin cambios) ----
    const [pin, setPin] = useState('');
 
@@ -37,7 +41,7 @@ export const PinScreen: React.FC<PinScreenProps> = ({ mode, onSuccess, onCancelL
       setPin(prev => prev.slice(0, -1));
    };
 
-   // ---- SOLO DISEÑO (animación de entrada) ----
+   // ---- SOLO DISEÑO ----
    const fade = useRef(new Animated.Value(0)).current;
    const slide = useRef(new Animated.Value(30)).current;
 
@@ -48,11 +52,29 @@ export const PinScreen: React.FC<PinScreenProps> = ({ mode, onSuccess, onCancelL
       ]).start();
    }, []);
 
+   const Container = Platform.OS === 'web' ? View : SafeAreaView;
+   const { height: viewportHeight } = useWindowDimensions();
+   const webSafeStyle = Platform.OS === 'web'
+      ? { minHeight: viewportHeight, width: '100%' }
+      : undefined;
+
+   const showForgotPin = mode === 'UNLOCK' && !!onLogout;
+
    return (
-      <View style={styles.container}>
+      <Container style={[styles.container]}>
          <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
 
-         {/* Formas decorativas */}
+         {onCancelLogin && (
+            <TouchableOpacity
+               style={styles.backBtn}
+               onPress={onCancelLogin}
+               activeOpacity={0.7}
+               accessibilityLabel="Regresar"
+            >
+               <ChevronLeft size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+         )}
+
          <View style={styles.shapeBig} />
          <View style={styles.shapeSmall} />
 
@@ -69,20 +91,12 @@ export const PinScreen: React.FC<PinScreenProps> = ({ mode, onSuccess, onCancelL
                   : 'Ingresa los 4 dígitos para continuar'}
             </Text>
 
-            {/* Indicadores de PIN */}
             <View style={styles.dotsContainer}>
                {[0, 1, 2, 3].map((index) => (
-                  <View
-                     key={index}
-                     style={[
-                        styles.dot,
-                        pin.length > index && styles.dotFilled
-                     ]}
-                  />
+                  <View key={index} style={[styles.dot, pin.length > index && styles.dotFilled]} />
                ))}
             </View>
 
-            {/* Teclado numérico */}
             <View style={styles.keypad}>
                {[['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9']].map((row, rIdx) => (
                   <View key={rIdx} style={styles.row}>
@@ -120,21 +134,47 @@ export const PinScreen: React.FC<PinScreenProps> = ({ mode, onSuccess, onCancelL
                   </TouchableOpacity>
                </View>
             </View>
+
+            {showForgotPin && (
+               <TouchableOpacity
+                  style={styles.forgotBtn}
+                  onPress={onLogout}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Olvidé mi PIN, cerrar sesión"
+               >
+                  <Text style={styles.forgotText}>¿OLVIDASTE TU PIN? CERRAR SESIÓN</Text>
+               </TouchableOpacity>
+            )}
          </Animated.View>
-      </View>
+      </Container>
    );
 };
 
 const styles = StyleSheet.create({
    container: {
       flex: 1,
+      width: '100%',
       justifyContent: 'center',
       alignItems: 'center',
       backgroundColor: '#0A0A0A',
       padding: 20,
    },
 
-   // Decoración
+   backBtn: {
+      position: 'absolute',
+      top: 20,
+      left: 20,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: 'rgba(255,255,255,0.08)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.15)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 10,
+   },
+
    shapeBig: {
       position: 'absolute',
       top: -120,
@@ -184,7 +224,6 @@ const styles = StyleSheet.create({
       marginBottom: 36,
    },
 
-   // Indicadores
    dotsContainer: {
       flexDirection: 'row',
       gap: 18,
@@ -203,7 +242,6 @@ const styles = StyleSheet.create({
       borderColor: '#E8E8E8',
    },
 
-   // Teclado
    keypad: {
       width: '100%',
       gap: 16,
@@ -242,5 +280,19 @@ const styles = StyleSheet.create({
       fontSize: 11,
       fontWeight: '700',
       letterSpacing: 2,
+   },
+
+   // Botón "olvidé mi PIN"
+   forgotBtn: {
+      marginTop: 28,
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+   },
+   forgotText: {
+      color: '#8A8A8A',
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1.5,
+      textAlign: 'center',
    },
 });

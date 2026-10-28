@@ -6,6 +6,11 @@ export type ProductCategory =
   | 'Monos'
   | 'Conjuntos'
   | 'Accesorios'
+  | 'Franelillas AAA'
+  | 'Camisas AAA'
+  | 'Sudaderas'
+  | 'Chemises'
+  | 'Chaquetas'
   | 'Otros';
 
 export interface ExhibitionDetail {
@@ -36,6 +41,7 @@ export interface Product {
   brand: string;
   category: ProductCategory;
   price: number;
+  wholesalePrice?: number;
   images: string[];
   variants: ProductVariant[];
   createdAt?: number;
@@ -56,5 +62,6 @@ export interface Shelf {
   description?: string;
   rowsCount: number;     // Número de filas / repisas (ej. 1, 2, 3, 4...)
   spacesPerRow: number;  // Espacios por fila (ej. 3 para estándar, 5 o 6 para estantes grandes)
+  unknownCells?: string[];
 }
 

@@ -1,11 +1,35 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Modal, FlatList, Animated, useWindowDimensions, Linking } from 'react-native';
+import { Image } from 'expo-image';
 import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { subscribeToProducts } from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { Cover } from '../components/Cover';
 import { LIGHT, Tone, display, ease, nd, reduced, useEnter, getColorHex } from '../design';
+
+// ==========================================
+// CONFIGURACIÓN DEL COMERCIO
+// ==========================================
+const STORE_PHONE = '584222630079';
+
+// ==========================================
+// CATEGORÍAS FIJAS (Siempre visibles)
+// ==========================================
+const STATIC_CATEGORIES = [
+   'Franelas',
+   'Sudaderas',
+   'Monos',
+   'Shorts',
+   'Chaquetas',
+   'Camisas',
+   'Camisas AAA',
+   'Franelillas AAA',
+   'Chemises',
+   'Conjuntos',
+   'Zapatos',
+   'Accesorios',
+];
 
 interface Props {
    onOpenStaffAccess: () => void;
@@ -34,7 +58,7 @@ const GRAY = {
    100: '#F4F4F5',
 };
 
-const DEFAULT_LOGO = '../logo.jpg';
+const DEFAULT_LOGO = 'logo.jpg';
 
 const T: Tone = LIGHT;
 const MAX = 1400;
@@ -57,7 +81,16 @@ const BrandLogoItem: React.FC<{ brandName: string; isSelected: boolean }> = ({ b
    const logoUrl = getBrandLogoUrl(brandName);
 
    if (logoUrl && !hasError) {
-      return <Image source={{ uri: logoUrl }} style={styles.brandLogoImg} resizeMode="contain" onError={() => setHasError(true)} />;
+      return (
+         <Image
+            source={{ uri: logoUrl }}
+            style={styles.brandLogoImg}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={200}
+            onError={() => setHasError(true)}
+         />
+      );
    }
    return (
       <View style={[styles.avatar, isSelected && { backgroundColor: GRAY[700] }]}>
@@ -181,7 +214,7 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
          <View style={styles.meta}>
             <Text style={styles.cardBrand} numberOfLines={1}>{item.brand}</Text>
             <Text style={[styles.cardName, !compact && { fontSize: 15 }]} numberOfLines={2}>{item.name}</Text>
-            
+
             {retailPrice > 0 && (
                <Text style={styles.cardPrice}>${retailPrice.toFixed(2)}</Text>
             )}
@@ -228,22 +261,38 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
 
+   const flatListRef = useRef<FlatList>(null);
+
    useEffect(() => {
       const unsub = subscribeToProducts(setProducts);
       return () => unsub();
    }, []);
 
-   const { categories, brands, colors, sizes } = useMemo(() => {
-      const rawCategories = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
-      return {
-         categories: [...rawCategories.filter((c) => c !== 'all'), 'all'],
-         brands: Array.from(new Set(products.map((p) => p.brand).filter(Boolean))),
-         colors: Array.from(new Set(products.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean))),
-         sizes: Array.from(new Set(products.flatMap((p) => (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))).filter(Boolean))),
-      };
+   // BACKEND: Solo prendas ubicadas en Bodega/Vitrina
+   const validProducts = useMemo(() => {
+      return products.reduce((acc: Product[], p) => {
+         const validVariants = (p.variants || []).filter((v: any) => v.locations && v.locations.length > 0);
+         if (validVariants.length > 0) {
+            acc.push({ ...p, variants: validVariants });
+         }
+         return acc;
+      }, []);
    }, [products]);
 
-   const filteredProducts = useMemo(() => filterProducts(products, filters), [products, filters]);
+   // BACKEND: categorías fijas + dinámicas, 'all' al final
+   const { categories, brands, colors, sizes } = useMemo(() => {
+      const dynamicCats = validProducts.map((p) => p.category).filter(Boolean) as string[];
+      const cats = Array.from(new Set([...STATIC_CATEGORIES, ...dynamicCats]));
+
+      return {
+         categories: [...cats, 'all'],
+         brands: Array.from(new Set(validProducts.map((p) => p.brand).filter(Boolean))),
+         colors: Array.from(new Set(validProducts.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean))),
+         sizes: Array.from(new Set(validProducts.flatMap((p) => (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))).filter(Boolean))),
+      };
+   }, [validProducts]);
+
+   const filteredProducts = useMemo(() => filterProducts(validProducts, filters), [validProducts, filters]);
 
    const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE) || 1;
    const paginatedProducts = useMemo(() => {
@@ -254,6 +303,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    useEffect(() => {
       setCurrentPage(1);
    }, [filters]);
+
+   const handlePageChange = (newPage: number) => {
+      setCurrentPage(newPage);
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+   };
 
    const activeFiltersCount = (filters.brand ? 1 : 0) + (filters.color ? 1 : 0) + (filters.size ? 1 : 0) + (filters.category !== 'all' ? 1 : 0);
    const handleResetFilters = () => {
@@ -277,7 +331,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       }
    }, []);
 
-   const handleZoomImage = useCallback((uri: string, name: string) => {
+   const handleZoomImage = useCallback((uri: string) => {
       setDetailZoomUri(uri);
    }, []);
 
@@ -334,6 +388,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       );
    };
 
+   // BACKEND: envío al WhatsApp del comercio usando STORE_PHONE + Linking
    const sendWhatsAppCheckout = () => {
       if (cart.length === 0) return;
       let text = `¡Hola! JDSTORE, me interesan los siguientes productos de mi carrito:\n\n`;
@@ -344,10 +399,8 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       });
       text += `Quedo atento a la disponibilidad y método de pago. ¡Gracias!`;
       const encoded = encodeURIComponent(text);
-      const url = `https://wa.me/?text=${encoded}`;
-      if (typeof window !== 'undefined') {
-         window.open(url, '_blank');
-      }
+      const url = `https://wa.me/${STORE_PHONE}?text=${encoded}`;
+      Linking.openURL(url).catch(() => alert('Verifica tener WhatsApp instalado.'));
    };
 
    const { width } = useWindowDimensions();
@@ -363,7 +416,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    const detailAnim = useEnter(!!detailProduct, mobile);
    const cartAnim = useEnter(isCartModalOpen, mobile);
 
-   const heroPics = useMemo(() => products.filter((p) => p.images?.[0]).slice(0, 3), [products]);
+   const heroPics = useMemo(() => validProducts.filter((p) => p.images?.[0]).slice(0, 3), [validProducts]);
    const reveal = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
    const played = useRef(false);
    useEffect(() => {
@@ -503,7 +556,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       const currentImageUri = p.images?.[selectedImageIndex];
       const retailPrice = Number(p.price || 0);
       const wholesalePrice = Number((p as any).wholesalePrice || (p as any).priceWholesale || retailPrice * 0.85);
-      
+
       const isWholesale = quantity >= 12;
       const activeUnitPrice = isWholesale ? wholesalePrice : retailPrice;
 
@@ -511,8 +564,8 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          <View style={{ position: 'relative' }}>
             <Pressable onPress={() => currentImageUri && setDetailZoomUri(currentImageUri)}>
                <Cover uri={currentImageUri} name={p.name} bg={GRAY[100]} fg={GRAY[300]} style={wide ? styles.mainImgWide : styles.mainImg} />
-               <Pressable 
-                  style={styles.zoomButtonFloat} 
+               <Pressable
+                  style={styles.zoomButtonFloat}
                   onPress={() => currentImageUri && setDetailZoomUri(currentImageUri)}
                >
                   <ZoomIn size={18} color="#FFFFFF" />
@@ -522,7 +575,13 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.thumbs}>
                   {p.images.map((img, idx) => (
                      <Pressable key={idx} onPress={() => setSelectedImageIndex(idx)} style={[styles.thumb, selectedImageIndex === idx && styles.thumbActive]}>
-                        <Image source={{ uri: img }} style={{ width: '100%', height: '100%' }} />
+                        <Image
+                           source={{ uri: img }}
+                           style={{ width: '100%', height: '100%' }}
+                           contentFit="cover"
+                           cachePolicy="memory-disk"
+                           transition={200}
+                        />
                      </Pressable>
                   ))}
                </ScrollView>
@@ -555,8 +614,8 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             </View>
 
             <Text style={styles.priceNoticeText}>
-               {isWholesale 
-                  ? '✨ ¡Precio al mayor aplicado automáticamente (12 o más unidades)!' 
+               {isWholesale
+                  ? '✨ ¡Precio al mayor aplicado automáticamente (12 o más unidades)!'
                   : `💡 Agrega ${12 - quantity} unidad${12 - quantity === 1 ? '' : 'es'} más para activar el precio al mayor.`}
             </Text>
 
@@ -670,7 +729,13 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                <View style={styles.brandGroup}>
                   <View style={styles.logoContainerLarge}>
                      {(logoUri || DEFAULT_LOGO) ? (
-                        <Image source={{ uri: logoUri || DEFAULT_LOGO }} style={styles.barLogoImg} resizeMode="cover" />
+                        <Image
+                           source={{ uri: logoUri || DEFAULT_LOGO }}
+                           style={styles.barLogoImg}
+                           contentFit="cover"
+                           cachePolicy="memory-disk"
+                           transition={200}
+                        />
                      ) : (
                         <View style={styles.logoPlaceholder}>
                            <ShoppingBag size={28} color="#FFFFFF" />
@@ -708,6 +773,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          </View>
 
          <FlatList
+            ref={flatListRef}
             key={cols}
             data={paginatedProducts}
             keyExtractor={(item) => item.id || item.code}
@@ -722,7 +788,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                      <Pressable
                         style={[styles.pageBtn, currentPage === 1 && styles.pageBtnDisabled]}
                         disabled={currentPage === 1}
-                        onPress={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                        onPress={() => handlePageChange(Math.max(currentPage - 1, 1))}
                      >
                         <ChevronLeft size={18} color={currentPage === 1 ? GRAY[300] : GRAY[800]} />
                         <Text style={[styles.pageBtnText, currentPage === 1 && { color: GRAY[300] }]}>Anterior</Text>
@@ -735,7 +801,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                      <Pressable
                         style={[styles.pageBtn, currentPage === totalPages && styles.pageBtnDisabled]}
                         disabled={currentPage === totalPages}
-                        onPress={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                        onPress={() => handlePageChange(Math.min(currentPage + 1, totalPages))}
                      >
                         <Text style={[styles.pageBtnText, currentPage === totalPages && { color: GRAY[300] }]}>Siguiente</Text>
                         <ChevronRight size={18} color={currentPage === totalPages ? GRAY[300] : GRAY[800]} />
@@ -844,14 +910,20 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             </View>
          </Modal>
 
-         {/* MODAL LIGHTBOX / ZOOM INDEPENDIENTE A PANTALLA COMPLETA */}
+         {/* MODAL LIGHTBOX / ZOOM */}
          <Modal visible={!!detailZoomUri} transparent animationType="fade">
             <View style={styles.lightboxOverlay}>
                <Pressable style={styles.lightboxCloseBtn} onPress={() => setDetailZoomUri(null)}>
                   <X size={28} color="#FFFFFF" />
                </Pressable>
                {detailZoomUri && (
-                  <Image source={{ uri: detailZoomUri }} style={styles.lightboxImage} resizeMode="contain" />
+                  <Image
+                     source={{ uri: detailZoomUri }}
+                     style={styles.lightboxImage}
+                     contentFit="contain"
+                     cachePolicy="memory-disk"
+                     transition={200}
+                  />
                )}
             </View>
          </Modal>
@@ -882,7 +954,13 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                         <View style={{ gap: 12 }}>
                            {cart.map((item) => (
                               <View key={item.cartId} style={styles.cartItemRow}>
-                                 <Image source={{ uri: item.product.images?.[0] }} style={styles.cartItemImg} />
+                                 <Image
+                                    source={{ uri: item.product.images?.[0] }}
+                                    style={styles.cartItemImg}
+                                    contentFit="cover"
+                                    cachePolicy="memory-disk"
+                                    transition={200}
+                                 />
                                  <View style={{ flex: 1, marginLeft: 12 }}>
                                     <Text style={styles.cartItemBrand}>{item.product.brand}</Text>
                                     <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
@@ -946,7 +1024,7 @@ const styles = StyleSheet.create({
    bar: { backgroundColor: GRAY[900], paddingVertical: 12 },
    barRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
    brandGroup: { flexDirection: 'row', alignItems: 'center', gap: 14, flexShrink: 1 },
-   
+
    logoContainerLarge: { width: 72, height: 72, borderRadius: 36, overflow: 'hidden', backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: GRAY[600] },
    barLogoImg: { width: '100%', height: '100%' },
    logoPlaceholder: { width: '100%', height: '100%', backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center' },
@@ -965,9 +1043,9 @@ const styles = StyleSheet.create({
    countPill: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, marginBottom: 14 },
    countText: { fontSize: 13, fontWeight: '700', color: GRAY[300] },
    title: { ...display, fontWeight: '800', color: '#FFFFFF', textTransform: 'uppercase' },
-   
+
    heroSubtitle: { ...display, fontSize: 32, fontWeight: '700', color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 6 },
-   
+
    titleSm: { fontSize: 60, lineHeight: 56 },
    titleMd: { fontSize: 96, lineHeight: 88 },
    titleLg: { fontSize: 132, lineHeight: 118 },
@@ -1017,7 +1095,7 @@ const styles = StyleSheet.create({
    sizeBoxOff: { borderColor: GRAY[200], backgroundColor: GRAY[100] },
    sizeBoxText: { fontSize: 11, fontWeight: '700', color: GRAY[800] },
    sizeOff: { color: GRAY[400], textDecorationLine: 'line-through', fontWeight: '500' },
-   
+
    actionRow: { marginTop: 10 },
    detailsBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, height: 38, backgroundColor: GRAY[700], borderRadius: 8 },
    detailsBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
@@ -1054,7 +1132,7 @@ const styles = StyleSheet.create({
    closeBtn: { position: 'absolute', top: 12, right: 12, zIndex: 10, backgroundColor: GRAY[900], borderRadius: 18, padding: 7 },
    mainImg: { width: '100%', height: 340, backgroundColor: GRAY[100] },
    mainImgWide: { width: '100%', aspectRatio: 4 / 5, backgroundColor: GRAY[100] },
-   
+
    zoomButtonFloat: {
       position: 'absolute',
       bottom: 12,

@@ -1,64 +1,35 @@
+import * as ImageManipulator from 'expo-image-manipulator';
+import { Platform } from 'react-native';
+
+export interface OptimizedImage {
+  uri: string;
+  blob?: Blob;
+}
+
 /**
- * Optimiza y comprime una imagen en el navegador mediante HTML Canvas.
+ * Optimiza una imagen usando el motor nativo/web de Expo.
+ * Redimensiona a 800px de ancho y convierte a WEBP.
  */
-/**
- * Comprime y convierte una imagen al formato AVIF agresivo.
- */
-export async function optimizeImage(file: File, maxWidth = 900, quality = 0.65): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
+export async function optimizeImage(uri: string, maxWidth: number = 800, quality: number = 0.6): Promise<OptimizedImage> {
+  try {
+    const manipResult = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: maxWidth } }], // Mantiene el aspect ratio automáticamente
+      { compress: quality, format: ImageManipulator.SaveFormat.WEBP }
+    );
 
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target?.result as string;
+    // En Web, sí necesitamos convertirlo a Blob
+    if (Platform.OS === 'web') {
+      const response = await fetch(manipResult.uri);
+      const blob = await response.blob();
+      return { uri: manipResult.uri, blob };
+    }
 
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width);
-          width = maxWidth;
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('No se obtuvo el contexto Canvas 2D'));
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0, width, height);
-
-        // Intenta exportar a AVIF con fallback a WebP si el navegador antiguo no lo soporta
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              resolve(blob);
-            } else {
-              // Fallback a WebP si AVIF no es soportado por el motor del navegador
-              canvas.toBlob(
-                (fallbackBlob) => {
-                  if (fallbackBlob) resolve(fallbackBlob);
-                  else reject(new Error('Error al generar blob de la imagen'));
-                },
-                'image/webp',
-                quality
-              );
-            }
-          },
-          'image/avif',
-          quality
-        );
-      };
-
-      img.onerror = (err) => reject(err);
-    };
-
-    reader.onerror = (err) => reject(err);
-  });
+    // En Móvil (Android/iOS), devolvemos solo la URI. 
+    // React Native manejará el archivo de forma nativa.
+    return { uri: manipResult.uri };
+  } catch (error) {
+    console.error("Error optimizando imagen:", error);
+    throw new Error("No se pudo comprimir la imagen.");
+  }
 }

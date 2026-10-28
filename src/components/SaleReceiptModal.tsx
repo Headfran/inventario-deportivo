@@ -12,7 +12,6 @@ interface Props {
    storeName?: string;
 }
 
-// Botón con respuesta al presionar
 const P = ({ style, ...rest }: any) => (
    <Pressable {...rest} style={({ pressed }: any) => [style, pressed && styles.pressed]} />
 );
@@ -36,21 +35,21 @@ export const SaleReceiptModal: React.FC<Props> = ({
       efectivo: 'Efectivo',
       zelle: 'Zelle',
       tarjeta: 'Tarjeta / Punto',
-      otro: 'Otro',
+      mixto: 'Mixto',
+      transferencia: 'Transferencia',
    };
 
    return (
       <Modal visible={visible} transparent animationType="fade">
          <View style={styles.overlay}>
             <View style={styles.card}>
-               {/* CABECERA ÉXITO (negra, como el banner del panel) */}
+               {/* CABECERA ÉXITO */}
                <View style={styles.successBanner}>
                   <CheckCircle2 size={34} color={T.onBar} />
                   <Text style={styles.successTitle}>Venta Registrada con Éxito</Text>
                   <Text style={styles.successSubtitle}>Inventario descontado correctamente</Text>
                </View>
 
-               {/* DETALLE TICKET PREVIEW */}
                <ScrollView style={{ padding: 16 }}>
                   <View style={styles.ticketBox}>
                      <View style={styles.ticketHeader}>
@@ -81,16 +80,16 @@ export const SaleReceiptModal: React.FC<Props> = ({
                         <View key={idx} style={styles.itemRow}>
                            <View style={{ flex: 1 }}>
                               <Text style={styles.itemName}>
-                                 {item.productBrand} - {item.productName}
+                                 {item.brand} - {item.name}
                               </Text>
                               <Text style={styles.itemSpec}>
-                                 {item.variantColor} • Talla: {item.size}
+                                 {item.color} • Talla: {item.size}
                               </Text>
                               <Text style={styles.itemSpec}>
                                  {item.quantity} unidad(es) x ${item.unitPrice.toFixed(2)}
                               </Text>
                            </View>
-                           <Text style={styles.itemSubtotal}>${item.subtotal.toFixed(2)}</Text>
+                           <Text style={styles.itemSubtotal}>${item.totalPrice.toFixed(2)}</Text>
                         </View>
                      ))}
 
@@ -98,7 +97,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
 
                      <View style={styles.totalRow}>
                         <Text style={styles.totalLabel}>TOTAL VENTA:</Text>
-                        <Text style={styles.totalValue}>${sale.totalAmount.toFixed(2)}</Text>
+                        <Text style={styles.totalValue}>${sale.total.toFixed(2)}</Text>
                      </View>
                   </View>
 
@@ -114,7 +113,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
                   />
                </ScrollView>
 
-               {/* ACCIONES DEL COMPROBANTE */}
+               {/* ACCIONES */}
                <View style={styles.footer}>
                   <P style={styles.whatsAppBtn} onPress={() => openWhatsAppReceipt(sale, overridePhone, storeName)}>
                      <MessageCircle size={17} color={T.onSolid} />
@@ -136,7 +135,14 @@ export const SaleReceiptModal: React.FC<Props> = ({
    );
 };
 
-const btn = { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 8, height: 48, borderRadius: 10 };
+const btn = {
+   flexDirection: 'row' as const,
+   alignItems: 'center' as const,
+   justifyContent: 'center' as const,
+   gap: 8,
+   height: 48,
+   borderRadius: 10,
+};
 
 const styles = StyleSheet.create({
    overlay: { flex: 1, backgroundColor: T.overlay, justifyContent: 'center', alignItems: 'center', padding: 16 },
@@ -144,13 +150,30 @@ const styles = StyleSheet.create({
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
 
    successBanner: { alignItems: 'center', backgroundColor: T.bar, paddingVertical: 22, paddingHorizontal: 16 },
-   successTitle: { ...display, fontSize: 30, lineHeight: 30, fontWeight: '800', color: T.onBar, marginTop: 8, textTransform: 'uppercase', textAlign: 'center' },
+   successTitle: {
+      ...display,
+      fontSize: 30,
+      lineHeight: 30,
+      fontWeight: '800',
+      color: T.onBar,
+      marginTop: 8,
+      textTransform: 'uppercase',
+      textAlign: 'center',
+   },
    successSubtitle: { fontSize: 13, color: 'rgba(255,255,255,0.65)', marginTop: 4 },
 
-   // Ticket: gris muy claro, con separadores punteados
+   // Ticket con separadores punteados
    ticketBox: { backgroundColor: T.surface, borderRadius: 12, padding: 16, marginBottom: 16 },
    ticketHeader: { alignItems: 'center', marginBottom: 12 },
-   storeTitle: { ...display, fontSize: 26, lineHeight: 26, fontWeight: '800', color: T.ink, textTransform: 'uppercase', textAlign: 'center' },
+   storeTitle: {
+      ...display,
+      fontSize: 26,
+      lineHeight: 26,
+      fontWeight: '800',
+      color: T.ink,
+      textTransform: 'uppercase',
+      textAlign: 'center',
+   },
    ticketMeta: { fontSize: 12, color: T.inkMute, marginTop: 4 },
    ticketRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
    ticketLabel: { fontSize: 13, color: T.inkSoft },
@@ -166,7 +189,16 @@ const styles = StyleSheet.create({
    totalValue: { ...display, fontSize: 52, lineHeight: 48, fontWeight: '800', color: T.ink },
 
    inputLabel: { fontSize: 13, fontWeight: '700', color: T.inkSoft, marginBottom: 6 },
-   phoneInput: { borderWidth: 1, borderColor: T.line, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 14, color: T.ink, backgroundColor: T.bg },
+   phoneInput: {
+      borderWidth: 1,
+      borderColor: T.line,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      height: 46,
+      fontSize: 14,
+      color: T.ink,
+      backgroundColor: T.bg,
+   },
 
    footer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 16, backgroundColor: T.surface },
    whatsAppBtn: { ...btn, flexGrow: 1, flexBasis: '46%', backgroundColor: T.solid },

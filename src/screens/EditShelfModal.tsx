@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, Modal, Animated } from 'react-native';
 import { X, Layers, Save } from 'lucide-react-native';
 import { Shelf } from '../types/inventory';
-import { updateShelf } from '../services/shelfService';
+import { updateShelf, createShelf } from '../services/shelfService';
 import { showAlert } from '../utils/alert';
 import { MONO as T, display, ease, nd, reduced } from '../design';
 
@@ -35,11 +35,11 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
    useEffect(() => {
       const all = [card, ...items];
       if (!visible) {
-         all.forEach((v) => v.setValue(0)); // listo para la próxima apertura
+         all.forEach((v) => v.setValue(0));
          return;
       }
       if (reduced()) {
-         all.forEach((v) => v.setValue(1)); // sin movimiento si el usuario lo pidió
+         all.forEach((v) => v.setValue(1));
          return;
       }
       const t = (v: Animated.Value, d: number) =>
@@ -48,6 +48,8 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
    }, [visible]);
 
    if (!shelf) return null;
+
+   const isEditing = !!shelf.id;
 
    const handleSubmit = async () => {
       if (!name.trim()) {
@@ -60,22 +62,25 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
 
       try {
          setSubmitting(true);
-         if (shelf.id) {
-            await updateShelf(shelf.id, {
+         if (isEditing) {
+            await updateShelf(shelf.id!, {
                name,
                rowsCount: parsedRows,
                spacesPerRow: parsedSpaces,
             });
+         } else {
+            // Estante nuevo → createShelf
+            await createShelf(name, parsedRows, parsedSpaces);
          }
          onClose();
       } catch (error: any) {
-         showAlert('Error', error.message || 'No se pudo actualizar el estante.');
+         showAlert('Error', error.message || 'No se pudo guardar el estante.');
       } finally {
          setSubmitting(false);
       }
    };
 
-   // Datos para la vista previa (solo lectura de lo que escribe el usuario)
+   // Vista previa en vivo
    const rows = Math.max(parseInt(rowsCount, 10) || 1, 1);
    const spaces = Math.max(parseInt(spacesPerRow, 10) || 3, 1);
    const shownRows = Math.min(rows, 6);
@@ -100,13 +105,22 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                   },
                ]}
             >
-               {/* Cabecera negra, como el banner del panel */}
+               {/* Cabecera negra estilo banner */}
                <View style={styles.header}>
                   <View style={{ flex: 1 }}>
-                     <Text style={styles.title}>Editar Estante</Text>
-                     <Text style={styles.subtitle}>Nombre y cuadrícula de la bodega</Text>
+                     <Text style={styles.title}>
+                        {isEditing ? 'Editar Estante' : 'Nuevo Estante'}
+                     </Text>
+                     <Text style={styles.subtitle}>
+                        {isEditing
+                           ? 'Nombre y cuadrícula de la bodega'
+                           : 'Crea un nuevo rack para tu bodega'}
+                     </Text>
                   </View>
-                  <Pressable onPress={onClose} style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}>
+                  <Pressable
+                     onPress={onClose}
+                     style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
+                  >
                      <X size={18} color={T.onBar} />
                   </Pressable>
                </View>
@@ -156,7 +170,7 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                      </View>
                   </Animated.View>
 
-                  {/* Vista previa en vivo del estante */}
+                  {/* Vista previa en vivo */}
                   <Animated.View style={[styles.preview, reveal(items[2])]}>
                      <View style={styles.previewHead}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -175,7 +189,10 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                               {Array.from({ length: shownCols }).map((_, c) => (
                                  <View
                                     key={c}
-                                    style={[styles.rackCell, r === shownRows - 1 && c === 0 && styles.rackCellOrigin]}
+                                    style={[
+                                       styles.rackCell,
+                                       r === shownRows - 1 && c === 0 && styles.rackCellOrigin,
+                                    ]}
                                  />
                               ))}
                            </View>
@@ -183,23 +200,38 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
                      </View>
 
                      {(rows > shownRows || spaces > shownCols) && (
-                        <Text style={styles.previewNote}>Vista reducida de {rows} × {spaces}</Text>
+                        <Text style={styles.previewNote}>
+                           Vista reducida de {rows} × {spaces}
+                        </Text>
                      )}
                   </Animated.View>
                </View>
 
                <View style={styles.footer}>
-                  <Pressable onPress={onClose} style={({ pressed }) => [styles.cancelBtn, pressed && styles.pressed]}>
+                  <Pressable
+                     onPress={onClose}
+                     style={({ pressed }) => [styles.cancelBtn, pressed && styles.pressed]}
+                  >
                      <Text style={styles.cancelText}>Cancelar</Text>
                   </Pressable>
 
                   <Pressable
                      onPress={handleSubmit}
                      disabled={submitting}
-                     style={({ pressed }) => [styles.saveBtn, submitting && { opacity: 0.6 }, pressed && styles.pressed]}
+                     style={({ pressed }) => [
+                        styles.saveBtn,
+                        submitting && { opacity: 0.6 },
+                        pressed && styles.pressed,
+                     ]}
                   >
                      <Save size={16} color={T.onSolid} />
-                     <Text style={styles.saveText}>Guardar Cambios</Text>
+                     <Text style={styles.saveText}>
+                        {submitting
+                           ? 'Guardando...'
+                           : isEditing
+                              ? 'Guardar Cambios'
+                              : 'Crear Estante'}
+                     </Text>
                   </Pressable>
                </View>
             </Animated.View>
@@ -208,34 +240,75 @@ export const EditShelfModal: React.FC<EditShelfModalProps> = ({ shelf, visible, 
    );
 };
 
-const btn = { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, height: 46, borderRadius: 10 };
+const btn = {
+   flexDirection: 'row' as const,
+   alignItems: 'center' as const,
+   justifyContent: 'center' as const,
+   height: 46,
+   borderRadius: 10,
+};
 
 const styles = StyleSheet.create({
    overlay: { flex: 1, backgroundColor: T.overlay, justifyContent: 'center', alignItems: 'center', padding: 16 },
    card: { width: '100%', maxWidth: 440, backgroundColor: T.bg, borderRadius: 16, overflow: 'hidden' },
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
 
-   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: 20, backgroundColor: T.bar },
-   title: { ...display, fontSize: 34, lineHeight: 34, fontWeight: '800', color: T.onBar, textTransform: 'uppercase' },
+   header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: 12,
+      padding: 20,
+      backgroundColor: T.bar,
+   },
+   title: {
+      ...display,
+      fontSize: 34,
+      lineHeight: 34,
+      fontWeight: '800',
+      color: T.onBar,
+      textTransform: 'uppercase',
+   },
    subtitle: { fontSize: 13, color: 'rgba(255,255,255,0.65)', marginTop: 4 },
    closeBtn: { padding: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', borderRadius: 10 },
 
    body: { padding: 20, gap: 16 },
    label: { fontSize: 13, fontWeight: '700', color: T.inkSoft, marginBottom: 6 },
-   input: { borderWidth: 1, borderColor: T.line, borderRadius: 10, backgroundColor: T.bg, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: T.ink },
+   input: {
+      borderWidth: 1,
+      borderColor: T.line,
+      borderRadius: 10,
+      backgroundColor: T.bg,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 15,
+      color: T.ink,
+   },
    inputName: { fontSize: 18, fontWeight: '800', letterSpacing: 1 },
    inputNum: { ...display, fontSize: 32, lineHeight: 34, fontWeight: '800', textAlign: 'center' },
    inputFocused: { borderColor: T.ink },
    rowInputs: { flexDirection: 'row', gap: 12 },
 
    preview: { backgroundColor: T.surface, borderRadius: 12, padding: 14 },
-   previewHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+   previewHead: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+   },
    previewTitle: { fontSize: 13, fontWeight: '700', color: T.inkSoft },
    previewTotal: { ...display, fontSize: 30, lineHeight: 30, fontWeight: '800', color: T.ink },
    previewTotalSub: { fontSize: 14, fontWeight: '600', color: T.inkMute },
    rackRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
    rackLabel: { width: 24, fontSize: 10, fontWeight: '800', color: T.inkMute },
-   rackCell: { flex: 1, height: 22, backgroundColor: T.bg, borderWidth: 1, borderColor: T.line, borderRadius: 4 },
+   rackCell: {
+      flex: 1,
+      height: 22,
+      backgroundColor: T.bg,
+      borderWidth: 1,
+      borderColor: T.line,
+      borderRadius: 4,
+   },
    rackCellOrigin: { backgroundColor: T.solid, borderColor: T.solid },
    previewNote: { fontSize: 11, color: T.inkMute, marginTop: 10 },
 

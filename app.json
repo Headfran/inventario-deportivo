@@ -1,9 +1,8 @@
 {
   "expo": {
     "name": "JD STORE | Inventario",
-    "shortName": "Inventario",
     "slug": "inventario-deportivo-app",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/logo.jpg",
     "userInterfaceStyle": "light",
@@ -15,18 +14,12 @@
     "ios": {
       "supportsTablet": true
     },
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      }
-    },
+    "android": {},
     "web": {
       "bundler": "metro",
       "output": "single",
       "favicon": "./assets/logo.jpg",
       "name": "JD STORE | Inventario",
-      "shortName": "Inventario",
       "description": "Gestión de stock, punto de venta y catálogo público de prendas deportivas.",
       "themeColor": "#2563eb",
       "backgroundColor": "#0f172a",
@@ -37,7 +30,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-image"
     ]
   }
 }

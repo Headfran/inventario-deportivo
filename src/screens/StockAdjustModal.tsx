@@ -313,6 +313,7 @@ const styles = StyleSheet.create({
       fontWeight: 'bold',
       color: C.white,
       textAlign: 'center',
+      textAlignVertical: 'center',
       width: '100%',
    },
    stockInputOut: { color: C.mute, borderColor: '#4A4A4A', backgroundColor: '#161616' },

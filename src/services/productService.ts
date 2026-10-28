@@ -17,6 +17,7 @@ import {
 import { db } from './firebase';
 import { Product } from '../types/inventory';
 import { deleteImageFromR2 } from './storage';
+import { getCachedImageUrl } from '../utils/imageUrl';
 
 const PRODUCTS_COLLECTION = 'products';
 
@@ -26,15 +27,21 @@ export interface PaginatedResult {
   hasMore: boolean;
 }
 
+const normalizeProduct = (product: Product): Product => ({
+  ...product,
+  images: (product.images || [])
+    .map((u) => getCachedImageUrl(u))
+    .filter((u): u is string => Boolean(u)),
+});
+
 // Escuchar cambios en tiempo real en los productos
 export const subscribeToProducts = (callback: (products: Product[]) => void) => {
   const q = query(collection(db, PRODUCTS_COLLECTION), orderBy('createdAt', 'desc'));
 
   return onSnapshot(q, (snapshot) => {
-    const products: Product[] = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    } as Product));
+    const products: Product[] = snapshot.docs.map((doc) =>
+      normalizeProduct({ id: doc.id, ...doc.data() } as Product)
+    );
     callback(products);
   });
 };
@@ -60,14 +67,12 @@ export const updateProduct = async (id: string, product: Partial<Product>): Prom
 
 // Eliminar un producto y sus imágenes asociadas en R2
 export const deleteProduct = async (product: Product): Promise<void> => {
-  // 1. Borrar de R2 todas las imágenes registradas en el producto
   if (product.images && product.images.length > 0) {
     await Promise.allSettled(
       product.images.map((imageUrl) => deleteImageFromR2(imageUrl))
     );
   }
 
-  // 2. Borrar el documento de la base de datos Firestore
   if (product.id) {
     const productRef = doc(db, PRODUCTS_COLLECTION, product.id);
     await deleteDoc(productRef);
@@ -85,8 +90,6 @@ export const updateVariantStock = async (
 ): Promise<void> => {
   const productRef = doc(db, PRODUCTS_COLLECTION, productId);
 
-  // Obtener el estado actual mediante lectura o actualización de arreglo
-  // Para garantizar coherencia en tiempo real
   const snapshot = await getDoc(productRef);
   if (!snapshot.exists()) throw new Error('El producto no existe');
 
@@ -132,7 +135,7 @@ export const fetchProductsPage = async (
 
     const snapshot = await getDocs(q);
     const products = snapshot.docs.map(
-      (doc) => ({ id: doc.id, ...doc.data() } as Product)
+      (doc) => normalizeProduct({ id: doc.id, ...doc.data() } as Product)
     );
     const newLastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
 
