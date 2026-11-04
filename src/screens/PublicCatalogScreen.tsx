@@ -1,35 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Modal, FlatList, Animated, useWindowDimensions, Linking } from 'react-native';
-import { Image } from 'expo-image';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions } from 'react-native';
 import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { subscribeToProducts } from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { Cover } from '../components/Cover';
 import { LIGHT, Tone, display, ease, nd, reduced, useEnter, getColorHex } from '../design';
-
-// ==========================================
-// CONFIGURACIÓN DEL COMERCIO
-// ==========================================
-const STORE_PHONE = '584222630079';
-
-// ==========================================
-// CATEGORÍAS FIJAS (Siempre visibles)
-// ==========================================
-const STATIC_CATEGORIES = [
-   'Franelas',
-   'Sudaderas',
-   'Monos',
-   'Shorts',
-   'Chaquetas',
-   'Camisas',
-   'Camisas AAA',
-   'Franelillas AAA',
-   'Chemises',
-   'Conjuntos',
-   'Zapatos',
-   'Accesorios',
-];
 
 interface Props {
    onOpenStaffAccess: () => void;
@@ -42,8 +18,6 @@ interface CartItem {
    color: string;
    size: string;
    quantity: number;
-   price: number;
-   isWholesale: boolean;
 }
 
 const GRAY = {
@@ -58,7 +32,8 @@ const GRAY = {
    100: '#F4F4F5',
 };
 
-const DEFAULT_LOGO = 'logo.jpg';
+const DEFAULT_LOGO = '../logo.jpg';
+const REF_RATE_MULTIPLIER = 1.15;
 
 const T: Tone = LIGHT;
 const MAX = 1400;
@@ -81,16 +56,7 @@ const BrandLogoItem: React.FC<{ brandName: string; isSelected: boolean }> = ({ b
    const logoUrl = getBrandLogoUrl(brandName);
 
    if (logoUrl && !hasError) {
-      return (
-         <Image
-            source={{ uri: logoUrl }}
-            style={styles.brandLogoImg}
-            contentFit="contain"
-            cachePolicy="memory-disk"
-            transition={200}
-            onError={() => setHasError(true)}
-         />
-      );
+      return <Image source={{ uri: logoUrl }} style={styles.brandLogoImg} resizeMode="contain" onError={() => setHasError(true)} />;
    }
    return (
       <View style={[styles.avatar, isSelected && { backgroundColor: GRAY[700] }]}>
@@ -99,7 +65,6 @@ const BrandLogoItem: React.FC<{ brandName: string; isSelected: boolean }> = ({ b
    );
 };
 
-// Fondo galáctico con constelaciones
 const GalaxyBackground = React.memo(() => {
    const stars = useRef(
       Array.from({ length: 28 }).map(() => ({
@@ -189,6 +154,7 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
    const run = sizeRun(item).slice(0, 6);
    const mainImgUri = item.images?.[0];
    const retailPrice = Number(item.price || 0);
+   const wholesalePrice = Number((item as any).wholesalePrice || (item as any).priceWholesale || retailPrice * 0.85);
 
    return (
       <View style={{ width }}>
@@ -212,13 +178,9 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
          </Pressable>
 
          <View style={styles.meta}>
-            <Text style={styles.cardBrand} numberOfLines={1}>{item.brand}</Text>
-            <Text style={[styles.cardName, !compact && { fontSize: 15 }]} numberOfLines={2}>{item.name}</Text>
-
-            {retailPrice > 0 && (
-               <Text style={styles.cardPrice}>${retailPrice.toFixed(2)}</Text>
-            )}
-
+            <Text style={[styles.cardBrand, compact && { fontSize: 11 }]} numberOfLines={1}>{item.brand}</Text>
+            <Text style={[styles.cardName, compact ? styles.cardNameMobile : { fontSize: 15 }]} numberOfLines={2}>{item.name}</Text>
+            
             {run.length > 0 && (
                <View style={styles.sizes}>
                   {run.map(([sz, ok]) => (
@@ -228,6 +190,19 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
                   ))}
                </View>
             )}
+
+            {retailPrice > 0 && (
+               <View style={styles.cardPricesStack}>
+                  <View style={styles.cardPriceRowLeft}>
+                     <Text style={[styles.cardPriceLabel, compact && { fontSize: 10 }]}>DETAL:</Text>
+                     <Text style={[styles.cardPriceValue, compact && { fontSize: 15 }]}>${retailPrice.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.cardPriceRowLeft}>
+                     <Text style={[styles.cardPriceLabelWholesale, compact && { fontSize: 10 }]}>MAYOR:</Text>
+                     <Text style={[styles.cardPriceValueWholesale, compact && { fontSize: 15 }]}>${wholesalePrice.toFixed(2)}</Text>
+                  </View>
+               </View>
+            )}
          </View>
 
          <View style={styles.actionRow}>
@@ -235,8 +210,8 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
                style={({ pressed }) => [styles.detailsBtn, pressed && styles.pressed]}
                onPress={() => onOpen(item)}
             >
-               <Eye size={16} color="#FFFFFF" />
-               <Text style={styles.detailsBtnText}>Detalles</Text>
+               <Eye size={15} color="#FFFFFF" />
+               <Text style={[styles.detailsBtnText, compact && { fontSize: 12 }]}>Detalles</Text>
             </Pressable>
          </View>
       </View>
@@ -261,38 +236,22 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
 
-   const flatListRef = useRef<FlatList>(null);
-
    useEffect(() => {
       const unsub = subscribeToProducts(setProducts);
       return () => unsub();
    }, []);
 
-   // BACKEND: Solo prendas ubicadas en Bodega/Vitrina
-   const validProducts = useMemo(() => {
-      return products.reduce((acc: Product[], p) => {
-         const validVariants = (p.variants || []).filter((v: any) => v.locations && v.locations.length > 0);
-         if (validVariants.length > 0) {
-            acc.push({ ...p, variants: validVariants });
-         }
-         return acc;
-      }, []);
+   const { categories, brands, colors, sizes } = useMemo(() => {
+      const rawCategories = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
+      return {
+         categories: [...rawCategories.filter((c) => c !== 'all'), 'all'],
+         brands: Array.from(new Set(products.map((p) => p.brand).filter(Boolean))),
+         colors: Array.from(new Set(products.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean))),
+         sizes: Array.from(new Set(products.flatMap((p) => (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))).filter(Boolean))),
+      };
    }, [products]);
 
-   // BACKEND: categorías fijas + dinámicas, 'all' al final
-   const { categories, brands, colors, sizes } = useMemo(() => {
-      const dynamicCats = validProducts.map((p) => p.category).filter(Boolean) as string[];
-      const cats = Array.from(new Set([...STATIC_CATEGORIES, ...dynamicCats]));
-
-      return {
-         categories: [...cats, 'all'],
-         brands: Array.from(new Set(validProducts.map((p) => p.brand).filter(Boolean))),
-         colors: Array.from(new Set(validProducts.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean))),
-         sizes: Array.from(new Set(validProducts.flatMap((p) => (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))).filter(Boolean))),
-      };
-   }, [validProducts]);
-
-   const filteredProducts = useMemo(() => filterProducts(validProducts, filters), [validProducts, filters]);
+   const filteredProducts = useMemo(() => filterProducts(products, filters), [products, filters]);
 
    const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE) || 1;
    const paginatedProducts = useMemo(() => {
@@ -303,11 +262,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    useEffect(() => {
       setCurrentPage(1);
    }, [filters]);
-
-   const handlePageChange = (newPage: number) => {
-      setCurrentPage(newPage);
-      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-   };
 
    const activeFiltersCount = (filters.brand ? 1 : 0) + (filters.color ? 1 : 0) + (filters.size ? 1 : 0) + (filters.category !== 'all' ? 1 : 0);
    const handleResetFilters = () => {
@@ -331,36 +285,33 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       }
    }, []);
 
-   const handleZoomImage = useCallback((uri: string) => {
+   const handleZoomImage = useCallback((uri: string, name: string) => {
       setDetailZoomUri(uri);
    }, []);
 
+   // Cantidad total acumulada de prendas en el carrito
+   const totalCartQuantity = useMemo(() => {
+      return cart.reduce((sum, item) => sum + item.quantity, 0);
+   }, [cart]);
+
+   // Bandera global de mayor si el total de piezas es >= 6
+   const isGlobalWholesale = totalCartQuantity >= 6;
+
    const addToCart = (product: Product) => {
       if (!selectedColor || !selectedSize) return;
-      const retailPrice = Number(product.price || 0);
-      const wholesalePrice = Number((product as any).wholesalePrice || (product as any).priceWholesale || retailPrice * 0.85);
-      const isWholesale = quantity >= 12;
-      const effectivePrice = isWholesale ? wholesalePrice : retailPrice;
-
       const newItem: CartItem = {
          cartId: `${product.id || product.code}-${selectedColor}-${selectedSize}`,
          product,
          color: selectedColor,
          size: selectedSize,
          quantity,
-         price: effectivePrice,
-         isWholesale,
       };
 
       setCart((prev) => {
          const existingIndex = prev.findIndex((i) => i.cartId === newItem.cartId);
          if (existingIndex > -1) {
             const updated = [...prev];
-            const newTotalQty = updated[existingIndex].quantity + quantity;
-            const updatedIsWholesale = newTotalQty >= 12;
-            updated[existingIndex].quantity = newTotalQty;
-            updated[existingIndex].isWholesale = updatedIsWholesale;
-            updated[existingIndex].price = updatedIsWholesale ? wholesalePrice : retailPrice;
+            updated[existingIndex].quantity += quantity;
             return updated;
          }
          return [...prev, newItem];
@@ -379,28 +330,30 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          prev.map((item) => {
             if (item.cartId !== cartId) return item;
             const newQty = Math.max(1, item.quantity + delta);
-            const retailPrice = Number(item.product.price || 0);
-            const wholesalePrice = Number((item.product as any).wholesalePrice || (item.product as any).priceWholesale || retailPrice * 0.85);
-            const isWholesale = newQty >= 12;
-            const price = isWholesale ? wholesalePrice : retailPrice;
-            return { ...item, quantity: newQty, isWholesale, price };
+            return { ...item, quantity: newQty };
          })
       );
    };
 
-   // BACKEND: envío al WhatsApp del comercio usando STORE_PHONE + Linking
    const sendWhatsAppCheckout = () => {
       if (cart.length === 0) return;
       let text = `¡Hola! JDSTORE, me interesan los siguientes productos de mi carrito:\n\n`;
       cart.forEach((item, index) => {
+         const retailPrice = Number(item.product.price || 0);
+         const wholesalePrice = Number((item.product as any).wholesalePrice || (item.product as any).priceWholesale || retailPrice * 0.85);
+         const itemUnitPrice = isGlobalWholesale ? wholesalePrice : retailPrice;
+         const refTotal = itemUnitPrice * REF_RATE_MULTIPLIER;
+
          text += `${index + 1}. *${item.product.name}* (Marca: ${item.product.brand}, Código: ${item.product.code})\n`;
          text += `   - Color: ${item.color} | Talla: ${item.size} | Cantidad: ${item.quantity}\n`;
-         text += `   - Tipo: ${item.isWholesale ? '✨ Al Mayor (12+ un)' : 'Al Detal'} | Unitario: $${item.price.toFixed(2)} | Subtotal: $${(item.price * item.quantity).toFixed(2)}\n\n`;
+         text += `   - Tipo: ${isGlobalWholesale ? 'Al Mayor (6+ un)' : 'Al Detal'} | Unitario: $${itemUnitPrice.toFixed(2)} (${refTotal.toFixed(2)}€ ) | Subtotal: $${(itemUnitPrice * item.quantity).toFixed(2)}\n\n`;
       });
-      text += `Quedo atento a la disponibilidad y método de pago. ¡Gracias!`;
+      text += `Total de piezas: ${totalCartQuantity} | Quedo atento a la disponibilidad y pago. ¡Gracias!`;
       const encoded = encodeURIComponent(text);
-      const url = `https://wa.me/${STORE_PHONE}?text=${encoded}`;
-      Linking.openURL(url).catch(() => alert('Verifica tener WhatsApp instalado.'));
+      const url = `https://wa.me/?text=${encoded}`;
+      if (typeof window !== 'undefined') {
+         window.open(url, '_blank');
+      }
    };
 
    const { width } = useWindowDimensions();
@@ -416,7 +369,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    const detailAnim = useEnter(!!detailProduct, mobile);
    const cartAnim = useEnter(isCartModalOpen, mobile);
 
-   const heroPics = useMemo(() => validProducts.filter((p) => p.images?.[0]).slice(0, 3), [validProducts]);
+   const heroPics = useMemo(() => products.filter((p) => p.images?.[0]).slice(0, 3), [products]);
    const reveal = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
    const played = useRef(false);
    useEffect(() => {
@@ -482,7 +435,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          <View style={[styles.inner, styles.filters, { paddingHorizontal: PAD }]}>
             <View style={styles.searchRow}>
                <View style={[styles.searchBar, searchFocused && styles.searchFocused]}>
-                  <Search size={18} color={GRAY[800]} />
+                  <Search size={18} color={GRAY[500]} />
                   <TextInput
                      style={styles.searchInput}
                      placeholder="Buscar por modelo, marca o código"
@@ -556,16 +509,17 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       const currentImageUri = p.images?.[selectedImageIndex];
       const retailPrice = Number(p.price || 0);
       const wholesalePrice = Number((p as any).wholesalePrice || (p as any).priceWholesale || retailPrice * 0.85);
-
-      const isWholesale = quantity >= 12;
+      
+      const isWholesale = quantity >= 6;
       const activeUnitPrice = isWholesale ? wholesalePrice : retailPrice;
+      const activeRefUnitPrice = activeUnitPrice * REF_RATE_MULTIPLIER;
 
       const gallery = (
          <View style={{ position: 'relative' }}>
             <Pressable onPress={() => currentImageUri && setDetailZoomUri(currentImageUri)}>
                <Cover uri={currentImageUri} name={p.name} bg={GRAY[100]} fg={GRAY[300]} style={wide ? styles.mainImgWide : styles.mainImg} />
-               <Pressable
-                  style={styles.zoomButtonFloat}
+               <Pressable 
+                  style={styles.zoomButtonFloat} 
                   onPress={() => currentImageUri && setDetailZoomUri(currentImageUri)}
                >
                   <ZoomIn size={18} color="#FFFFFF" />
@@ -575,13 +529,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.thumbs}>
                   {p.images.map((img, idx) => (
                      <Pressable key={idx} onPress={() => setSelectedImageIndex(idx)} style={[styles.thumb, selectedImageIndex === idx && styles.thumbActive]}>
-                        <Image
-                           source={{ uri: img }}
-                           style={{ width: '100%', height: '100%' }}
-                           contentFit="cover"
-                           cachePolicy="memory-disk"
-                           transition={200}
-                        />
+                        <Image source={{ uri: img }} style={{ width: '100%', height: '100%' }} />
                      </Pressable>
                   ))}
                </ScrollView>
@@ -601,23 +549,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             </View>
 
             <Text style={styles.detailName}>{p.name}</Text>
-
-            <View style={styles.pricesDetailRow}>
-               <View style={[styles.priceBoxModal, !isWholesale && styles.priceBoxActive]}>
-                  <Text style={styles.priceModalLabel}>Precio Detal (1-11 un)</Text>
-                  <Text style={[styles.priceModalValue, !isWholesale && { color: GRAY[900] }]}>${retailPrice.toFixed(2)}</Text>
-               </View>
-               <View style={[styles.priceBoxModal, styles.wholesaleBoxModal, isWholesale && styles.priceBoxActiveWholesale]}>
-                  <Text style={styles.priceModalLabelWholesale}>Precio al Mayor (12+ un)</Text>
-                  <Text style={styles.priceModalValueWholesale}>${wholesalePrice.toFixed(2)}</Text>
-               </View>
-            </View>
-
-            <Text style={styles.priceNoticeText}>
-               {isWholesale
-                  ? '✨ ¡Precio al mayor aplicado automáticamente (12 o más unidades)!'
-                  : `💡 Agrega ${12 - quantity} unidad${12 - quantity === 1 ? '' : 'es'} más para activar el precio al mayor.`}
-            </Text>
 
             <View style={styles.divider} />
 
@@ -675,17 +606,42 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                <Pressable style={styles.qtyBtn} onPress={() => setQuantity((q) => q + 1)}>
                   <Plus size={16} color={GRAY[800]} />
                </Pressable>
-               <Pressable style={styles.qtyQuickBtn} onPress={() => setQuantity((q) => q + 10)}>
-                  <Text style={styles.qtyQuickText}>+10</Text>
+               <Pressable style={styles.qtyQuickBtnWholesale} onPress={() => setQuantity(6)}>
+                  <Text style={styles.qtyQuickTextWholesale}>6 (Al Mayor)</Text>
                </Pressable>
-               <Pressable style={styles.qtyQuickBtnWholesale} onPress={() => setQuantity(12)}>
-                  <Text style={styles.qtyQuickTextWholesale}>12 (Al Mayor)</Text>
-               </Pressable>
+            </View>
+
+            <View style={styles.dualPricesCleanRowBottom}>
+               <View style={styles.priceColumnClean}>
+                  <Text style={styles.columnHeaderTitleBlack}>USD ($)</Text>
+                  <View style={styles.columnPriceRow}>
+                     <Text style={styles.columnLabel}>Detal:</Text>
+                     <Text style={styles.columnVal}>${retailPrice.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.columnPriceRow}>
+                     <Text style={styles.columnLabel}>Mayor:</Text>
+                     <Text style={styles.columnValWholesale}>${wholesalePrice.toFixed(2)}</Text>
+                  </View>
+               </View>
+
+               <View style={styles.cleanVerticalDivider} />
+
+               <View style={styles.priceColumnClean}>
+                  <Text style={styles.columnHeaderTitleBlack}>BOLIVARES (TASA €)</Text>
+                  <View style={styles.columnPriceRow}>
+                     <Text style={styles.columnLabelRef}>Detal:</Text>
+                     <Text style={styles.columnValRef}>{(retailPrice * REF_RATE_MULTIPLIER).toFixed(2)}€</Text>
+                  </View>
+                  <View style={styles.columnPriceRow}>
+                     <Text style={styles.columnLabelRef}>Mayor:</Text>
+                     <Text style={styles.columnValRefWholesale}>{(wholesalePrice * REF_RATE_MULTIPLIER).toFixed(2)}€</Text>
+                  </View>
+               </View>
             </View>
 
             <View style={styles.totalPreviewRow}>
                <Text style={styles.totalPreviewLabel}>Total estimado:</Text>
-               <Text style={styles.totalPreviewValue}>${(activeUnitPrice * quantity).toFixed(2)}</Text>
+               <Text style={styles.totalPreviewValue}>${(activeUnitPrice * quantity).toFixed(2)}  ({activeRefUnitPrice.toFixed(2)}€)</Text>
             </View>
          </View>
       );
@@ -729,13 +685,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                <View style={styles.brandGroup}>
                   <View style={styles.logoContainerLarge}>
                      {(logoUri || DEFAULT_LOGO) ? (
-                        <Image
-                           source={{ uri: logoUri || DEFAULT_LOGO }}
-                           style={styles.barLogoImg}
-                           contentFit="cover"
-                           cachePolicy="memory-disk"
-                           transition={200}
-                        />
+                        <Image source={{ uri: logoUri || DEFAULT_LOGO }} style={styles.barLogoImg} resizeMode="cover" />
                      ) : (
                         <View style={styles.logoPlaceholder}>
                            <ShoppingBag size={28} color="#FFFFFF" />
@@ -754,7 +704,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                      {cart.length > 0 && (
                         <View style={styles.cartCountBadge}>
                            <Text style={styles.cartCountBadgeText}>
-                              {cart.reduce((a, b) => a + b.quantity, 0)}
+                              {totalCartQuantity}
                            </Text>
                         </View>
                      )}
@@ -773,7 +723,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          </View>
 
          <FlatList
-            ref={flatListRef}
             key={cols}
             data={paginatedProducts}
             keyExtractor={(item) => item.id || item.code}
@@ -788,7 +737,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                      <Pressable
                         style={[styles.pageBtn, currentPage === 1 && styles.pageBtnDisabled]}
                         disabled={currentPage === 1}
-                        onPress={() => handlePageChange(Math.max(currentPage - 1, 1))}
+                        onPress={() => setCurrentPage((p) => Math.max(p - 1, 1))}
                      >
                         <ChevronLeft size={18} color={currentPage === 1 ? GRAY[300] : GRAY[800]} />
                         <Text style={[styles.pageBtnText, currentPage === 1 && { color: GRAY[300] }]}>Anterior</Text>
@@ -801,7 +750,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                      <Pressable
                         style={[styles.pageBtn, currentPage === totalPages && styles.pageBtnDisabled]}
                         disabled={currentPage === totalPages}
-                        onPress={() => handlePageChange(Math.min(currentPage + 1, totalPages))}
+                        onPress={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
                      >
                         <Text style={[styles.pageBtnText, currentPage === totalPages && { color: GRAY[300] }]}>Siguiente</Text>
                         <ChevronRight size={18} color={currentPage === totalPages ? GRAY[300] : GRAY[800]} />
@@ -910,20 +859,14 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             </View>
          </Modal>
 
-         {/* MODAL LIGHTBOX / ZOOM */}
+         {/* MODAL LIGHTBOX / ZOOM INDEPENDIENTE A PANTALLA COMPLETA */}
          <Modal visible={!!detailZoomUri} transparent animationType="fade">
             <View style={styles.lightboxOverlay}>
                <Pressable style={styles.lightboxCloseBtn} onPress={() => setDetailZoomUri(null)}>
                   <X size={28} color="#FFFFFF" />
                </Pressable>
                {detailZoomUri && (
-                  <Image
-                     source={{ uri: detailZoomUri }}
-                     style={styles.lightboxImage}
-                     contentFit="contain"
-                     cachePolicy="memory-disk"
-                     transition={200}
-                  />
+                  <Image source={{ uri: detailZoomUri }} style={styles.lightboxImage} resizeMode="contain" />
                )}
             </View>
          </Modal>
@@ -936,7 +879,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                   <View style={styles.modalHeader}>
                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                         <ShoppingCart size={22} color="#FFFFFF" />
-                        <Text style={styles.modalTitle}>Tu Carrito ({cart.reduce((a, b) => a + b.quantity, 0)} productos)</Text>
+                        <Text style={styles.modalTitle}>Tu Carrito ({totalCartQuantity} {totalCartQuantity === 1 ? 'producto' : 'productos'})</Text>
                      </View>
                      <Pressable onPress={() => setIsCartModalOpen(false)}>
                         <X size={22} color="#FFFFFF" />
@@ -952,44 +895,44 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                         </View>
                      ) : (
                         <View style={{ gap: 12 }}>
-                           {cart.map((item) => (
-                              <View key={item.cartId} style={styles.cartItemRow}>
-                                 <Image
-                                    source={{ uri: item.product.images?.[0] }}
-                                    style={styles.cartItemImg}
-                                    contentFit="cover"
-                                    cachePolicy="memory-disk"
-                                    transition={200}
-                                 />
-                                 <View style={{ flex: 1, marginLeft: 12 }}>
-                                    <Text style={styles.cartItemBrand}>{item.product.brand}</Text>
-                                    <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
-                                    <Text style={styles.cartItemSpecs}>Color: {item.color} | Talla: {item.size}</Text>
+                           {cart.map((item) => {
+                              const retailPrice = Number(item.product.price || 0);
+                              const wholesalePrice = Number((item.product as any).wholesalePrice || (item.product as any).priceWholesale || retailPrice * 0.85);
+                              const itemUnitPrice = isGlobalWholesale ? wholesalePrice : retailPrice;
 
-                                    <View style={[styles.cartBadgeTag, item.isWholesale ? styles.cartBadgeWholesale : styles.cartBadgeRetail]}>
-                                       <Text style={[styles.cartBadgeText, item.isWholesale && { color: '#047857' }]}>
-                                          {item.isWholesale ? '✨ PRECIO AL MAYOR (12+ un)' : 'PRECIO AL DETAL (1-11 un)'}
-                                       </Text>
-                                    </View>
+                              return (
+                                 <View key={item.cartId} style={styles.cartItemRow}>
+                                    <Image source={{ uri: item.product.images?.[0] }} style={styles.cartItemImg} />
+                                    <View style={{ flex: 1, marginLeft: 12 }}>
+                                       <Text style={styles.cartItemBrand}>{item.product.brand}</Text>
+                                       <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
+                                       <Text style={styles.cartItemSpecs}>Color: {item.color} | Talla: {item.size}</Text>
 
-                                    <View style={styles.cartItemBottomRow}>
-                                       <View style={styles.cartQtyControl}>
-                                          <Pressable style={styles.cartQtyBtn} onPress={() => updateCartQuantity(item.cartId, -1)}>
-                                             <Minus size={12} color={GRAY[800]} />
-                                          </Pressable>
-                                          <Text style={styles.cartQtyNumber}>{item.quantity}</Text>
-                                          <Pressable style={styles.cartQtyBtn} onPress={() => updateCartQuantity(item.cartId, 1)}>
-                                             <Plus size={12} color={GRAY[800]} />
-                                          </Pressable>
+                                       <View style={[styles.cartBadgeTag, isGlobalWholesale ? styles.cartBadgeWholesale : styles.cartBadgeRetail]}>
+                                          <Text style={[styles.cartBadgeText, isGlobalWholesale && { color: '#047857' }]}>
+                                             {isGlobalWholesale ? 'PRECIO AL MAYOR' : 'PRECIO AL DETAL'}
+                                          </Text>
                                        </View>
-                                       <Text style={styles.cartItemPrice}>${(item.price * item.quantity).toFixed(2)} (${item.price.toFixed(2)} c/u)</Text>
+
+                                       <View style={styles.cartItemBottomRow}>
+                                          <View style={styles.cartQtyControl}>
+                                             <Pressable style={styles.cartQtyBtn} onPress={() => updateCartQuantity(item.cartId, -1)}>
+                                                <Minus size={12} color={GRAY[800]} />
+                                             </Pressable>
+                                             <Text style={styles.cartQtyNumber}>{item.quantity}</Text>
+                                             <Pressable style={styles.cartQtyBtn} onPress={() => updateCartQuantity(item.cartId, 1)}>
+                                                <Plus size={12} color={GRAY[800]} />
+                                             </Pressable>
+                                          </View>
+                                          <Text style={styles.cartItemPrice}>${(itemUnitPrice * item.quantity).toFixed(2)} ({(itemUnitPrice * REF_RATE_MULTIPLIER * item.quantity).toFixed(2)}€ )</Text>
+                                       </View>
                                     </View>
+                                    <Pressable onPress={() => removeFromCart(item.cartId)} style={styles.cartDeleteBtn}>
+                                       <Trash2 size={16} color={GRAY[500]} />
+                                    </Pressable>
                                  </View>
-                                 <Pressable onPress={() => removeFromCart(item.cartId)} style={styles.cartDeleteBtn}>
-                                    <Trash2 size={16} color={GRAY[500]} />
-                                 </Pressable>
-                              </View>
-                           ))}
+                              );
+                           })}
                         </View>
                      )}
                   </ScrollView>
@@ -1024,7 +967,7 @@ const styles = StyleSheet.create({
    bar: { backgroundColor: GRAY[900], paddingVertical: 12 },
    barRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
    brandGroup: { flexDirection: 'row', alignItems: 'center', gap: 14, flexShrink: 1 },
-
+   
    logoContainerLarge: { width: 72, height: 72, borderRadius: 36, overflow: 'hidden', backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: GRAY[600] },
    barLogoImg: { width: '100%', height: '100%' },
    logoPlaceholder: { width: '100%', height: '100%', backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center' },
@@ -1043,9 +986,9 @@ const styles = StyleSheet.create({
    countPill: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, marginBottom: 14 },
    countText: { fontSize: 13, fontWeight: '700', color: GRAY[300] },
    title: { ...display, fontWeight: '800', color: '#FFFFFF', textTransform: 'uppercase' },
-
+   
    heroSubtitle: { ...display, fontSize: 32, fontWeight: '700', color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 6 },
-
+   
    titleSm: { fontSize: 60, lineHeight: 56 },
    titleMd: { fontSize: 96, lineHeight: 88 },
    titleLg: { fontSize: 132, lineHeight: 118 },
@@ -1058,11 +1001,13 @@ const styles = StyleSheet.create({
    slant: { position: 'absolute', left: -30, right: -30, bottom: -34, height: 64, backgroundColor: GRAY[100], transform: [{ rotate: '-1.4deg' }] },
 
    filters: { gap: 14, marginBottom: 24 },
-   searchRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-end' },
-   searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: 48, borderBottomWidth: 2, borderBottomColor: GRAY[800] },
-   searchFocused: { borderBottomColor: GRAY[600] },
-   searchInput: { flex: 1, fontSize: 16, color: GRAY[900] },
-   filterBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 44, paddingHorizontal: 16, backgroundColor: GRAY[800], borderRadius: 999 },
+   searchRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+   
+   searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', height: 46, paddingHorizontal: 16, backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: GRAY[300] },
+   searchFocused: { borderColor: GRAY[800] },
+   searchInput: { flex: 1, fontSize: 15, color: GRAY[900], paddingLeft: 10, outlineStyle: 'none' } as any,
+
+   filterBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 46, paddingHorizontal: 16, backgroundColor: GRAY[800], borderRadius: 8 },
    filterBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
    filterBadge: { minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: GRAY[600], justifyContent: 'center', alignItems: 'center' },
    filterBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
@@ -1085,20 +1030,28 @@ const styles = StyleSheet.create({
    swatches: { position: 'absolute', left: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.85)', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999 },
    dot: { width: 11, height: 11, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(0,0,0,0.15)' },
    dotsMore: { fontSize: 10, color: GRAY[600], fontWeight: '700' },
-   meta: { paddingTop: 12, gap: 4 },
-   cardBrand: { fontSize: 12, fontWeight: '800', color: GRAY[600], textTransform: 'uppercase', letterSpacing: 0.5 },
-   cardName: { fontSize: 14, fontWeight: '700', color: GRAY[900], minHeight: 36 },
-   cardPrice: { fontSize: 32, fontWeight: '800', color: GRAY[900], marginTop: 2 },
+   meta: { paddingTop: 10, gap: 3 },
+   cardBrand: { fontSize: 11, fontWeight: '800', color: GRAY[500], textTransform: 'uppercase', letterSpacing: 0.5 },
+   cardName: { fontSize: 13, fontWeight: '700', color: GRAY[900], minHeight: 32 },
+   cardNameMobile: { fontSize: 13, lineHeight: 16 },
+
+   cardPricesStack: { marginTop: 6, gap: 3, paddingVertical: 2 },
+   cardPriceRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+   cardPriceLabel: { fontSize: 10, fontWeight: '700', color: GRAY[500], textTransform: 'uppercase' },
+   cardPriceLabelWholesale: { fontSize: 10, fontWeight: '700', color: '#059669', textTransform: 'uppercase' },
+   cardPriceValue: { fontSize: 15, fontWeight: '800', color: GRAY[900] },
+   cardPriceValueWholesale: { fontSize: 15, fontWeight: '800', color: '#047857' },
+
    sizes: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },
-   sizeBox: { minWidth: 26, height: 24, paddingHorizontal: 6, borderRadius: 5, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+   sizeBox: { minWidth: 24, height: 22, paddingHorizontal: 5, borderRadius: 4, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
    sizeBoxOk: { borderColor: GRAY[300], backgroundColor: '#FFFFFF' },
    sizeBoxOff: { borderColor: GRAY[200], backgroundColor: GRAY[100] },
-   sizeBoxText: { fontSize: 11, fontWeight: '700', color: GRAY[800] },
+   sizeBoxText: { fontSize: 10, fontWeight: '700', color: GRAY[800] },
    sizeOff: { color: GRAY[400], textDecorationLine: 'line-through', fontWeight: '500' },
-
-   actionRow: { marginTop: 10 },
-   detailsBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, height: 38, backgroundColor: GRAY[700], borderRadius: 8 },
-   detailsBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+   
+   actionRow: { marginTop: 8 },
+   detailsBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 5, height: 34, backgroundColor: GRAY[700], borderRadius: 6 },
+   detailsBtnText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
 
    paginationContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 20, marginTop: 10 },
    pageBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: GRAY[200], borderRadius: 8, backgroundColor: '#FFFFFF' },
@@ -1132,7 +1085,7 @@ const styles = StyleSheet.create({
    closeBtn: { position: 'absolute', top: 12, right: 12, zIndex: 10, backgroundColor: GRAY[900], borderRadius: 18, padding: 7 },
    mainImg: { width: '100%', height: 340, backgroundColor: GRAY[100] },
    mainImgWide: { width: '100%', aspectRatio: 4 / 5, backgroundColor: GRAY[100] },
-
+   
    zoomButtonFloat: {
       position: 'absolute',
       bottom: 12,
@@ -1171,50 +1124,50 @@ const styles = StyleSheet.create({
    thumb: { width: 56, height: 56, borderRadius: 8, overflow: 'hidden', borderWidth: 2, borderColor: 'transparent' },
    thumbActive: { borderColor: GRAY[900] },
 
-   pricesDetailRow: { flexDirection: 'row', gap: 12, marginTop: 12, marginBottom: 4 },
-   priceBoxModal: { flex: 1, backgroundColor: GRAY[100], padding: 10, borderRadius: 8, borderWidth: 2, borderColor: GRAY[200] },
-   wholesaleBoxModal: { backgroundColor: GRAY[100], borderColor: GRAY[200] },
-   priceBoxActive: { borderColor: GRAY[900], backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, elevation: 2 },
-   priceBoxActiveWholesale: { borderColor: '#10B981', backgroundColor: '#ECFDF5', shadowColor: '#10B981', shadowOpacity: 0.2, shadowRadius: 4, elevation: 2 },
-   priceModalLabel: { fontSize: 11, fontWeight: '700', color: GRAY[500], textTransform: 'uppercase', marginBottom: 2 },
-   priceModalLabelWholesale: { fontSize: 11, fontWeight: '700', color: '#059669', textTransform: 'uppercase', marginBottom: 2 },
-   priceModalValue: { fontSize: 18, fontWeight: '800', color: GRAY[500] },
-   priceModalValueWholesale: { fontSize: 18, fontWeight: '800', color: '#047857' },
-   priceNoticeText: { fontSize: 12, fontWeight: '600', color: GRAY[600], marginTop: 6, fontStyle: 'italic' },
-   totalPreviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, backgroundColor: GRAY[100], padding: 12, borderRadius: 8 },
-   totalPreviewLabel: { fontSize: 14, fontWeight: '700', color: GRAY[700] },
-   totalPreviewValue: { fontSize: 20, fontWeight: '800', color: GRAY[900] },
+   dualPricesCleanRowBottom: { flexDirection: 'row', alignItems: 'center', backgroundColor: GRAY[100], borderRadius: 8, padding: 10, marginTop: 14, marginBottom: 8 },
+   priceColumnClean: { flex: 1, alignItems: 'center' },
+   columnHeaderTitleBlack: { fontSize: 11, fontWeight: '800', color: GRAY[900], textTransform: 'uppercase', marginBottom: 4, textAlign: 'center' },
+   columnPriceRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, marginVertical: 1 },
+   columnLabel: { fontSize: 11, fontWeight: '700', color: GRAY[600] },
+   columnVal: { fontSize: 13, fontWeight: '800', color: GRAY[900] },
+   columnValWholesale: { fontSize: 13, fontWeight: '800', color: GRAY[900] },
+   columnLabelRef: { fontSize: 11, fontWeight: '700', color: GRAY[600] },
+   columnValRef: { fontSize: 13, fontWeight: '800', color: GRAY[900] },
+   columnValRefWholesale: { fontSize: 13, fontWeight: '800', color: GRAY[900] },
+   cleanVerticalDivider: { width: 1, height: 42, backgroundColor: GRAY[900], marginHorizontal: 6 },
+
+   totalPreviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, backgroundColor: GRAY[100], padding: 10, borderRadius: 8 },
+   totalPreviewLabel: { fontSize: 13, fontWeight: '700', color: GRAY[700] },
+   totalPreviewValue: { fontSize: 15, fontWeight: '800', color: GRAY[900] },
 
    detailHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
    detailBrand: { fontSize: 13, fontWeight: '800', color: GRAY[500], letterSpacing: 1, textTransform: 'uppercase' },
    codeBadge: { backgroundColor: GRAY[100], paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: GRAY[200] },
    codeBadgeText: { fontSize: 11, fontWeight: '700', color: GRAY[600] },
-   detailName: { ...display, fontSize: 32, lineHeight: 30, fontWeight: '800', color: GRAY[900], textTransform: 'uppercase' },
-   divider: { height: 1, backgroundColor: GRAY[200], marginVertical: 16 },
-   sectionTitle: { fontSize: 14, fontWeight: '800', color: GRAY[800], letterSpacing: 0.3, textTransform: 'uppercase' },
+   detailName: { ...display, fontSize: 26, lineHeight: 26, fontWeight: '800', color: GRAY[900], textTransform: 'uppercase' },
+   divider: { height: 1, backgroundColor: GRAY[200], marginVertical: 12 },
+   sectionTitle: { fontSize: 12, fontWeight: '800', color: GRAY[800], letterSpacing: 0.3, textTransform: 'uppercase' },
 
-   colorChipOption: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: GRAY[300], backgroundColor: '#FFFFFF' },
+   colorChipOption: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: GRAY[300], backgroundColor: '#FFFFFF' },
    colorChipOptionActive: { backgroundColor: GRAY[900], borderColor: GRAY[900] },
-   colorChipText: { fontSize: 13, fontWeight: '700', color: GRAY[800] },
+   colorChipText: { fontSize: 12, fontWeight: '700', color: GRAY[800] },
    colorChipTextActive: { color: '#FFFFFF' },
 
-   sizeSelectChip: { minWidth: 42, height: 38, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: GRAY[300], backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
+   sizeSelectChip: { minWidth: 36, height: 32, paddingHorizontal: 10, borderRadius: 6, borderWidth: 1, borderColor: GRAY[300], backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
    sizeSelectChipDisabled: { backgroundColor: GRAY[100], borderColor: GRAY[200], opacity: 0.5 },
    sizeSelectChipActive: { backgroundColor: GRAY[900], borderColor: GRAY[900] },
-   sizeSelectText: { fontSize: 13, fontWeight: '800', color: GRAY[900] },
+   sizeSelectText: { fontSize: 12, fontWeight: '800', color: GRAY[900] },
    sizeSelectTextOff: { color: GRAY[400], textDecorationLine: 'line-through' },
    sizeSelectTextActive: { color: '#FFFFFF' },
 
-   quantityContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' },
-   qtyBtn: { width: 36, height: 36, borderRadius: 8, borderWidth: 1, borderColor: GRAY[300], justifyContent: 'center', alignItems: 'center', backgroundColor: GRAY[100] },
-   qtyText: { fontSize: 16, fontWeight: '800', color: GRAY[900], minWidth: 20, textAlign: 'center' },
-   qtyQuickBtn: { paddingHorizontal: 10, height: 36, borderRadius: 8, borderWidth: 1, borderColor: GRAY[300], backgroundColor: GRAY[100], justifyContent: 'center', alignItems: 'center' },
-   qtyQuickText: { fontSize: 12, fontWeight: '800', color: GRAY[800] },
-   qtyQuickBtnWholesale: { paddingHorizontal: 12, height: 36, borderRadius: 8, backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#10B981', justifyContent: 'center', alignItems: 'center' },
-   qtyQuickTextWholesale: { fontSize: 12, fontWeight: '800', color: '#047857' },
+   quantityContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' },
+   qtyBtn: { width: 32, height: 32, borderRadius: 6, borderWidth: 1, borderColor: GRAY[300], justifyContent: 'center', alignItems: 'center', backgroundColor: GRAY[100] },
+   qtyText: { fontSize: 14, fontWeight: '800', color: GRAY[900], minWidth: 20, textAlign: 'center' },
+   qtyQuickBtnWholesale: { paddingHorizontal: 10, height: 32, borderRadius: 6, backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#10B981', justifyContent: 'center', alignItems: 'center' },
+   qtyQuickTextWholesale: { fontSize: 11, fontWeight: '800', color: '#047857' },
 
-   detailFooter: { padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: GRAY[200] },
-   waMain: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, height: 50, backgroundColor: GRAY[900], borderRadius: 10 },
+   detailFooter: { padding: 14, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: GRAY[200] },
+   waMain: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, height: 46, backgroundColor: GRAY[900], borderRadius: 8 },
 
    cartItemRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: GRAY[100], padding: 12, borderRadius: 10, borderWidth: 1, borderColor: GRAY[200] },
    cartItemImg: { width: 56, height: 56, borderRadius: 6, backgroundColor: '#FFFFFF' },

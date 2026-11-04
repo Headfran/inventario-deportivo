@@ -73,6 +73,17 @@ const PRESET_COLORS = [
 const PRESET_SIZES_CLOTHING = ['S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL'];
 const PRESET_SIZES_SHOES = ['36', '37', '38', '39', '40', '41', '42', '43', '44', '45'];
 
+// Función inteligente para calcular luminancia y saber si un color es claro u oscuro
+const isLightColor = (hexColor: string): boolean => {
+   if (!hexColor || !hexColor.startsWith('#')) return false;
+   const hex = hexColor.replace('#', '');
+   const r = parseInt(hex.substring(0, 2), 16) || 0;
+   const g = parseInt(hex.substring(2, 4), 16) || 0;
+   const b = parseInt(hex.substring(4, 6), 16) || 0;
+   const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+   return yiq >= 180;
+};
+
 const normalizeVariants = (rawVariants?: any[]): ProductVariant[] => {
    if (!rawVariants || rawVariants.length === 0) {
       return [{
@@ -405,7 +416,8 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
          <ScrollView
             ref={formScrollRef}
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator={true}
+            persistentScrollbar={true}
             keyboardShouldPersistTaps="handled"
          >
             {/* CÓDIGO + NOMBRE */}
@@ -458,9 +470,6 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
                   <View style={styles.priceLabelRow}>
                      <Package size={12} color="#10B981" />
                      <Text style={[styles.label, { color: '#059669' }]}>PRECIO MAYOR ($)</Text>
-                     <View style={styles.wholesaleBadge}>
-                        <Text style={styles.wholesaleBadgeText}>12+ uds</Text>
-                     </View>
                   </View>
                   <TextInput
                      style={[
@@ -631,78 +640,105 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
 
                {variants.map((variant, colorIdx) => {
                   const sizesList = variant.sizes || [];
+                  const cardBg = variant.colorHex || '#FFFFFF';
+                  const isLight = isLightColor(cardBg);
+                  
+                  // Coherencia visual adaptada al color seleccionado
+                  const dynamicTextColor = isLight ? '#121214' : '#FFFFFF';
+                  const dynamicMutedColor = isLight ? 'rgba(18,18,20,0.65)' : 'rgba(255,255,255,0.75)';
+                  const dynamicInputBg = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.25)';
+                  const dynamicBorderColor = isLight ? 'rgba(18,18,20,0.2)' : 'rgba(255,255,255,0.25)';
+                  const dynamicChipBg = isLight ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.2)';
+
                   return (
-                     <View key={variant.id || colorIdx} style={styles.colorCard}>
+                     <View 
+                        key={variant.id || colorIdx} 
+                        style={[styles.colorCard, { backgroundColor: cardBg, borderColor: dynamicBorderColor }]}
+                     >
                         <View style={styles.colorHeader}>
-                           <Text style={styles.colorHeaderTitle}>
+                           <Text style={[styles.colorHeaderTitle, { color: dynamicMutedColor }]}>
                               Color #{colorIdx + 1}:{' '}
-                              <Text style={{ color: T.ink }}>{variant.color || 'Sin nombre'}</Text>
+                              <Text style={{ color: dynamicTextColor, fontWeight: '800' }}>
+                                 {variant.color || 'Sin nombre'}
+                              </Text>
                            </Text>
                            <Pressable
                               style={styles.removeColorBtn}
                               onPress={() => handleRemoveColorGroup(colorIdx)}
                            >
-                              <Trash2 size={13} color="#EF4444" />
-                              <Text style={styles.removeColorText}>Eliminar</Text>
+                              <Trash2 size={13} color={isLight ? '#EF4444' : '#FCA5A5'} />
+                              <Text style={[styles.removeColorText, { color: isLight ? '#EF4444' : '#FCA5A5' }]}>Eliminar</Text>
                            </Pressable>
                         </View>
 
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 6 }}>
+                        {/* Paleta compacta de colores (círculos más pequeños y ordenados en filas ajustadas) */}
+                        <View style={styles.colorPaletteGrid}>
                            {PRESET_COLORS.map((c) => {
                               const isActive = variant.color === c.name;
-                              const checkColor = ['#ffffff', '#d1d5db', '#d4b895', '#20c997', '#eab308']
-                                 .includes(c.hex.toLowerCase())
-                                 ? '#000'
-                                 : '#fff';
+                              const cLight = isLightColor(c.hex);
+                              const iconColor = cLight ? '#121214' : '#FFFFFF';
+
                               return (
                                  <Pressable
                                     key={c.name}
                                     style={[
-                                       styles.colorBadge,
+                                       styles.colorCircle,
                                        { backgroundColor: c.hex },
-                                       isActive && styles.colorBadgeActive,
+                                       isActive && styles.colorCircleSelected,
+                                       c.hex.toLowerCase() === '#ffffff' && styles.whiteBorderFix,
                                     ]}
                                     onPress={() => handleSetColorHex(colorIdx, c.name, c.hex)}
                                  >
-                                    {isActive && <Check size={14} color={checkColor} />}
+                                    {isActive && (
+                                       <Check size={12} color={iconColor} strokeWidth={3} />
+                                    )}
                                  </Pressable>
                               );
                            })}
-                        </ScrollView>
+                        </View>
 
                         <TextInput
-                           style={styles.colorInputCustom}
-                           placeholder="O escribe un color (ej. Azul Turquesa)"
-                           placeholderTextColor={T.inkMute}
+                           style={[styles.colorInputCustom, { backgroundColor: dynamicInputBg, color: dynamicTextColor, borderColor: dynamicBorderColor }]}
+                           placeholder="O escribe un color personalizado..."
+                           placeholderTextColor={dynamicMutedColor}
                            value={variant.color}
                            onChangeText={(v) => handleUpdateColorName(colorIdx, v)}
                         />
 
-                        <Text style={styles.subLabel}>Tallas disponibles:</Text>
+                        <Text style={[styles.subLabel, { color: dynamicMutedColor }]}>Tallas disponibles:</Text>
                         <View style={styles.sizeChipsGrid}>
                            {availableSizes.map((sz) => {
                               const active = sizesList.find((s) => s.size === sz);
                               return (
                                  <Pressable
                                     key={sz}
-                                    style={[styles.sizeChip, active && styles.sizeChipActive]}
+                                    style={[
+                                       styles.sizeChip, 
+                                       { backgroundColor: dynamicChipBg, borderColor: dynamicBorderColor },
+                                       active && { backgroundColor: dynamicTextColor, borderColor: dynamicTextColor }
+                                    ]}
                                     onPress={() => handleToggleSize(colorIdx, sz)}
                                  >
-                                    <Text style={[styles.sizeChipText, active && styles.sizeChipTextActive]}>{sz}</Text>
+                                    <Text style={[styles.sizeChipText, { color: dynamicTextColor }, active && { color: cardBg }]}>
+                                       {sz}
+                                    </Text>
                                  </Pressable>
                               );
                            })}
                         </View>
 
                         {sizesList.length > 0 && (
-                           <View style={styles.stockGrid}>
-                              <Text style={styles.subLabel}>Stock por talla:</Text>
+                           <View style={[styles.stockGrid, { borderTopColor: dynamicBorderColor }]}>
+                              <Text style={[styles.subLabel, { color: dynamicMutedColor }]}>Stock por talla:</Text>
                               <View style={styles.stockRow}>
                                  {sizesList.map((s) => (
                                     <View key={s.size} style={styles.stockBox}>
-                                       <Text style={styles.stockSizeLabel}>{s.size}</Text>
+                                       <Text style={[styles.stockSizeLabel, { color: dynamicTextColor }]}>{s.size}</Text>
                                        <TextInput
-                                          style={styles.stockInput}
+                                          style={[
+                                             styles.stockInput, 
+                                             { backgroundColor: dynamicInputBg, color: dynamicTextColor, borderColor: dynamicBorderColor }
+                                          ]}
                                           value={String(s.stock)}
                                           keyboardType="number-pad"
                                           onChangeText={(v) => handleUpdateStock(colorIdx, s.size, v)}
@@ -878,62 +914,84 @@ const styles = StyleSheet.create({
    addSmallBtnText: { fontSize: 11, fontWeight: '700', color: T.onSolid },
 
    colorCard: {
-      borderWidth: 1, borderColor: T.line, borderRadius: 8,
-      padding: 10, backgroundColor: T.bg, gap: 6,
+      borderWidth: 1,
+      borderRadius: 10,
+      padding: 12,
+      gap: 10,
+      shadowColor: '#000',
+      shadowOpacity: 0.08,
+      shadowRadius: 3,
+      elevation: 2,
    },
    colorHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-   colorHeaderTitle: { fontSize: 12, fontWeight: '700', color: T.inkMute },
+   colorHeaderTitle: { fontSize: 12, fontWeight: '700' },
    removeColorBtn: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-   removeColorText: { fontSize: 11, fontWeight: '600', color: '#EF4444' },
+   removeColorText: { fontSize: 11, fontWeight: '600' },
 
-   colorBadge: {
-      width: 32, height: 32, borderRadius: 16,
-      borderWidth: 1, borderColor: 'rgba(0,0,0,0.2)',
-      alignItems: 'center', justifyContent: 'center',
+   // Cuadrícula compacta para que los círculos ocupen menos espacio a lo ancho (aprox 8 por fila)
+   colorPaletteGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      alignItems: 'center',
+      marginVertical: 2,
+      maxWidth: 240, 
    },
-   colorBadgeActive: { borderWidth: 3, borderColor: T.ink },
+   colorCircle: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      justifyContent: 'center',
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOpacity: 0.15,
+      shadowRadius: 1,
+      elevation: 1,
+   },
+   colorCircleSelected: {
+      borderWidth: 2.5,
+      borderColor: '#FFFFFF',
+      transform: [{ scale: 1.15 }],
+   },
+   whiteBorderFix: {
+      borderWidth: 1,
+      borderColor: 'rgba(0,0,0,0.25)',
+   },
 
    colorInputCustom: {
-      height: 38,
-      backgroundColor: T.surface,
+      height: 36,
       borderWidth: 1,
-      borderColor: T.line,
       borderRadius: 6,
       paddingHorizontal: 10,
       paddingVertical: 0,
-      fontSize: 13,
-      color: T.ink,
+      fontSize: 12,
       textAlignVertical: 'center',
+      marginTop: 2,
    },
 
-   subLabel: { fontSize: 11, fontWeight: '700', color: T.inkMute, textTransform: 'uppercase', marginTop: 4 },
+   subLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginTop: 2 },
 
-   sizeChipsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+   sizeChipsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
    sizeChip: {
-      minWidth: 44, paddingVertical: 6, paddingHorizontal: 10,
-      borderRadius: 6, borderWidth: 1, borderColor: T.line, backgroundColor: T.surface,
+      minWidth: 38, paddingVertical: 5, paddingHorizontal: 8,
+      borderRadius: 6, borderWidth: 1,
       alignItems: 'center',
    },
-   sizeChipActive: { backgroundColor: T.solid, borderColor: T.solid },
-   sizeChipText: { fontSize: 12, fontWeight: '700', color: T.ink },
-   sizeChipTextActive: { color: T.onSolid },
+   sizeChipText: { fontSize: 11, fontWeight: '700' },
 
-   stockGrid: { marginTop: 6, borderTopWidth: 1, borderTopColor: T.line, paddingTop: 6 },
+   stockGrid: { marginTop: 4, borderTopWidth: 1, paddingTop: 6 },
    stockRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-   stockBox: { width: 54, alignItems: 'center' },
-   stockSizeLabel: { fontSize: 10, fontWeight: '800', color: T.inkSoft, marginBottom: 3 },
+   stockBox: { width: 48, alignItems: 'center' },
+   stockSizeLabel: { fontSize: 10, fontWeight: '800', marginBottom: 2 },
    stockInput: {
       width: '100%',
-      height: 32,
-      backgroundColor: T.surface,
+      height: 30,
       borderWidth: 1,
-      borderColor: T.line,
       borderRadius: 6,
       textAlign: 'center',
       textAlignVertical: 'center',
-      fontSize: 13,
+      fontSize: 12,
       fontWeight: '800',
-      color: T.ink,
       padding: 0,
    },
 
