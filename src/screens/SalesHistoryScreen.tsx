@@ -24,6 +24,8 @@ import {
    Filter,
    DollarSign,
    Banknote,
+   Pencil,
+   TrendingUp,
 } from 'lucide-react-native';
 import {
    Sale,
@@ -33,6 +35,8 @@ import {
 } from '../services/salesHistoryService';
 import { DateRangePickerModal } from '../components/DateRangePickerModal';
 import { showAlert } from '../utils/alert';
+import { EditSaleModal } from '../components/EditSaleModal';
+import { calculateSaleProfit } from '../services/salesHistoryService';
 import { MONO as T, display } from '../design';
 
 const safeFixed = (val: any, decimals: number = 2): string => {
@@ -75,7 +79,11 @@ const FilterChip = ({
    </P>
 );
 
-export const SalesHistoryScreen: React.FC = () => {
+interface SalesHistoryScreenProps {
+   isOwner?: boolean;
+}
+
+export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner = false }) => {
    const { width } = useWindowDimensions();
    const mobile = width < 600;
 
@@ -95,6 +103,8 @@ export const SalesHistoryScreen: React.FC = () => {
    const [isVoidModalOpen, setIsVoidModalOpen] = useState(false);
    const [voidReason, setVoidReason] = useState('');
    const [isProcessing, setIsProcessing] = useState(false);
+
+   const [editingSale, setEditingSale] = useState<Sale | null>(null);
 
    useEffect(() => {
       const unsub = subscribeToSales(setSales);
@@ -155,6 +165,25 @@ export const SalesHistoryScreen: React.FC = () => {
          .filter((s) => s.status !== 'voided')
          .reduce((sum, sale) => sum + (Number(sale.total) || 0), 0);
    }, [filteredSales]);
+
+   const profitMap = useMemo(() => {
+      const map = new Map<string, { profit: number; determined: boolean }>();
+      filteredSales.forEach((s) => {
+         if (s.status === 'voided') return;
+         map.set(s.id, calculateSaleProfit(s));
+      });
+      return map;
+   }, [filteredSales]);
+
+   const totalProfit = useMemo(() => {
+      let total = 0;
+      let allDetermined = true;
+      profitMap.forEach((v) => {
+         total += v.profit;
+         if (!v.determined) allDetermined = false;
+      });
+      return { total, allDetermined };
+   }, [profitMap]);
 
    const activeSalesCount = filteredSales.filter((s) => s.status !== 'voided').length;
 
@@ -290,6 +319,18 @@ export const SalesHistoryScreen: React.FC = () => {
                   <Text style={styles.metricLabel}>Ingresos · {activeSalesCount}</Text>
                   <Text style={styles.metricValue}>${safeFixed(totalRevenue)}</Text>
                </View>
+               {isOwner && totalProfit.total !== 0 && (
+                  <View style={[styles.metricBox, styles.metricBoxProfit]}>
+                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <TrendingUp size={10} color="#A7F3D0" />
+                        <Text style={styles.metricLabel}>Ganancia</Text>
+                     </View>
+                     <Text style={[styles.metricValue, { color: '#A7F3D0' }]}>
+                        ${safeFixed(totalProfit.total)}
+                        {!totalProfit.allDetermined && <Text style={{ fontSize: 12 }}>*</Text>}
+                     </Text>
+                  </View>
+               )}
             </View>
          </View>
 
@@ -412,9 +453,19 @@ export const SalesHistoryScreen: React.FC = () => {
                            <Text style={[styles.saleTotal, isVoided && styles.textMuted]}>
                               ${safeFixed(item.total)}
                            </Text>
+                           {isOwner && !isVoided && profitMap.get(item.id) && (
+                              <Text style={styles.saleProfitSmall}>
+                                 Ganancia: ${safeFixed(profitMap.get(item.id)!.profit)}
+                                 {!profitMap.get(item.id)!.determined && '*'}
+                              </Text>
+                           )}
                            {isVoided ? (
                               <View style={styles.statusPillVoided}>
                                  <Text style={styles.statusPillVoidedText}>ANULADA</Text>
+                              </View>
+                           ) : item.editHistory && item.editHistory.length > 0 ? (
+                              <View style={styles.statusPillEdited}>
+                                 <Text style={styles.statusPillEditedText}>EDITADA</Text>
                               </View>
                            ) : (
                               <View style={styles.statusPillCompleted}>
@@ -422,6 +473,7 @@ export const SalesHistoryScreen: React.FC = () => {
                               </View>
                            )}
                         </View>
+
                      </View>
 
                      <View style={styles.saleDetailsDivider} />
@@ -576,6 +628,28 @@ export const SalesHistoryScreen: React.FC = () => {
                               </Text>
                            </View>
                         </View>
+
+                        {selectedSale.editHistory && selectedSale.editHistory.length > 0 && (
+                           <View style={styles.editHistoryBox}>
+                              <Text style={styles.editHistoryTitle}>Historial de Ediciones ({selectedSale.editHistory.length})</Text>
+                              {selectedSale.editHistory.map((entry, idx) => (
+                                 <View key={idx} style={styles.editHistoryRow}>
+                                    <View style={{ flex: 1, minWidth: 0 }}>
+                                       <Text style={styles.editHistoryReason}>{entry.reason || 'Sin motivo registrado'}</Text>
+                                       <Text style={styles.editHistoryMeta}>
+                                          {formatDateTime(entry.editedAt, 'short')} · ${entry.previousTotal.toFixed(2)} → ${entry.newTotal.toFixed(2)}
+                                       </Text>
+                                    </View>
+                                    {isOwner && entry.refundAmount > 0 && (
+                                       <Text style={styles.editHistoryRefund}>-${entry.refundAmount.toFixed(2)}</Text>
+                                    )}
+                                    {isOwner && entry.chargeAmount > 0 && (
+                                       <Text style={styles.editHistoryCharge}>+${entry.chargeAmount.toFixed(2)}</Text>
+                                    )}
+                                 </View>
+                              ))}
+                           </View>
+                        )}
                      </ScrollView>
 
                      <View style={styles.modalFooter}>
@@ -588,16 +662,29 @@ export const SalesHistoryScreen: React.FC = () => {
                            <Text style={styles.actionBtnPrimaryText}>WhatsApp</Text>
                         </P>
                         {selectedSale.status !== 'voided' && (
-                           <P style={styles.actionBtnDanger} onPress={() => setIsVoidModalOpen(true)}>
-                              <XCircle size={16} color="#DC2626" />
-                              <Text style={styles.actionBtnDangerText}>Anular</Text>
-                           </P>
+                           <>
+                              <P style={styles.actionBtnEdit} onPress={() => setEditingSale(selectedSale)}>
+                                 <Pencil size={16} color={T.ink} />
+                                 <Text style={styles.actionBtnEditText}>Editar</Text>
+                              </P>
+                              <P style={styles.actionBtnDanger} onPress={() => setIsVoidModalOpen(true)}>
+                                 <XCircle size={16} color="#DC2626" />
+                                 <Text style={styles.actionBtnDangerText}>Anular</Text>
+                              </P>
+                           </>
                         )}
                      </View>
                   </View>
                </View>
             )}
          </Modal>
+
+         <EditSaleModal
+            sale={editingSale}
+            visible={!!editingSale}
+            onClose={() => setEditingSale(null)}
+            onSaved={() => setSelectedSale(null)}
+         />
 
          {/* MODAL ANULACIÓN */}
          <Modal visible={isVoidModalOpen} transparent animationType="fade">
@@ -1115,4 +1202,27 @@ const styles = StyleSheet.create({
       justifyContent: 'center',
    },
    confirmVoidText: { fontSize: 13, fontWeight: '800', color: T.onSolid },
+
+   // Métrica ganancia
+   metricBoxProfit: { backgroundColor: 'rgba(16,185,129,0.2)', borderColor: '#10B981' },
+
+   // Ganancia por venta
+   saleProfitSmall: { fontSize: 10, fontWeight: '700', color: '#047857', marginTop: 2 },
+
+   // Status EDITADA
+   statusPillEdited: { marginTop: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, borderWidth: 1, borderColor: '#FDE68A', backgroundColor: '#FFFBEB' },
+   statusPillEditedText: { fontSize: 9, fontWeight: '800', color: '#B45309', letterSpacing: 0.5 },
+
+   // Botón Editar
+   actionBtnEdit: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 44, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: T.ink, backgroundColor: T.bg },
+   actionBtnEditText: { fontSize: 13, fontWeight: '800', color: T.ink },
+
+   // Historial de ediciones
+   editHistoryBox: { marginTop: 12, backgroundColor: T.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: T.line },
+   editHistoryTitle: { fontSize: 11, fontWeight: '800', color: T.inkSoft, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
+   editHistoryRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: T.line },
+   editHistoryReason: { fontSize: 12, fontWeight: '700', color: T.ink },
+   editHistoryMeta: { fontSize: 10, color: T.inkMute, marginTop: 2 },
+   editHistoryRefund: { fontSize: 13, fontWeight: '800', color: '#DC2626' },
+   editHistoryCharge: { fontSize: 13, fontWeight: '800', color: '#047857' },
 });

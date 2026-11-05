@@ -10,7 +10,23 @@ import {
    useWindowDimensions,
    Platform,
 } from 'react-native';
-import { Package, MapPin, Lock, LogOut, ShoppingBag, BarChart3, Bell, Menu, X, Receipt, Clock, Users, Wifi, WifiOff, RefreshCw } from 'lucide-react-native';
+import {
+   Package,
+   MapPin,
+   Lock,
+   LogOut,
+   ShoppingBag,
+   BarChart3,
+   Bell,
+   Menu,
+   X,
+   Receipt,
+   Clock,
+   Users,
+   Wifi,
+   WifiOff,
+   RefreshCw,
+} from 'lucide-react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { LoginScreen } from './src/screens/LoginScreen';
@@ -23,20 +39,49 @@ import { AnalyticsDashboardScreen } from './src/screens/AnalyticsDashboardScreen
 import { SalesHistoryScreen } from './src/screens/SalesHistoryScreen';
 import { LayawayScreen } from './src/screens/LayawayScreen';
 import { SellerPerformanceScreen } from './src/screens/SellerPerformanceScreen';
-import { requestNotificationPermission, listenForegroundMessages } from './src/services/notificationService';
+import {
+   requestNotificationPermission,
+   listenForegroundMessages,
+} from './src/services/notificationService';
 import { getPendingSales, syncPendingSalesWithFirestore } from './src/services/offlineSyncService';
 import { showConfirm, showAlert } from './src/utils/alert';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { MONO as T, display, ease, nd, reduced } from './src/design';
 
-// Navegación persistente
+// ==========================================
+// Tipos y navegación
+// ==========================================
+type StaffTab = 'inventory' | 'shelves' | 'sales' | 'layaways' | 'history' | 'sellers' | 'analytics';
+
+const NAV: { id: StaffTab; label: string; Icon: any }[] = [
+   { id: 'inventory', label: 'Inventario', Icon: Package },
+   { id: 'shelves', label: 'Mapa Estantes', Icon: MapPin },
+   { id: 'sales', label: 'Registro de Ventas', Icon: ShoppingBag },
+   { id: 'history', label: 'Historial', Icon: Receipt },
+   { id: 'sellers', label: 'Vendedores', Icon: Users },
+   { id: 'analytics', label: 'Analíticas', Icon: BarChart3 },
+];
+
+// Tabs restringidas solo al dueño
+const OWNER_ONLY_TABS: StaffTab[] = ['sellers', 'analytics'];
+
+// ==========================================
+// Persistencia (localStorage)
+// ==========================================
 const NAV_STORAGE_KEY = 'jdstore.activeTab.v1';
 
 const getStoredTab = (): StaffTab | null => {
    if (typeof window === 'undefined' || !window.localStorage) return null;
    const saved = window.localStorage.getItem(NAV_STORAGE_KEY);
-   // Validación: solo aceptamos tabs que existan en NAV
-   const validTabs: StaffTab[] = ['inventory', 'shelves', 'sales', 'layaways', 'history', 'sellers', 'analytics'];
+   const validTabs: StaffTab[] = [
+      'inventory',
+      'shelves',
+      'sales',
+      'layaways',
+      'history',
+      'sellers',
+      'analytics',
+   ];
    return saved && validTabs.includes(saved as StaffTab) ? (saved as StaffTab) : null;
 };
 
@@ -59,7 +104,9 @@ const storePortal = (open: boolean) => {
    }
 };
 
-// Persistencia de Sesión
+// ==========================================
+// Persistencia de sesión desbloqueada
+// ==========================================
 const UNLOCK_STORAGE_KEY = 'jdstore.unlockedAt.v1';
 const UNLOCK_TTL_MS = 8 * 60 * 60 * 1000;
 
@@ -83,51 +130,51 @@ const clearSessionUnlocked = () => {
    }
 };
 
-type StaffTab = 'inventory' | 'shelves' | 'sales' | 'layaways' | 'history' | 'sellers' | 'analytics';
-
 // ==========================================
-// 7 opciones del menú lateral (de tu rama)
-// ==========================================
-const NAV: { id: StaffTab; label: string; Icon: any }[] = [
-   { id: 'inventory', label: 'Inventario', Icon: Package },
-   { id: 'shelves', label: 'Mapa Estantes', Icon: MapPin },
-   { id: 'sales', label: 'Registro de Ventas', Icon: ShoppingBag },
-
-   { id: 'history', label: 'Historial', Icon: Receipt },
-   { id: 'sellers', label: 'Vendedores', Icon: Users },
-   { id: 'analytics', label: 'Analíticas', Icon: BarChart3 },
-];
-
 // Botón con respuesta al presionar
+// ==========================================
 const P = ({ style, ...rest }: any) => (
    <Pressable {...rest} style={({ pressed }: any) => [style, pressed && styles.pressed]} />
 );
 
+// ==========================================
+// MainApp
+// ==========================================
 const MainApp = () => {
    const {
       user,
+      appUser,
       loading,
       isLocked,
       hasPin,
+      isOwner,
       unlockWithPin,
       setupPin,
       logout,
-      lockSession
+      lockSession,
    } = useAuth();
 
-   const [showStaffPortal, setShowStaffPortal] = useState<boolean>(() => {
-      return getStoredPortal();
-   });
-   const [activeTab, setActiveTab] = useState<StaffTab>(() => {
-      return getStoredTab() ?? 'inventory';
-   });
+   const [showStaffPortal, setShowStaffPortal] = useState<boolean>(() => getStoredPortal());
+   const [activeTab, setActiveTab] = useState<StaffTab>(() => getStoredTab() ?? 'inventory');
    const [notificationsEnabled, setNotificationsEnabled] = useState(false);
 
-   // ---- Offline sync (backend de tu rama) ----
+   // ---- Offline sync ----
    const [isOnline, setIsOnline] = useState<boolean>(true);
    const [pendingCount, setPendingCount] = useState<number>(0);
    const [isSyncing, setIsSyncing] = useState<boolean>(false);
    const [sessionUnlocked, setSessionUnlocked] = useState<boolean>(() => getStoredSession());
+
+   // ---- Filtrado por rol ----
+   const visibleNav = NAV.filter((n) => isOwner || !OWNER_ONLY_TABS.includes(n.id));
+   const safeActiveTab: StaffTab =
+      !isOwner && OWNER_ONLY_TABS.includes(activeTab) ? 'inventory' : activeTab;
+
+   // Si el rol cambia y el tab actual queda inválido, lo corregimos
+   useEffect(() => {
+      if (safeActiveTab !== activeTab) {
+         setActiveTab(safeActiveTab);
+      }
+   }, [safeActiveTab, activeTab]);
 
    const checkPendingSales = async () => {
       try {
@@ -148,8 +195,16 @@ const MainApp = () => {
       setIsSyncing(false);
       await checkPendingSales();
 
-      if (result.success > 0) showAlert('Sincronización Completada', `Se sincronizaron ${result.success} ventas con éxito.`);
-      else if (result.failed > 0) showAlert('Sincronización Parcial', `${result.failed} ventas no pudieron enviarse.`);
+      if (result.success > 0)
+         showAlert(
+            'Sincronización Completada',
+            `Se sincronizaron ${result.success} ventas con éxito.`
+         );
+      else if (result.failed > 0)
+         showAlert(
+            'Sincronización Parcial',
+            `${result.failed} ventas no pudieron enviarse.`
+         );
       else showAlert('Todo al Día', 'No hay ventas pendientes por sincronizar.');
    };
 
@@ -162,7 +217,10 @@ const MainApp = () => {
             setIsOnline(true);
             const result = await syncPendingSalesWithFirestore();
             if (result.success > 0) {
-               showAlert('🔄 Sincronización Automática', `Se han enviado ${result.success} ventas pendientes.`);
+               showAlert(
+                  '🔄 Sincronización Automática',
+                  `Se han enviado ${result.success} ventas pendientes.`
+               );
             }
             checkPendingSales();
          };
@@ -179,7 +237,7 @@ const MainApp = () => {
       }
    }, []);
 
-   // Solicitar permisos de notificación FCM al ingresar
+   // Notificaciones FCM
    useEffect(() => {
       if (user && !isLocked) {
          requestNotificationPermission(user.uid).then((token) => {
@@ -201,12 +259,14 @@ const MainApp = () => {
       storePortal(showStaffPortal);
    }, [showStaffPortal]);
 
+   // Persistir tab activo (usando safeActiveTab)
    useEffect(() => {
       if (user && hasPin && !isLocked) {
-         storeTab(activeTab);
+         storeTab(safeActiveTab);
       }
-   }, [activeTab, user, hasPin, isLocked]);
+   }, [safeActiveTab, user, hasPin, isLocked]);
 
+   // Expiración de la sesión desbloqueada
    useEffect(() => {
       const check = () => {
          if (sessionUnlocked && !getStoredSession()) {
@@ -225,7 +285,7 @@ const MainApp = () => {
       };
    }, [sessionUnlocked]);
 
-   // ---- Solo diseño: menú lateral ----
+   // ---- Menú lateral ----
    const { width } = useWindowDimensions();
    const narrow = width < 520;
    const drawerW = Math.min(310, Math.round(width * (narrow ? 0.84 : 0.34)));
@@ -238,7 +298,12 @@ const MainApp = () => {
          menuAnim.setValue(1);
          return;
       }
-      Animated.timing(menuAnim, { toValue: 1, duration: 240, easing: ease, useNativeDriver: nd }).start();
+      Animated.timing(menuAnim, {
+         toValue: 1,
+         duration: 240,
+         easing: ease,
+         useNativeDriver: nd,
+      }).start();
    }, [menuOpen]);
 
    const openMenu = () => {
@@ -251,7 +316,12 @@ const MainApp = () => {
          setMenuOpen(false);
          return;
       }
-      Animated.timing(menuAnim, { toValue: 0, duration: 160, easing: ease, useNativeDriver: nd }).start(({ finished }) => {
+      Animated.timing(menuAnim, {
+         toValue: 0,
+         duration: 160,
+         easing: ease,
+         useNativeDriver: nd,
+      }).start(({ finished }) => {
          if (finished) setMenuOpen(false);
       });
    };
@@ -344,12 +414,12 @@ const MainApp = () => {
       );
    }
 
-   const current = NAV.find((n) => n.id === activeTab);
+   const current = NAV.find((n) => n.id === safeActiveTab);
 
    // 5. Panel Administrativo del Personal
    return (
       <SafeAreaView style={styles.container}>
-         {/* Barra Superior del Panel (banner negro) */}
+         {/* Barra Superior */}
          <View style={styles.topBar}>
             <P style={styles.iconBtn} onPress={openMenu} accessibilityLabel="Abrir menú">
                <Menu size={22} color={T.onBar} />
@@ -368,22 +438,39 @@ const MainApp = () => {
                         <Text style={styles.sectionPillText}>{current.label}</Text>
                      </View>
                   )}
+                  {!narrow && (
+                     <View style={styles.rolePill}>
+                        <Text style={styles.rolePillText}>
+                           {isOwner ? 'DUEÑO' : 'VENDEDOR'}
+                        </Text>
+                     </View>
+                  )}
                </View>
-               <Text style={styles.staffEmail} numberOfLines={1}>{user.email}</Text>
+               <Text style={styles.staffEmail} numberOfLines={1}>
+                  {user.email}
+               </Text>
             </View>
 
             <View style={styles.topActionsGroup}>
-               {/* Indicador Online/Offline */}
                {!narrow && (
                   <View style={isOnline ? styles.onlineChip : styles.offlineChip}>
-                     {isOnline ? <Wifi size={12} color={T.onBar} /> : <WifiOff size={12} color={T.onBar} />}
-                     <Text style={styles.connectionText}>{isOnline ? 'En Línea' : 'Offline'}</Text>
+                     {isOnline ? (
+                        <Wifi size={12} color={T.onBar} />
+                     ) : (
+                        <WifiOff size={12} color={T.onBar} />
+                     )}
+                     <Text style={styles.connectionText}>
+                        {isOnline ? 'En Línea' : 'Offline'}
+                     </Text>
                   </View>
                )}
 
-               {/* Botón de Sincronización (solo si hay pendientes) */}
                {pendingCount > 0 && (
-                  <P style={styles.syncBtn} onPress={handleManualSync} accessibilityLabel="Sincronizar ventas pendientes">
+                  <P
+                     style={styles.syncBtn}
+                     onPress={handleManualSync}
+                     accessibilityLabel="Sincronizar ventas pendientes"
+                  >
                      <RefreshCw size={13} color={T.onBar} />
                      {!narrow && (
                         <Text style={styles.syncBtnText}>
@@ -393,12 +480,20 @@ const MainApp = () => {
                   </P>
                )}
 
-               <P style={styles.lockButton} onPress={goCatalog} accessibilityLabel="Volver al catálogo">
+               <P
+                  style={styles.lockButton}
+                  onPress={goCatalog}
+                  accessibilityLabel="Volver al catálogo"
+               >
                   <Lock size={16} color={T.onBar} />
                   {!narrow && <Text style={styles.lockButtonText}>Ver Catálogo</Text>}
                </P>
 
-               <P style={styles.iconBtn} onPress={confirmLogout} accessibilityLabel="Cerrar Sesión">
+               <P
+                  style={styles.iconBtn}
+                  onPress={confirmLogout}
+                  accessibilityLabel="Cerrar Sesión"
+               >
                   <LogOut size={17} color={T.onBar} />
                </P>
             </View>
@@ -406,37 +501,65 @@ const MainApp = () => {
 
          {/* Renderizado de la Pantalla Activa */}
          <View style={styles.tabContent}>
-            {activeTab === 'inventory' && <InventoryListScreen />}
-            {activeTab === 'shelves' && <ShelfMapScreen />}
-            {activeTab === 'sales' && <SalesRegisterScreen isOnline={isOnline} />}
-            {activeTab === 'layaways' && (
+            {safeActiveTab === 'inventory' && <InventoryListScreen />}
+            {safeActiveTab === 'shelves' && <ShelfMapScreen />}
+            {safeActiveTab === 'sales' && <SalesRegisterScreen isOnline={isOnline} />}
+            {safeActiveTab === 'layaways' && (
                <LayawayScreen
                   currentSellerName={user?.email || 'Vendedor'}
                   currentSellerId={user?.uid}
                />
             )}
-            {activeTab === 'history' && <SalesHistoryScreen />}
-            {activeTab === 'sellers' && <SellerPerformanceScreen />}
-            {activeTab === 'analytics' && <AnalyticsDashboardScreen />}
+            {safeActiveTab === 'history' && <SalesHistoryScreen isOwner={isOwner} />}
+            {safeActiveTab === 'sellers' && isOwner && <SellerPerformanceScreen />}
+            {safeActiveTab === 'analytics' && isOwner && <AnalyticsDashboardScreen />}
          </View>
 
-         {/* Menú lateral desplegable */}
+         {/* Menú lateral */}
          <Modal visible={menuOpen} transparent animationType="none" onRequestClose={closeMenu}>
             <View style={styles.menuRoot}>
                <Animated.View style={[styles.backdrop, { opacity: menuAnim }]}>
-                  <Pressable style={StyleSheet.absoluteFill} onPress={closeMenu} accessibilityLabel="Cerrar menú" />
+                  <Pressable
+                     style={StyleSheet.absoluteFill}
+                     onPress={closeMenu}
+                     accessibilityLabel="Cerrar menú"
+                  />
                </Animated.View>
 
                <Animated.View
                   style={[
                      styles.drawer,
-                     { width: drawerW, transform: [{ translateX: menuAnim.interpolate({ inputRange: [0, 1], outputRange: [-drawerW, 0] }) }] },
+                     {
+                        width: drawerW,
+                        transform: [
+                           {
+                              translateX: menuAnim.interpolate({
+                                 inputRange: [0, 1],
+                                 outputRange: [-drawerW, 0],
+                              }),
+                           },
+                        ],
+                     },
                   ]}
                >
                   <View style={styles.drawerHead}>
                      <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.drawerTitle}>Panel del Personal</Text>
-                        <Text style={styles.staffEmail} numberOfLines={1}>{user.email}</Text>
+                        <Text style={styles.staffEmail} numberOfLines={1}>
+                           {user.email}
+                        </Text>
+                        <View style={styles.drawerRoleRow}>
+                           <View
+                              style={[
+                                 styles.rolePillDrawer,
+                                 isOwner ? styles.rolePillOwner : styles.rolePillSeller,
+                              ]}
+                           >
+                              <Text style={styles.rolePillDrawerText}>
+                                 {isOwner ? 'DUEÑO' : 'VENDEDOR'}
+                              </Text>
+                           </View>
+                        </View>
                      </View>
                      <P style={styles.iconBtn} onPress={closeMenu} accessibilityLabel="Cerrar menú">
                         <X size={20} color={T.onBar} />
@@ -444,8 +567,8 @@ const MainApp = () => {
                   </View>
 
                   <View style={styles.drawerItems}>
-                     {NAV.map(({ id, label, Icon }) => {
-                        const active = activeTab === id;
+                     {visibleNav.map(({ id, label, Icon }) => {
+                        const active = safeActiveTab === id;
                         return (
                            <P
                               key={id}
@@ -456,7 +579,9 @@ const MainApp = () => {
                               }}
                            >
                               <Icon size={24} color={active ? T.ink : T.onBar} />
-                              <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+                              <Text style={[styles.navText, active && styles.navTextActive]}>
+                                 {label}
+                              </Text>
                            </P>
                         );
                      })}
@@ -491,14 +616,21 @@ const MainApp = () => {
    );
 };
 
+// ==========================================
+// App raíz
+// ==========================================
 export default function App() {
    useEffect(() => {
       if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
          window.addEventListener('load', () => {
             navigator.serviceWorker
                .register('/firebase-messaging-sw.js')
-               .then((reg) => console.log('Service Worker registrado correctamente:', reg.scope))
-               .catch((err) => console.warn('Error al registrar Service Worker en inicio:', err));
+               .then((reg) =>
+                  console.log('Service Worker registrado correctamente:', reg.scope)
+               )
+               .catch((err) =>
+                  console.warn('Error al registrar Service Worker en inicio:', err)
+               );
          });
       }
    }, []);
@@ -514,6 +646,9 @@ export default function App() {
    );
 }
 
+// ==========================================
+// Estilos
+// ==========================================
 const line = 'rgba(255,255,255,0.3)';
 
 const styles = StyleSheet.create({
@@ -522,25 +657,100 @@ const styles = StyleSheet.create({
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
    // Banner negro
-   topBar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: T.bar },
-   iconBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: line, borderRadius: 10 },
+   topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      backgroundColor: T.bar,
+   },
+   iconBtn: {
+      width: 42,
+      height: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: line,
+      borderRadius: 10,
+   },
    staffInfoGroup: { flex: 1, minWidth: 0 },
    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-   staffTitle: { ...display, color: T.onBar, fontSize: 24, lineHeight: 24, fontWeight: '800', textTransform: 'uppercase' },
+   staffTitle: {
+      ...display,
+      color: T.onBar,
+      fontSize: 24,
+      lineHeight: 24,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+   },
    bellBadge: { backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 10, padding: 4 },
-   sectionPill: { borderWidth: 1, borderColor: line, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 2 },
+   sectionPill: {
+      borderWidth: 1,
+      borderColor: line,
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 2,
+   },
    sectionPillText: { color: T.onBar, fontSize: 12, fontWeight: '700' },
+   rolePill: {
+      borderWidth: 1,
+      borderColor: line,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      backgroundColor: 'rgba(255,255,255,0.08)',
+   },
+   rolePillText: { color: T.onBar, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
    staffEmail: { color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 },
    topActionsGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-   lockButton: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 42, paddingHorizontal: 14, borderWidth: 1, borderColor: line, borderRadius: 10 },
+   lockButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      height: 42,
+      paddingHorizontal: 14,
+      borderWidth: 1,
+      borderColor: line,
+      borderRadius: 10,
+   },
    lockButtonText: { color: T.onBar, fontSize: 13, fontWeight: '700' },
    tabContent: { flex: 1 },
 
-   // Indicadores Online/Offline (integrados con la estética de main)
-   onlineChip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 42, paddingHorizontal: 12, borderWidth: 1, borderColor: line, borderRadius: 10 },
-   offlineChip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 42, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(239,68,68,0.55)', borderRadius: 10, backgroundColor: 'rgba(239,68,68,0.15)' },
+   // Indicadores
+   onlineChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      height: 42,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: line,
+      borderRadius: 10,
+   },
+   offlineChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      height: 42,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: 'rgba(239,68,68,0.55)',
+      borderRadius: 10,
+      backgroundColor: 'rgba(239,68,68,0.15)',
+   },
    connectionText: { color: T.onBar, fontSize: 12, fontWeight: '700' },
-   syncBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 42, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(234,179,8,0.65)', borderRadius: 10, backgroundColor: 'rgba(234,179,8,0.18)' },
+   syncBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      height: 42,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: 'rgba(234,179,8,0.65)',
+      borderRadius: 10,
+      backgroundColor: 'rgba(234,179,8,0.18)',
+   },
    syncBtnText: { color: T.onBar, fontSize: 12, fontWeight: '700' },
 
    // Menú lateral
@@ -559,24 +769,74 @@ const styles = StyleSheet.create({
       borderRightWidth: 1,
       borderRightColor: '#4B5056',
    },
-
-   drawerHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.14)' },
-
-   drawerTitle: { ...display, color: '#F5F6F7', fontSize: 18, lineHeight: 22, fontWeight: '800', textTransform: 'uppercase' },
+   drawerHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 14,
+      paddingBottom: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(255,255,255,0.14)',
+   },
+   drawerTitle: {
+      ...display,
+      color: '#F5F6F7',
+      fontSize: 18,
+      lineHeight: 22,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+   },
+   drawerRoleRow: { flexDirection: 'row', marginTop: 4 },
+   rolePillDrawer: {
+      borderWidth: 1,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+   },
+   rolePillOwner: { borderColor: '#FCD34D', backgroundColor: 'rgba(252,211,77,0.2)' },
+   rolePillSeller: { borderColor: 'rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.08)' },
+   rolePillDrawerText: { color: '#F5F6F7', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
 
    drawerItems: { flex: 1, paddingTop: 14, paddingHorizontal: 10, gap: 5 },
-
-   navItem: { flexDirection: 'row', alignItems: 'center', gap: 11, minHeight: 48, paddingVertical: 10, paddingHorizontal: 13, borderRadius: 10 },
-
+   navItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      minHeight: 48,
+      paddingVertical: 10,
+      paddingHorizontal: 13,
+      borderRadius: 10,
+   },
    navItemActive: { backgroundColor: '#E5E7EB', borderWidth: 1, borderColor: '#FFFFFF' },
-
-   navText: { ...display, color: '#F1F3F5', fontSize: 16, lineHeight: 20, fontWeight: '700', textTransform: 'uppercase', flexShrink: 1 },
-
+   navText: {
+      ...display,
+      color: '#F1F3F5',
+      fontSize: 16,
+      lineHeight: 20,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      flexShrink: 1,
+   },
    navTextActive: { color: '#25292D' },
 
-   drawerFooter: { paddingHorizontal: 10, gap: 7, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.12)' },
-
-   footerBtn: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 42, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)' },
-
+   drawerFooter: {
+      paddingHorizontal: 10,
+      gap: 7,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: 'rgba(255,255,255,0.12)',
+   },
+   footerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      minHeight: 42,
+      paddingVertical: 9,
+      paddingHorizontal: 13,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.22)',
+      borderRadius: 10,
+      backgroundColor: 'rgba(255,255,255,0.04)',
+   },
    footerBtnText: { color: '#F1F3F5', fontSize: 12, fontWeight: '700' },
 });

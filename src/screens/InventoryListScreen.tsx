@@ -135,9 +135,16 @@ const ProductListItem = memo(({
                   )}
                </Pressable>
 
-               <Text style={[styles.price, isMobile && styles.priceMobile]}>
-                  ${Number(item.price).toFixed(2)}
-               </Text>
+               <View style={[styles.priceBlock, isMobile && styles.priceBlockMobile]}>
+                  <Text style={[styles.price, isMobile && styles.priceMobile]}>
+                     ${Number(item.price).toFixed(2)}
+                  </Text>
+                  {item.wholesalePrice && item.wholesalePrice > 0 && (
+                     <Text style={styles.wholesaleSmall}>
+                        May. ${Number(item.wholesalePrice).toFixed(2)}
+                     </Text>
+                  )}
+               </View>
             </View>
 
             <View style={[styles.actions, isMobile && styles.actionsMobile]}>
@@ -636,12 +643,41 @@ const styles = StyleSheet.create({
    stockUnit: { fontSize: 14, fontWeight: '600', color: T.inkMute },
    stockEmptyText: { fontSize: 13, fontWeight: '800', color: T.inkMute, lineHeight: 34 },
    stockEmptyTextMobile: { fontSize: 12, lineHeight: 26 },
-   price: { ...display, fontSize: 28, lineHeight: 28, fontWeight: '800', color: T.ink, minWidth: 84, textAlign: 'right' },
-   priceMobile: { flex: 1, minWidth: 0, fontSize: 24, lineHeight: 26, textAlign: 'right', paddingRight: 4 },
+   price: {
+      ...display,
+      fontSize: 22,
+      lineHeight: 22,
+      fontWeight: '800',
+      color: T.ink,
+      textAlign: 'right',
+   },
+   priceMobile: {
+      fontSize: 20,
+      lineHeight: 20,
+      textAlign: 'right',
+   },
    actions: { flexDirection: 'row', gap: 6 },
    actionsMobile: { width: '100%', gap: 8 },
    actionBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: T.line, borderRadius: 10 },
    actionBtnMobile: { flex: 1, height: 44 },
+   priceBlock: {
+      minWidth: 96,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+      gap: 2,
+   },
+   priceBlockMobile: {
+      flex: 1,
+      minWidth: 0,
+      alignItems: 'flex-end',
+      paddingRight: 4,
+   },
+   wholesaleSmall: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: '#047857',
+      textAlign: 'right',
+   },
 
    // Paginación
    paginationBar: { borderTopWidth: 1, borderTopColor: T.line, paddingVertical: 10, backgroundColor: T.bg },

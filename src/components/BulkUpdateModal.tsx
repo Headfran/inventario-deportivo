@@ -20,12 +20,27 @@ export const BulkUpdateModal: React.FC<Props> = ({ selectedProducts, visible, on
    const [loading, setLoading] = useState(false);
    const [mode, setMode] = useState<'price' | 'stock'>('price');
    const [newPrice, setNewPrice] = useState('');
-   const [variantColor, setVariantColor] = useState('');
+   const [newWholesalePrice, setNewWholesalePrice] = useState('');
+   const [newBolivarPrice, setNewBolivarPrice] = useState('');
+   const [newBolivarWholesalePrice, setNewBolivarWholesalePrice] = useState('');
+   const [newPurchasePrice, setNewPurchasePrice] = useState(''); const [variantColor, setVariantColor] = useState('');
    const [variantSize, setVariantSize] = useState('');
    const [variantStock, setVariantStock] = useState('');
 
    const handleApply = async () => {
-      if (mode === 'price' && !newPrice) return showAlert('Error', 'Ingresa un precio válido');
+      if (mode === 'price') {
+         const hasAny =
+            newPrice.trim() ||
+            newWholesalePrice.trim() ||
+            newBolivarPrice.trim() ||
+            newBolivarWholesalePrice.trim() ||
+            newPurchasePrice.trim();
+
+         if (!hasAny) {
+            return showAlert('Error', 'Rellena al menos un precio para actualizar.');
+         }
+      }
+
       if (mode === 'stock' && (!variantColor || !variantSize || !variantStock)) {
          return showAlert('Error', 'Completa color, talla y cantidad');
       }
@@ -37,7 +52,26 @@ export const BulkUpdateModal: React.FC<Props> = ({ selectedProducts, visible, on
             const updated = JSON.parse(JSON.stringify(p)) as Product;
 
             if (mode === 'price') {
-               updated.price = parseFloat(newPrice);
+               if (newPrice.trim()) {
+                  const v = parseFloat(newPrice);
+                  if (!isNaN(v) && v > 0) updated.price = v;
+               }
+               if (newWholesalePrice.trim()) {
+                  const v = parseFloat(newWholesalePrice);
+                  if (!isNaN(v) && v > 0) updated.wholesalePrice = v;
+               }
+               if (newBolivarPrice.trim()) {
+                  const v = parseFloat(newBolivarPrice);
+                  if (!isNaN(v) && v > 0) updated.bolivarPrice = v;
+               }
+               if (newBolivarWholesalePrice.trim()) {
+                  const v = parseFloat(newBolivarWholesalePrice);
+                  if (!isNaN(v) && v > 0) updated.bolivarWholesalePrice = v;
+               }
+               if (newPurchasePrice.trim()) {
+                  const v = parseFloat(newPurchasePrice);
+                  if (!isNaN(v) && v > 0) updated.purchasePrice = v;
+               }
             } else if (mode === 'stock') {
                const colorName = variantColor.trim();
                const sizeName = variantSize.trim().toUpperCase();
@@ -113,20 +147,80 @@ export const BulkUpdateModal: React.FC<Props> = ({ selectedProducts, visible, on
                {/* BODY */}
                <ScrollView style={styles.body} contentContainerStyle={{ paddingBottom: 4 }}>
                   {mode === 'price' ? (
-                     <View>
-                        <Text style={styles.label}>Nuevo Precio General ($):</Text>
-                        <TextInput
-                           style={styles.input}
-                           placeholder="Ej. 25.50"
-                           placeholderTextColor={C.dim}
-                           value={newPrice}
-                           onChangeText={setNewPrice}
-                           keyboardType="numeric"
-                           editable={!loading}
-                        />
+                     <View style={{ gap: 10 }}>
                         <Text style={styles.hint}>
-                           Todas las prendas seleccionadas pasarán a tener este precio de venta.
+                           Rellena solo los precios que quieras actualizar. Los vacíos no se tocan.
                         </Text>
+
+                        {/* FILA 1: Dólares */}
+                        <View style={{ flexDirection: 'row', gap: 10 }}>
+                           <View style={{ flex: 1 }}>
+                              <Text style={styles.label}>Detal ($)</Text>
+                              <TextInput
+                                 style={styles.input}
+                                 placeholder="0.00"
+                                 placeholderTextColor={C.dim}
+                                 value={newPrice}
+                                 onChangeText={setNewPrice}
+                                 keyboardType="numeric"
+                                 editable={!loading}
+                              />
+                           </View>
+                           <View style={{ flex: 1 }}>
+                              <Text style={[styles.label, { color: '#34D399' }]}>Mayor ($)</Text>
+                              <TextInput
+                                 style={[styles.input, styles.inputWholesale]}
+                                 placeholder="0.00"
+                                 placeholderTextColor={C.dim}
+                                 value={newWholesalePrice}
+                                 onChangeText={setNewWholesalePrice}
+                                 keyboardType="numeric"
+                                 editable={!loading}
+                              />
+                           </View>
+                        </View>
+
+                        {/* FILA 2: Bolívares / € */}
+                        <View style={{ flexDirection: 'row', gap: 10 }}>
+                           <View style={{ flex: 1 }}>
+                              <Text style={[styles.label, { color: '#A5B4FC' }]}>Detal Bs/€</Text>
+                              <TextInput
+                                 style={[styles.input, styles.inputBolivar]}
+                                 placeholder="0.00"
+                                 placeholderTextColor={C.dim}
+                                 value={newBolivarPrice}
+                                 onChangeText={setNewBolivarPrice}
+                                 keyboardType="numeric"
+                                 editable={!loading}
+                              />
+                           </View>
+                           <View style={{ flex: 1 }}>
+                              <Text style={[styles.label, { color: '#C4B5FD' }]}>Mayor Bs/€</Text>
+                              <TextInput
+                                 style={[styles.input, styles.inputBolivarWholesale]}
+                                 placeholder="0.00"
+                                 placeholderTextColor={C.dim}
+                                 value={newBolivarWholesalePrice}
+                                 onChangeText={setNewBolivarWholesalePrice}
+                                 keyboardType="numeric"
+                                 editable={!loading}
+                              />
+                           </View>
+                        </View>
+
+                        {/* FILA 3: Compra */}
+                        <View>
+                           <Text style={[styles.label, { color: '#FBBF24' }]}>Compra ($)</Text>
+                           <TextInput
+                              style={[styles.input, styles.inputPurchase]}
+                              placeholder="0.00"
+                              placeholderTextColor={C.dim}
+                              value={newPurchasePrice}
+                              onChangeText={setNewPurchasePrice}
+                              keyboardType="numeric"
+                              editable={!loading}
+                           />
+                        </View>
                      </View>
                   ) : (
                      <View>
@@ -255,7 +349,7 @@ const styles = StyleSheet.create({
 
    body: {
       padding: 16,
-      maxHeight: 320,
+      maxHeight: 420,
    },
    label,
    input: {
@@ -296,4 +390,21 @@ const styles = StyleSheet.create({
       backgroundColor: C.light,
    },
    btnApplyText: { ...btnText, color: C.bg },
+
+   inputWholesale: {
+      borderColor: 'rgba(52,211,153,0.5)',
+      backgroundColor: 'rgba(16,185,129,0.08)',
+   },
+   inputBolivar: {
+      borderColor: 'rgba(129,140,248,0.5)',
+      backgroundColor: 'rgba(99,102,241,0.08)',
+   },
+   inputBolivarWholesale: {
+      borderColor: 'rgba(167,139,250,0.5)',
+      backgroundColor: 'rgba(139,92,246,0.08)',
+   },
+   inputPurchase: {
+      borderColor: 'rgba(251,191,36,0.5)',
+      backgroundColor: 'rgba(245,158,11,0.08)',
+   },
 });

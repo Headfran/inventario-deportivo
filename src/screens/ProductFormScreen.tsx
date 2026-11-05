@@ -16,6 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import {
    X, Plus, Trash2, Check, ChevronLeft, ChevronRight,
    AlertCircle, DollarSign, Package, Sparkles, Receipt,
+   Coins, ShoppingCart,
 } from 'lucide-react-native';
 import { Product, ProductCategory, ProductVariant } from '../types/inventory';
 import { createProduct, updateProduct } from '../services/productService';
@@ -42,6 +43,9 @@ interface FormErrors {
    brand?: string;
    price?: string;
    wholesalePrice?: string;
+   bolivarPrice?: string;
+   bolivarWholesalePrice?: string;
+   purchasePrice?: string;
    variants?: string;
 }
 
@@ -132,6 +136,15 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
    const [wholesalePrice, setWholesalePrice] = useState(
       initialProduct?.wholesalePrice ? String(initialProduct.wholesalePrice) : ''
    );
+   const [bolivarPrice, setBolivarPrice] = useState(
+      initialProduct?.bolivarPrice ? String(initialProduct.bolivarPrice) : ''
+   );
+   const [bolivarWholesalePrice, setBolivarWholesalePrice] = useState(
+      initialProduct?.bolivarWholesalePrice ? String(initialProduct.bolivarWholesalePrice) : ''
+   );
+   const [purchasePrice, setPurchasePrice] = useState(
+      initialProduct?.purchasePrice ? String(initialProduct.purchasePrice) : ''
+   );
 
    const defaultBrands = ['Nike', 'Under Armour', 'Adidas', 'Puma', 'On', 'Alo', 'Ovejita', 'Columbia'];
    const mergedBrands = useMemo(
@@ -157,9 +170,9 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
    const [errors, setErrors] = useState<FormErrors>({});
 
    // ---- Refs para scrolls ----
-   const formScrollRef = useRef<ScrollView>(null);
-   const brandScrollRef = useRef<ScrollView>(null);
-   const categoryScrollRef = useRef<ScrollView>(null);
+   const formScrollRef = useRef<ScrollView | null>(null);
+   const brandScrollRef = useRef<ScrollView | null>(null);
+   const categoryScrollRef = useRef<ScrollView | null>(null);
    const [brandScrollX, setBrandScrollX] = useState(0);
    const [categoryScrollX, setCategoryScrollX] = useState(0);
 
@@ -170,7 +183,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
    ) => {
       const step = 200;
       const newX = dir === 'left' ? Math.max(0, currentX - step) : currentX + step;
-      ref.current?.scrollTo({ x: newX, animated: true });
+      (ref.current as any)?.scrollTo({ x: newX, animated: true });
    };
 
    // ==========================================
@@ -311,6 +324,30 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
          }
       }
 
+      if (bolivarPrice.trim()) {
+         const b = parseFloat(bolivarPrice);
+         if (isNaN(b) || b <= 0) {
+            errs.bolivarPrice = 'Debe ser un número mayor a 0';
+         }
+      }
+
+      if (bolivarWholesalePrice.trim()) {
+         const bw = parseFloat(bolivarWholesalePrice);
+         if (isNaN(bw) || bw <= 0) {
+            errs.bolivarWholesalePrice = 'Debe ser un número mayor a 0';
+         } else {
+            const b = parseFloat(bolivarPrice) || 0;
+            if (b > 0 && bw > b) errs.bolivarWholesalePrice = 'Debe ser ≤ al detal (Bs)';
+         }
+      }
+
+      if (purchasePrice.trim()) {
+         const c = parseFloat(purchasePrice);
+         if (isNaN(c) || c <= 0) {
+            errs.purchasePrice = 'Debe ser un número mayor a 0';
+         }
+      }
+
       const hasValidVariant = variants.some((v) => v.sizes && v.sizes.length > 0);
       if (!hasValidVariant) errs.variants = 'Añade al menos una talla a un color';
 
@@ -336,7 +373,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
 
       if (Object.keys(errs).length > 0) {
          showAlert('Faltan datos', 'Revisa los campos marcados en rojo.');
-         formScrollRef.current?.scrollTo({ y: 0, animated: true });
+         (formScrollRef.current as any)?.scrollTo({ y: 0, animated: true });
          return;
       }
 
@@ -364,6 +401,9 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
 
          const parsedPrice = parseFloat(price);
          const parsedWholesale = wholesalePrice.trim() ? parseFloat(wholesalePrice) : undefined;
+         const parsedBolivar = bolivarPrice.trim() ? parseFloat(bolivarPrice) : undefined;
+         const parsedBolivarWholesale = bolivarWholesalePrice.trim() ? parseFloat(bolivarWholesalePrice) : undefined;
+         const parsedPurchase = purchasePrice.trim() ? parseFloat(purchasePrice) : undefined;
 
          const productPayload: Omit<Product, 'id'> = {
             code: code.trim().toUpperCase(),
@@ -372,6 +412,9 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
             category,
             price: parsedPrice,
             ...(parsedWholesale !== undefined && { wholesalePrice: parsedWholesale }),
+            ...(parsedBolivar !== undefined && { bolivarPrice: parsedBolivar }),
+            ...(parsedBolivarWholesale !== undefined && { bolivarWholesalePrice: parsedBolivarWholesale }),
+            ...(parsedPurchase !== undefined && { purchasePrice: parsedPurchase }),
             images: finalImageUrls,
             variants,
          };
@@ -448,7 +491,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
                </View>
             </View>
 
-            {/* PRECIOS (DETAL + MAYOR) */}
+            {/* FILA 1: PRECIOS EN DÓLARES */}
             <View style={[styles.row, isMobile && styles.rowMobile]}>
                <View style={[styles.inputGroup, !isMobile && { flex: 1 }]}>
                   <View style={styles.priceLabelRow}>
@@ -472,11 +515,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
                      <Text style={[styles.label, { color: '#059669' }]}>PRECIO MAYOR ($)</Text>
                   </View>
                   <TextInput
-                     style={[
-                        styles.input,
-                        styles.inputWholesale,
-                        errors.wholesalePrice && styles.inputError,
-                     ]}
+                     style={[styles.input, styles.inputWholesale, errors.wholesalePrice && styles.inputError]}
                      placeholder="0.00"
                      placeholderTextColor="#A7F3D0"
                      keyboardType="numeric"
@@ -486,6 +525,85 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
                   {errors.wholesalePrice && <Text style={styles.errorText}>{errors.wholesalePrice}</Text>}
                </View>
             </View>
+
+            {/* FILA 2: PRECIOS EN BOLÍVARES / € */}
+            <View style={[styles.row, isMobile && styles.rowMobile]}>
+               <View style={[styles.inputGroup, !isMobile && { flex: 1 }]}>
+                  <View style={styles.priceLabelRow}>
+                     <Coins size={12} color="#6366F1" />
+                     <Text style={[styles.label, { color: '#6366F1' }]}>DETAL Bs / € </Text>
+                  </View>
+                  <TextInput
+                     style={[styles.input, styles.inputBolivar, errors.bolivarPrice && styles.inputError]}
+                     placeholder="0.00"
+                     placeholderTextColor="#C7D2FE"
+                     keyboardType="numeric"
+                     value={bolivarPrice}
+                     onChangeText={(v) => { setBolivarPrice(v); clearError('bolivarPrice'); }}
+                  />
+                  {errors.bolivarPrice && <Text style={styles.errorText}>{errors.bolivarPrice}</Text>}
+               </View>
+
+               <View style={[styles.inputGroup, !isMobile && { flex: 1 }]}>
+                  <View style={styles.priceLabelRow}>
+                     <Coins size={12} color="#8B5CF6" />
+                     <Text style={[styles.label, { color: '#7C3AED' }]}>MAYOR Bs / €</Text>
+                  </View>
+                  <TextInput
+                     style={[styles.input, styles.inputBolivarWholesale, errors.bolivarWholesalePrice && styles.inputError]}
+                     placeholder="0.00"
+                     placeholderTextColor="#DDD6FE"
+                     keyboardType="numeric"
+                     value={bolivarWholesalePrice}
+                     onChangeText={(v) => { setBolivarWholesalePrice(v); clearError('bolivarWholesalePrice'); }}
+                  />
+                  {errors.bolivarWholesalePrice && <Text style={styles.errorText}>{errors.bolivarWholesalePrice}</Text>}
+               </View>
+            </View>
+
+            {/* FILA 3: PRECIO DE COMPRA */}
+            <View style={[styles.row, isMobile && styles.rowMobile]}>
+               <View style={[styles.inputGroup, !isMobile && { flex: 1 }]}>
+                  <View style={styles.priceLabelRow}>
+                     <ShoppingCart size={12} color="#F59E0B" />
+                     <Text style={[styles.label, { color: '#D97706' }]}>PRECIO COMPRA ($)</Text>
+                  </View>
+                  <TextInput
+                     style={[styles.input, styles.inputPurchase, errors.purchasePrice && styles.inputError]}
+                     placeholder="0.00"
+                     placeholderTextColor="#FDE68A"
+                     keyboardType="numeric"
+                     value={purchasePrice}
+                     onChangeText={(v) => { setPurchasePrice(v); clearError('purchasePrice'); }}
+                  />
+                  {errors.purchasePrice && <Text style={styles.errorText}>{errors.purchasePrice}</Text>}
+               </View>
+               {!isMobile && <View style={{ flex: 1 }} />}
+            </View>
+
+            {/* HINTS DE GANANCIA */}
+            {purchasePrice && parseFloat(purchasePrice) > 0 && (
+               <>
+                  {price && parseFloat(price) > 0 && (
+                     <View style={styles.profitHintBox}>
+                        <Text style={styles.profitHintLabel}>Ganancia Detal $:</Text>
+                        <Text style={styles.profitHintValue}>
+                           ${(parseFloat(price) - parseFloat(purchasePrice)).toFixed(2)}
+                           {' '}({(((parseFloat(price) - parseFloat(purchasePrice)) / parseFloat(price)) * 100).toFixed(0)}%)
+                        </Text>
+                     </View>
+                  )}
+                  {wholesalePrice && parseFloat(wholesalePrice) > 0 && (
+                     <View style={[styles.profitHintBox, styles.profitHintBoxGreen]}>
+                        <Text style={[styles.profitHintLabel, { color: '#047857' }]}>Ganancia Mayor $:</Text>
+                        <Text style={[styles.profitHintValue, { color: '#047857' }]}>
+                           ${(parseFloat(wholesalePrice) - parseFloat(purchasePrice)).toFixed(2)}
+                           {' '}({(((parseFloat(wholesalePrice) - parseFloat(purchasePrice)) / parseFloat(wholesalePrice)) * 100).toFixed(0)}%)
+                        </Text>
+                     </View>
+                  )}
+               </>
+            )}
 
             {/* MARCA */}
             <View style={styles.inputGroup}>
@@ -642,7 +760,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
                   const sizesList = variant.sizes || [];
                   const cardBg = variant.colorHex || '#FFFFFF';
                   const isLight = isLightColor(cardBg);
-                  
+
                   // Coherencia visual adaptada al color seleccionado
                   const dynamicTextColor = isLight ? '#121214' : '#FFFFFF';
                   const dynamicMutedColor = isLight ? 'rgba(18,18,20,0.65)' : 'rgba(255,255,255,0.75)';
@@ -651,8 +769,8 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
                   const dynamicChipBg = isLight ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.2)';
 
                   return (
-                     <View 
-                        key={variant.id || colorIdx} 
+                     <View
+                        key={variant.id || colorIdx}
                         style={[styles.colorCard, { backgroundColor: cardBg, borderColor: dynamicBorderColor }]}
                      >
                         <View style={styles.colorHeader}>
@@ -713,7 +831,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
                                  <Pressable
                                     key={sz}
                                     style={[
-                                       styles.sizeChip, 
+                                       styles.sizeChip,
                                        { backgroundColor: dynamicChipBg, borderColor: dynamicBorderColor },
                                        active && { backgroundColor: dynamicTextColor, borderColor: dynamicTextColor }
                                     ]}
@@ -736,7 +854,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
                                        <Text style={[styles.stockSizeLabel, { color: dynamicTextColor }]}>{s.size}</Text>
                                        <TextInput
                                           style={[
-                                             styles.stockInput, 
+                                             styles.stockInput,
                                              { backgroundColor: dynamicInputBg, color: dynamicTextColor, borderColor: dynamicBorderColor }
                                           ]}
                                           value={String(s.stock)}
@@ -935,7 +1053,7 @@ const styles = StyleSheet.create({
       gap: 6,
       alignItems: 'center',
       marginVertical: 2,
-      maxWidth: 240, 
+      maxWidth: 240,
    },
    colorCircle: {
       width: 24,
@@ -1028,4 +1146,48 @@ const styles = StyleSheet.create({
       color: T.ink, letterSpacing: 0.5, textTransform: 'uppercase',
    },
    savingStage: { fontSize: 12, color: T.inkMute, fontWeight: '600', textAlign: 'center' },
+
+   inputBolivar: {
+      backgroundColor: '#EEF2FF',
+      borderColor: '#6366F1',
+      color: '#4338CA',
+   },
+   inputBolivarWholesale: {
+      backgroundColor: '#F5F3FF',
+      borderColor: '#8B5CF6',
+      color: '#6D28D9',
+   },
+   inputPurchase: {
+      backgroundColor: '#FFFBEB',
+      borderColor: '#F59E0B',
+      color: '#B45309',
+   },
+   profitHintBox: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderWidth: 1,
+      borderColor: '#FCA5A5',
+      backgroundColor: '#FEF2F2',
+      borderRadius: 8,
+      gap: 8,
+   },
+   profitHintBoxGreen: {
+      borderColor: '#A7F3D0',
+      backgroundColor: '#F0FDF4',
+   },
+   profitHintLabel: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#B91C1C',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+   },
+   profitHintValue: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: '#DC2626',
+   },
 });

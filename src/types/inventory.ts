@@ -42,6 +42,9 @@ export interface Product {
   category: ProductCategory;
   price: number;
   wholesalePrice?: number;
+  bolivarPrice?: number;
+  bolivarWholesalePrice?: number;
+  purchasePrice?: number;
   images: string[];
   variants: ProductVariant[];
   createdAt?: number;

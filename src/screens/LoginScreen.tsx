@@ -1,16 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
-  StatusBar,
+   View,
+   Text,
+   TextInput,
+   TouchableOpacity,
+   StyleSheet,
+   ActivityIndicator,
+   Alert,
+   Animated,
+   KeyboardAvoidingView,
+   Platform,
+   StatusBar,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 

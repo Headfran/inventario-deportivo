@@ -132,6 +132,20 @@ const sizeRun = (p: Product): [string, boolean][] => {
    return Array.from(m.entries());
 };
 
+// Fallbacks para productos viejos que aún no tienen bolivarPrice/bolivarWholesalePrice
+const getBolivarRetail = (p: Product): number => {
+   if (p.bolivarPrice && p.bolivarPrice > 0) return Number(p.bolivarPrice);
+   return Number(p.price || 0) * REF_RATE_MULTIPLIER;
+};
+
+const getBolivarWholesale = (p: Product): number => {
+   if (p.bolivarWholesalePrice && p.bolivarWholesalePrice > 0) return Number(p.bolivarWholesalePrice);
+   const wholesaleUSD = Number(p.wholesalePrice);
+   if (wholesaleUSD > 0) return wholesaleUSD * REF_RATE_MULTIPLIER;
+   return Number(p.price || 0) * REF_RATE_MULTIPLIER;
+};
+
+
 const Chip = ({ label, active, onPress, left }: { label: string; active: boolean; onPress: () => void; left?: React.ReactNode }) => (
    <Pressable onPress={onPress} style={({ pressed }) => [styles.chip, active && styles.chipActive, pressed && styles.pressed]}>
       {left}
@@ -154,7 +168,7 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
    const run = sizeRun(item).slice(0, 6);
    const mainImgUri = item.images?.[0];
    const retailPrice = Number(item.price || 0);
-   const wholesalePrice = Number((item as any).wholesalePrice || (item as any).priceWholesale || retailPrice * 0.85);
+   const wholesalePrice = Number(item.wholesalePrice) || retailPrice * 0.85;
 
    return (
       <View style={{ width }}>
@@ -180,7 +194,7 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
          <View style={styles.meta}>
             <Text style={[styles.cardBrand, compact && { fontSize: 11 }]} numberOfLines={1}>{item.brand}</Text>
             <Text style={[styles.cardName, compact ? styles.cardNameMobile : { fontSize: 15 }]} numberOfLines={2}>{item.name}</Text>
-            
+
             {run.length > 0 && (
                <View style={styles.sizes}>
                   {run.map(([sz, ok]) => (
@@ -218,6 +232,7 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
    );
 });
 
+
 export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUri }) => {
    const [products, setProducts] = useState<Product[]>([]);
    const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
@@ -242,7 +257,10 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    }, []);
 
    const { categories, brands, colors, sizes } = useMemo(() => {
-      const rawCategories = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
+      const rawCategories: string[] = Array.from(
+         new Set(products.map((p) => String(p.category || '')).filter(Boolean))
+      );
+
       return {
          categories: [...rawCategories.filter((c) => c !== 'all'), 'all'],
          brands: Array.from(new Set(products.map((p) => p.brand).filter(Boolean))),
@@ -340,13 +358,15 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       let text = `¡Hola! JDSTORE, me interesan los siguientes productos de mi carrito:\n\n`;
       cart.forEach((item, index) => {
          const retailPrice = Number(item.product.price || 0);
-         const wholesalePrice = Number((item.product as any).wholesalePrice || (item.product as any).priceWholesale || retailPrice * 0.85);
+         const wholesalePrice = Number(item.product.wholesalePrice) || retailPrice * 0.85;
          const itemUnitPrice = isGlobalWholesale ? wholesalePrice : retailPrice;
-         const refTotal = itemUnitPrice * REF_RATE_MULTIPLIER;
+         const bolivarUnitPrice = isGlobalWholesale
+            ? getBolivarWholesale(item.product)
+            : getBolivarRetail(item.product);
 
          text += `${index + 1}. *${item.product.name}* (Marca: ${item.product.brand}, Código: ${item.product.code})\n`;
          text += `   - Color: ${item.color} | Talla: ${item.size} | Cantidad: ${item.quantity}\n`;
-         text += `   - Tipo: ${isGlobalWholesale ? 'Al Mayor (6+ un)' : 'Al Detal'} | Unitario: $${itemUnitPrice.toFixed(2)} (${refTotal.toFixed(2)}€ ) | Subtotal: $${(itemUnitPrice * item.quantity).toFixed(2)}\n\n`;
+         text += `   - Tipo: ${isGlobalWholesale ? 'Al Mayor (6+ un)' : 'Al Detal'} | Unitario: $${itemUnitPrice.toFixed(2)} (${bolivarUnitPrice.toFixed(2)}€) | Subtotal: $${(itemUnitPrice * item.quantity).toFixed(2)}\n\n`;
       });
       text += `Total de piezas: ${totalCartQuantity} | Quedo atento a la disponibilidad y pago. ¡Gracias!`;
       const encoded = encodeURIComponent(text);
@@ -508,18 +528,20 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    const renderDetail = (p: Product) => {
       const currentImageUri = p.images?.[selectedImageIndex];
       const retailPrice = Number(p.price || 0);
-      const wholesalePrice = Number((p as any).wholesalePrice || (p as any).priceWholesale || retailPrice * 0.85);
-      
+      const wholesalePrice = Number(p.wholesalePrice) || retailPrice * 0.85;
+      const bolivarRetail = getBolivarRetail(p);
+      const bolivarWholesale = getBolivarWholesale(p);
+
       const isWholesale = quantity >= 6;
       const activeUnitPrice = isWholesale ? wholesalePrice : retailPrice;
-      const activeRefUnitPrice = activeUnitPrice * REF_RATE_MULTIPLIER;
+      const activeRefUnitPrice = isWholesale ? bolivarWholesale : bolivarRetail;
 
       const gallery = (
          <View style={{ position: 'relative' }}>
             <Pressable onPress={() => currentImageUri && setDetailZoomUri(currentImageUri)}>
                <Cover uri={currentImageUri} name={p.name} bg={GRAY[100]} fg={GRAY[300]} style={wide ? styles.mainImgWide : styles.mainImg} />
-               <Pressable 
-                  style={styles.zoomButtonFloat} 
+               <Pressable
+                  style={styles.zoomButtonFloat}
                   onPress={() => currentImageUri && setDetailZoomUri(currentImageUri)}
                >
                   <ZoomIn size={18} color="#FFFFFF" />
@@ -630,11 +652,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                   <Text style={styles.columnHeaderTitleBlack}>BOLIVARES (TASA €)</Text>
                   <View style={styles.columnPriceRow}>
                      <Text style={styles.columnLabelRef}>Detal:</Text>
-                     <Text style={styles.columnValRef}>{(retailPrice * REF_RATE_MULTIPLIER).toFixed(2)}€</Text>
+                     <Text style={styles.columnValRef}>{bolivarRetail.toFixed(2)}€</Text>
                   </View>
                   <View style={styles.columnPriceRow}>
                      <Text style={styles.columnLabelRef}>Mayor:</Text>
-                     <Text style={styles.columnValRefWholesale}>{(wholesalePrice * REF_RATE_MULTIPLIER).toFixed(2)}€</Text>
+                     <Text style={styles.columnValRefWholesale}>{bolivarWholesale.toFixed(2)}€</Text>
                   </View>
                </View>
             </View>
@@ -756,7 +778,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                         <ChevronRight size={18} color={currentPage === totalPages ? GRAY[300] : GRAY[800]} />
                      </Pressable>
                   </View>
-               ) : null
+               ) : undefined
             }
             ListEmptyComponent={
                <View style={styles.emptyBox}>
@@ -897,8 +919,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                         <View style={{ gap: 12 }}>
                            {cart.map((item) => {
                               const retailPrice = Number(item.product.price || 0);
-                              const wholesalePrice = Number((item.product as any).wholesalePrice || (item.product as any).priceWholesale || retailPrice * 0.85);
+                              const wholesalePrice = Number(item.product.wholesalePrice) || retailPrice * 0.85;
                               const itemUnitPrice = isGlobalWholesale ? wholesalePrice : retailPrice;
+                              const itemBolivarUnit = isGlobalWholesale
+                                 ? getBolivarWholesale(item.product)
+                                 : getBolivarRetail(item.product);
 
                               return (
                                  <View key={item.cartId} style={styles.cartItemRow}>
@@ -924,7 +949,9 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                                                 <Plus size={12} color={GRAY[800]} />
                                              </Pressable>
                                           </View>
-                                          <Text style={styles.cartItemPrice}>${(itemUnitPrice * item.quantity).toFixed(2)} ({(itemUnitPrice * REF_RATE_MULTIPLIER * item.quantity).toFixed(2)}€ )</Text>
+                                          <Text style={styles.cartItemPrice}>
+                                             ${(itemUnitPrice * item.quantity).toFixed(2)} ({(itemBolivarUnit * item.quantity).toFixed(2)}€)
+                                          </Text>
                                        </View>
                                     </View>
                                     <Pressable onPress={() => removeFromCart(item.cartId)} style={styles.cartDeleteBtn}>
@@ -967,7 +994,7 @@ const styles = StyleSheet.create({
    bar: { backgroundColor: GRAY[900], paddingVertical: 12 },
    barRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
    brandGroup: { flexDirection: 'row', alignItems: 'center', gap: 14, flexShrink: 1 },
-   
+
    logoContainerLarge: { width: 72, height: 72, borderRadius: 36, overflow: 'hidden', backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: GRAY[600] },
    barLogoImg: { width: '100%', height: '100%' },
    logoPlaceholder: { width: '100%', height: '100%', backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center' },
@@ -986,9 +1013,9 @@ const styles = StyleSheet.create({
    countPill: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, marginBottom: 14 },
    countText: { fontSize: 13, fontWeight: '700', color: GRAY[300] },
    title: { ...display, fontWeight: '800', color: '#FFFFFF', textTransform: 'uppercase' },
-   
+
    heroSubtitle: { ...display, fontSize: 32, fontWeight: '700', color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 6 },
-   
+
    titleSm: { fontSize: 60, lineHeight: 56 },
    titleMd: { fontSize: 96, lineHeight: 88 },
    titleLg: { fontSize: 132, lineHeight: 118 },
@@ -1002,7 +1029,7 @@ const styles = StyleSheet.create({
 
    filters: { gap: 14, marginBottom: 24 },
    searchRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
-   
+
    searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', height: 46, paddingHorizontal: 16, backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: GRAY[300] },
    searchFocused: { borderColor: GRAY[800] },
    searchInput: { flex: 1, fontSize: 15, color: GRAY[900], paddingLeft: 10, outlineStyle: 'none' } as any,
@@ -1048,7 +1075,7 @@ const styles = StyleSheet.create({
    sizeBoxOff: { borderColor: GRAY[200], backgroundColor: GRAY[100] },
    sizeBoxText: { fontSize: 10, fontWeight: '700', color: GRAY[800] },
    sizeOff: { color: GRAY[400], textDecorationLine: 'line-through', fontWeight: '500' },
-   
+
    actionRow: { marginTop: 8 },
    detailsBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 5, height: 34, backgroundColor: GRAY[700], borderRadius: 6 },
    detailsBtnText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
@@ -1085,7 +1112,7 @@ const styles = StyleSheet.create({
    closeBtn: { position: 'absolute', top: 12, right: 12, zIndex: 10, backgroundColor: GRAY[900], borderRadius: 18, padding: 7 },
    mainImg: { width: '100%', height: 340, backgroundColor: GRAY[100] },
    mainImgWide: { width: '100%', aspectRatio: 4 / 5, backgroundColor: GRAY[100] },
-   
+
    zoomButtonFloat: {
       position: 'absolute',
       bottom: 12,

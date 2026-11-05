@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
    View,
    Text,
@@ -21,8 +21,9 @@ import {
    Crown,
    Medal,
    CalendarRange,
+   Coins,
 } from 'lucide-react-native';
-import { Sale, subscribeToSales } from '../services/salesHistoryService';
+import { Sale, subscribeToSales, calculateSaleProfit } from '../services/salesHistoryService';
 import { Layaway, subscribeToLayaways } from '../services/layawayService';
 import {
    SellerMetrics,
@@ -104,6 +105,44 @@ export const SellerPerformanceScreen: React.FC = () => {
    );
    const topSeller = sellersData[0] || null;
 
+   // ==========================================
+   // GANANCIAS
+   // ==========================================
+   const profitBySeller = useMemo(() => {
+      const map = new Map<string, { profit: number; determined: boolean }>();
+      sellersData.forEach((seller) => {
+         let profit = 0;
+         let determined = true;
+         seller.completedSales.forEach((sale) => {
+            const r = calculateSaleProfit(sale);
+            profit += r.profit;
+            if (!r.determined) determined = false;
+         });
+         map.set(seller.sellerId, { profit, determined });
+      });
+      return map;
+   }, [sellersData]);
+
+   const totalGlobalProfit = useMemo(() => {
+      let total = 0;
+      let determined = true;
+      profitBySeller.forEach((v) => {
+         total += v.profit;
+         if (!v.determined) determined = false;
+      });
+      return { total, determined };
+   }, [profitBySeller]);
+
+   const selectedSellerProfit = useMemo(() => {
+      if (!selectedSeller) return null;
+      return profitBySeller.get(selectedSeller.sellerId) || { profit: 0, determined: true };
+   }, [selectedSeller, profitBySeller]);
+
+   const selectedSaleProfit = useMemo(() => {
+      if (!selectedSaleToView) return null;
+      return calculateSaleProfit(selectedSaleToView);
+   }, [selectedSaleToView]);
+
    return (
       <View style={styles.container}>
          {/* HEADER BANNER NEGRO */}
@@ -120,9 +159,20 @@ export const SellerPerformanceScreen: React.FC = () => {
                </View>
             </View>
 
-            <View style={styles.headerMetric}>
-               <Text style={styles.headerMetricLabel}>Total</Text>
-               <Text style={styles.headerMetricValue}>${safeFixed(globalVolume)}</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+               <View style={styles.headerMetric}>
+                  <Text style={styles.headerMetricLabel}>Total</Text>
+                  <Text style={styles.headerMetricValue}>${safeFixed(globalVolume)}</Text>
+               </View>
+               {totalGlobalProfit.total !== 0 && (
+                  <View style={[styles.headerMetric, styles.headerMetricProfit]}>
+                     <Text style={[styles.headerMetricLabel, { color: '#A7F3D0' }]}>Ganancia</Text>
+                     <Text style={[styles.headerMetricValue, { color: '#A7F3D0' }]}>
+                        ${safeFixed(totalGlobalProfit.total)}
+                        {!totalGlobalProfit.determined && <Text style={{ fontSize: 12 }}>*</Text>}
+                     </Text>
+                  </View>
+               )}
             </View>
          </View>
 
@@ -204,6 +254,20 @@ export const SellerPerformanceScreen: React.FC = () => {
                   <Text style={styles.kpiSub}>Tickets emitidos</Text>
                </View>
 
+               <View style={[styles.kpiCard, styles.kpiCardProfit]}>
+                  <View style={styles.kpiHeaderRow}>
+                     <Text style={[styles.kpiLabel, { color: '#047857' }]}>Ganancia</Text>
+                     <View style={[styles.kpiIconBox, styles.kpiIconBoxProfit]}>
+                        <Coins size={14} color="#047857" />
+                     </View>
+                  </View>
+                  <Text style={[styles.kpiValue, { color: '#047857' }]}>
+                     ${safeFixed(totalGlobalProfit.total)}
+                     {!totalGlobalProfit.determined && <Text style={{ fontSize: 14 }}>*</Text>}
+                  </Text>
+                  <Text style={[styles.kpiSub, { color: '#059669' }]}>Sobre ventas cerradas</Text>
+               </View>
+
                <View style={[styles.kpiCard, styles.kpiCardHero]}>
                   <View style={styles.kpiHeaderRow}>
                      <Text style={[styles.kpiLabel, { color: 'rgba(255,255,255,0.7)' }]}>Líder</Text>
@@ -223,6 +287,12 @@ export const SellerPerformanceScreen: React.FC = () => {
                </View>
             </View>
 
+            {!totalGlobalProfit.determined && (
+               <Text style={styles.profitNote}>
+                  * Algunos artículos no tienen precio de compra registrado. La ganancia se calcula con los disponibles.
+               </Text>
+            )}
+
             <Text style={styles.sectionTitle}>Ranking por Vendedor</Text>
 
             {sellersData.length === 0 ? (
@@ -241,6 +311,7 @@ export const SellerPerformanceScreen: React.FC = () => {
                   const isTopThree = isFirst || isSecond || isThird;
 
                   const contributionPct = globalVolume > 0 ? (seller.totalVolume / globalVolume) * 100 : 0;
+                  const sellerProfit = profitBySeller.get(seller.sellerId);
 
                   const rankBadgeStyle = isFirst
                      ? styles.rankBadgeGold
@@ -330,6 +401,15 @@ export const SellerPerformanceScreen: React.FC = () => {
                                  Ticket: ${safeFixed(seller.averageTicket)}
                               </Text>
                            </View>
+                           {sellerProfit && sellerProfit.profit !== 0 && (
+                              <View style={styles.miniStat}>
+                                 <Coins size={12} color="#047857" />
+                                 <Text style={[styles.miniStatText, { color: '#047857', fontWeight: '800' }]}>
+                                    Ganancia: ${safeFixed(sellerProfit.profit)}
+                                    {!sellerProfit.determined && '*'}
+                                 </Text>
+                              </View>
+                           )}
                         </View>
                      </P>
                   );
@@ -374,6 +454,18 @@ export const SellerPerformanceScreen: React.FC = () => {
                                  ${safeFixed(selectedSeller.totalVolume)}
                               </Text>
                            </View>
+                           {selectedSellerProfit && (
+                              <>
+                                 <View style={styles.dividerDashed} />
+                                 <View style={styles.detailRow}>
+                                    <Text style={[styles.detailLabel, { color: '#047857' }]}>Ganancia Total</Text>
+                                    <Text style={[styles.detailValProfit]}>
+                                       ${safeFixed(selectedSellerProfit.profit)}
+                                       {!selectedSellerProfit.determined && '*'}
+                                    </Text>
+                                 </View>
+                              </>
+                           )}
                            <View style={styles.dividerDashed} />
                            <View style={styles.detailRow}>
                               <Text style={styles.detailLabel}>Total Operaciones</Text>
@@ -396,27 +488,35 @@ export const SellerPerformanceScreen: React.FC = () => {
                            {selectedSeller.completedSales.length === 0 ? (
                               <Text style={styles.emptySubText}>Sin ventas en este periodo.</Text>
                            ) : (
-                              selectedSeller.completedSales.map((s) => (
-                                 <P
-                                    key={s.id}
-                                    style={styles.historyRowClickable}
-                                    onPress={() => setSelectedSaleToView(s)}
-                                 >
-                                    <View style={{ flex: 1, minWidth: 0 }}>
-                                       <Text style={styles.historyTitle} numberOfLines={1}>
-                                          Recibo #{s.receiptNumber}
-                                       </Text>
-                                       <Text style={styles.historySub}>
-                                          {toDate(s.createdAt).toLocaleDateString('es-ES')} ·{' '}
-                                          {(s.paymentMethod || '').replace('_', ' ').toUpperCase()}
-                                       </Text>
-                                    </View>
-                                    <View style={{ alignItems: 'flex-end', flexDirection: 'row', gap: 6 }}>
-                                       <Text style={styles.historyPrice}>${safeFixed(s.total)}</Text>
-                                       <ChevronRight size={16} color={T.inkMute} />
-                                    </View>
-                                 </P>
-                              ))
+                              selectedSeller.completedSales.map((s) => {
+                                 const saleProfit = calculateSaleProfit(s);
+                                 return (
+                                    <P
+                                       key={s.id}
+                                       style={styles.historyRowClickable}
+                                       onPress={() => setSelectedSaleToView(s)}
+                                    >
+                                       <View style={{ flex: 1, minWidth: 0 }}>
+                                          <Text style={styles.historyTitle} numberOfLines={1}>
+                                             Recibo #{s.receiptNumber}
+                                          </Text>
+                                          <Text style={styles.historySub}>
+                                             {toDate(s.createdAt).toLocaleDateString('es-ES')} ·{' '}
+                                             {(s.paymentMethod || '').replace('_', ' ').toUpperCase()}
+                                          </Text>
+                                       </View>
+                                       <View style={{ alignItems: 'flex-end', gap: 2 }}>
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                             <Text style={styles.historyPrice}>${safeFixed(s.total)}</Text>
+                                             <ChevronRight size={16} color={T.inkMute} />
+                                          </View>
+                                          <Text style={styles.historyProfit}>
+                                             +${safeFixed(saleProfit.profit)}{!saleProfit.determined && '*'}
+                                          </Text>
+                                       </View>
+                                    </P>
+                                 );
+                              })
                            )}
                         </View>
 
@@ -557,6 +657,19 @@ export const SellerPerformanceScreen: React.FC = () => {
                                  ${safeFixed(selectedSaleToView.total)}
                               </Text>
                            </View>
+
+                           {selectedSaleProfit && (
+                              <View style={styles.profitRow}>
+                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Coins size={13} color="#047857" />
+                                    <Text style={styles.profitRowLabel}>Ganancia estimada:</Text>
+                                 </View>
+                                 <Text style={styles.profitRowValue}>
+                                    ${safeFixed(selectedSaleProfit.profit)}
+                                    {!selectedSaleProfit.determined && '*'}
+                                 </Text>
+                              </View>
+                           )}
                         </View>
                      </ScrollView>
                   </View>
@@ -612,6 +725,10 @@ const styles = StyleSheet.create({
       borderColor: 'rgba(255,255,255,0.25)',
       alignItems: 'flex-end',
    },
+   headerMetricProfit: {
+      backgroundColor: 'rgba(16,185,129,0.2)',
+      borderColor: '#10B981',
+   },
    headerMetricLabel: {
       fontSize: 10,
       color: 'rgba(255,255,255,0.65)',
@@ -665,6 +782,7 @@ const styles = StyleSheet.create({
       borderWidth: 1,
       borderColor: T.line,
    },
+   kpiCardProfit: { backgroundColor: '#F0FDF4', borderColor: '#A7F3D0' },
    kpiCardHero: { backgroundColor: T.bar, borderColor: T.bar },
    kpiHeaderRow: {
       flexDirection: 'row',
@@ -688,6 +806,7 @@ const styles = StyleSheet.create({
       alignItems: 'center',
       justifyContent: 'center',
    },
+   kpiIconBoxProfit: { backgroundColor: '#DCFCE7', borderColor: '#A7F3D0' },
    kpiIconBoxHero: {
       backgroundColor: 'rgba(255,255,255,0.15)',
       borderColor: 'rgba(255,255,255,0.3)',
@@ -701,6 +820,15 @@ const styles = StyleSheet.create({
       marginVertical: 8,
    },
    kpiSub: { fontSize: 11, color: T.inkMute },
+
+   profitNote: {
+      fontSize: 11,
+      color: '#047857',
+      fontStyle: 'italic',
+      marginTop: -12,
+      marginBottom: 14,
+      lineHeight: 14,
+   },
 
    sectionTitle: {
       ...display,
@@ -876,6 +1004,13 @@ const styles = StyleSheet.create({
       fontWeight: '800',
       color: T.ink,
    },
+   detailValProfit: {
+      ...display,
+      fontSize: 22,
+      lineHeight: 22,
+      fontWeight: '800',
+      color: '#047857',
+   },
 
    dividerDashed: {
       borderTopWidth: 1,
@@ -930,6 +1065,11 @@ const styles = StyleSheet.create({
       lineHeight: 16,
       fontWeight: '800',
       color: T.ink,
+   },
+   historyProfit: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: '#047857',
    },
    emptySubText: {
       fontSize: 12,
@@ -998,4 +1138,21 @@ const styles = StyleSheet.create({
    },
    totalLabel: { fontSize: 13, fontWeight: '800', color: T.inkSoft, paddingBottom: 6 },
    totalValue: { ...display, fontSize: 40, lineHeight: 40, fontWeight: '800', color: T.ink },
+
+   // Profit row en el recibo
+   profitRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 10,
+      paddingTop: 10,
+      paddingHorizontal: 10,
+      paddingBottom: 10,
+      backgroundColor: '#F0FDF4',
+      borderWidth: 1,
+      borderColor: '#A7F3D0',
+      borderRadius: 8,
+   },
+   profitRowLabel: { fontSize: 12, fontWeight: '800', color: '#047857' },
+   profitRowValue: { ...display, fontSize: 18, fontWeight: '800', color: '#047857' },
 });

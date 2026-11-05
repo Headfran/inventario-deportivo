@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, useWindowDimensions } from 'react-native';
-import { DollarSign, ShoppingBag, TrendingUp, CreditCard, Award, PieChart, CalendarRange, Shirt } from 'lucide-react-native';
-import { Sale, subscribeToSales } from '../services/salesHistoryService';
+import { DollarSign, ShoppingBag, TrendingUp, CreditCard, Award, PieChart, CalendarRange, Shirt, Coins } from 'lucide-react-native';
+import { Sale, subscribeToSales, calculateSaleProfit } from '../services/salesHistoryService';
 import { subscribeToProducts } from '../services/productService';
 import { Product } from '../types/inventory';
 import { TimeRangeOption, filterSalesByTimeRange, calculateAnalytics } from '../services/analyticsService';
@@ -48,6 +48,47 @@ export const AnalyticsDashboardScreen = () => {
    const filteredSales = filterSalesByTimeRange(allSales, timeRange, customDateRange);
    const analytics = calculateAnalytics(filteredSales);
 
+   // ==========================================
+   // GANANCIAS
+   // ==========================================
+   const profitData = useMemo(() => {
+      let totalProfit = 0;
+      let determined = true;
+
+      filteredSales.forEach((sale) => {
+         if (sale.status === 'voided') return;
+         const r = calculateSaleProfit(sale);
+         totalProfit += r.profit;
+         if (!r.determined) determined = false;
+      });
+
+      const margin = analytics.totalRevenue > 0
+         ? (totalProfit / analytics.totalRevenue) * 100
+         : 0;
+
+      return { totalProfit, determined, margin };
+   }, [filteredSales, analytics.totalRevenue]);
+
+   // Ganancia por producto (agregada por productId, no por variante)
+   const profitByProductId = useMemo(() => {
+      const map = new Map<string, { profit: number; determined: boolean }>();
+
+      filteredSales.forEach((sale) => {
+         if (sale.status === 'voided') return;
+         sale.items.forEach((item) => {
+            const existing = map.get(item.productId) || { profit: 0, determined: true };
+            if (item.purchasePrice === undefined) {
+               existing.determined = false;
+            } else {
+               existing.profit += (item.unitPrice - item.purchasePrice) * item.quantity;
+            }
+            map.set(item.productId, existing);
+         });
+      });
+
+      return map;
+   }, [filteredSales]);
+
    if (loading) {
       return (
          <View style={styles.centered}>
@@ -62,6 +103,7 @@ export const AnalyticsDashboardScreen = () => {
       { Icon: ShoppingBag, tag: 'Prendas', value: String(analytics.totalUnitsSold), sub: 'Unidades descontadas', color: '#0EA5E9', lightBg: '#F0F9FF' },
       { Icon: TrendingUp, tag: 'Ventas', value: String(analytics.totalTransactions), sub: 'Transacciones cerradas', color: '#10B981', lightBg: '#ECFDF5' },
       { Icon: CreditCard, tag: 'Ticket Promedio', value: `$${analytics.averageTicket.toFixed(2)}`, sub: 'Promedio por transacción', color: '#F59E0B', lightBg: '#FFFBEB' },
+      { Icon: Coins, tag: 'Ganancia', value: `$${profitData.totalProfit.toFixed(2)}`, sub: `Margen ${profitData.margin.toFixed(1)}%`, color: '#047857', lightBg: '#F0FDF4', isProfit: true },
    ];
 
    return (
@@ -114,18 +156,18 @@ export const AnalyticsDashboardScreen = () => {
 
             {/* KPIs */}
             <View style={styles.kpiGrid}>
-               {kpis.map(({ Icon, tag, value, sub, color, lightBg }, i) => {
+               {kpis.map(({ Icon, tag, value, sub, color, lightBg, isProfit }, i) => {
                   const hero = i === 0;
                   return (
                      <View
                         key={tag}
                         style={[
                            styles.kpiCard,
-                           { flexBasis: mobile ? '47%' : '22%' },
+                           { flexBasis: mobile ? '47%' : '18%' },
                            hero
                               ? styles.kpiHero
                               : { backgroundColor: lightBg, borderColor: color + '30', borderWidth: 1 },
-                           hero && !mobile && { flexGrow: 1.6 },
+                           hero && !mobile && { flexGrow: 1.4 },
                         ]}
                      >
                         <View style={styles.kpiHeader}>
@@ -140,19 +182,28 @@ export const AnalyticsDashboardScreen = () => {
                            style={[
                               styles.kpiValue,
                               hero
-                                 ? { color: T.onSolid, fontSize: mobile ? 44 : 60, lineHeight: mobile ? 42 : 56 }
-                                 : { color: '#1F2937' },
+                                 ? { color: T.onSolid, fontSize: mobile ? 44 : 56, lineHeight: mobile ? 42 : 52 }
+                                 : isProfit
+                                    ? { color: '#047857', fontSize: mobile ? 28 : 32, lineHeight: mobile ? 26 : 30 }
+                                    : { color: '#1F2937' },
                            ]}
                         >
                            {value}
+                           {isProfit && !profitData.determined && <Text style={{ fontSize: 14 }}>*</Text>}
                         </Text>
-                        <Text style={[styles.kpiSubtext, hero ? { color: 'rgba(255,255,255,0.7)' } : { color: '#6B7280' }]}>
+                        <Text style={[styles.kpiSubtext, hero ? { color: 'rgba(255,255,255,0.7)' } : isProfit ? { color: '#059669', fontWeight: '700' } : { color: '#6B7280' }]}>
                            {sub}
                         </Text>
                      </View>
                   );
                })}
             </View>
+
+            {!profitData.determined && (
+               <Text style={styles.profitNote}>
+                  * Algunas ventas no tienen precio de compra registrado. La ganancia es parcial.
+               </Text>
+            )}
 
             {/* PANELES */}
             <View style={[styles.panels, wide && { flexDirection: 'row', alignItems: 'flex-start' }]}>
@@ -198,7 +249,7 @@ export const AnalyticsDashboardScreen = () => {
                   )}
                </View>
 
-               {/* TOP PRODUCTS */}
+               {/* TOP PRODUCTS CON GANANCIA */}
                <View style={[styles.panelCard, wide && { flex: 1 }]}>
                   <View style={styles.panelHeader}>
                      <View style={styles.panelIconBox}>
@@ -213,6 +264,7 @@ export const AnalyticsDashboardScreen = () => {
                      analytics.topProducts.slice(0, 5).map((prod, index) => {
                         const currentProduct = catalog.find((p) => p.id === prod.productId);
                         const imageUrl = currentProduct?.images?.[0] || prod.image || null;
+                        const productProfit = profitByProductId.get(prod.productId);
 
                         return (
                            <View key={`${prod.productId}_${index}`} style={styles.topProductRow}>
@@ -258,6 +310,12 @@ export const AnalyticsDashboardScreen = () => {
                               <View style={{ alignItems: 'flex-end' }}>
                                  <Text style={styles.topProductUnits}>{prod.unitsSold} uds.</Text>
                                  <Text style={styles.topProductRevenue}>${prod.totalRevenue.toFixed(2)}</Text>
+                                 {productProfit && productProfit.profit !== 0 && (
+                                    <Text style={styles.topProductProfit}>
+                                       +${productProfit.profit.toFixed(2)}
+                                       {!productProfit.determined && '*'}
+                                    </Text>
+                                 )}
                               </View>
                            </View>
                         );
@@ -289,7 +347,6 @@ const styles = StyleSheet.create({
    loadingText: { marginTop: 10, color: T.inkMute, fontSize: 13 },
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
-   // Header
    headerRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -309,7 +366,6 @@ const styles = StyleSheet.create({
    pageTitleMobile: { fontSize: 34, lineHeight: 33 },
    pageSubtitle: { fontSize: 13, color: T.inkSoft, marginTop: 4 },
 
-   // Time ranges
    timeRangeWrap: { flexShrink: 0 },
    timeRangeContainer: {
       flexDirection: 'row',
@@ -333,13 +389,12 @@ const styles = StyleSheet.create({
    rangeChipText: { fontSize: 12, fontWeight: '700', color: T.inkSoft },
    rangeOnText: { color: T.onSolid },
 
-   // KPIs
-   kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 },
+   kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 8 },
    kpiCard: {
       flexGrow: 1,
-      minWidth: 150,
+      minWidth: 140,
       borderRadius: 16,
-      padding: 18,
+      padding: 16,
       borderWidth: 0,
    },
    kpiHero: { backgroundColor: T.bar },
@@ -347,22 +402,29 @@ const styles = StyleSheet.create({
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 10,
+      marginBottom: 8,
    },
    kpiIconBox: {
-      width: 38,
-      height: 38,
+      width: 36,
+      height: 36,
       borderRadius: 12,
       justifyContent: 'center',
       alignItems: 'center',
    },
    kpiIconHero: { backgroundColor: 'rgba(255,255,255,0.2)' },
-   kpiTag: { fontSize: 13, fontWeight: '700' },
-   kpiValue: { ...display, fontSize: 40, lineHeight: 38, fontWeight: '800' },
-   kpiSubtext: { fontSize: 12, marginTop: 4, fontWeight: '500' },
+   kpiTag: { fontSize: 12, fontWeight: '700' },
+   kpiValue: { ...display, fontSize: 36, lineHeight: 34, fontWeight: '800' },
+   kpiSubtext: { fontSize: 11, marginTop: 4, fontWeight: '500' },
 
-   // Panels
-   panels: { gap: 16 },
+   profitNote: {
+      fontSize: 11,
+      color: '#047857',
+      fontStyle: 'italic',
+      marginBottom: 12,
+      lineHeight: 14,
+   },
+
+   panels: { gap: 16, marginTop: 8 },
    panelCard: {
       backgroundColor: T.surface,
       borderRadius: 16,
@@ -403,7 +465,6 @@ const styles = StyleSheet.create({
       textAlign: 'center',
    },
 
-   // Payment Breakdown
    paymentRowInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
    paymentLabel: { fontSize: 14, fontWeight: '700', color: T.ink },
    paymentSubtext: { fontSize: 12, color: T.inkSoft },
@@ -425,7 +486,6 @@ const styles = StyleSheet.create({
       textAlign: 'right',
    },
 
-   // Top Products
    topProductRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -464,4 +524,5 @@ const styles = StyleSheet.create({
    topProductDetail: { fontSize: 11, color: T.inkSoft },
    topProductUnits: { fontSize: 13, fontWeight: '700', color: T.ink },
    topProductRevenue: { fontSize: 12, color: '#6366F1', fontWeight: '700' },
+   topProductProfit: { fontSize: 10, color: '#047857', fontWeight: '800', marginTop: 2 },
 });
