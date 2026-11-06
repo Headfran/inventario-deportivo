@@ -155,7 +155,7 @@ export const SellerPerformanceScreen: React.FC = () => {
                   <Text style={[styles.headerTitle, mobile && styles.headerTitleMobile]}>
                      Rendimiento
                   </Text>
-                  <Text style={styles.headerSubtitle}>Ranking y contribución del equipo</Text>
+                  <Text style={styles.headerSubtitle}>Contribución del equipo</Text>
                </View>
             </View>
 

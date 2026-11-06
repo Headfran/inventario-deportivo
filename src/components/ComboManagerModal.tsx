@@ -27,7 +27,7 @@ export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, a
    const [name, setName] = useState('');
    const [price, setPrice] = useState('');
    const [bolivarPrice, setBolivarPrice] = useState('');
-   const [requirements, setRequirements] = useState<ComboRequirement[]>([]);
+   const [requirements, setRequirements] = useState<(ComboRequirement & { quantity: number | '' })[]>([]);
    const [saving, setSaving] = useState(false);
 
    useEffect(() => {
@@ -48,7 +48,7 @@ export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, a
 
    const openCreate = () => {
       resetForm();
-      setRequirements([{ category: availableCategories[0] || 'OTROS', quantity: 1 }]);
+      setRequirements([{ category: availableCategories[0] || 'OTROS', quantity: '' }]);
       setMode('edit');
    };
 
@@ -57,15 +57,16 @@ export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, a
       setName(combo.name);
       setPrice(String(combo.price));
       setBolivarPrice(combo.bolivarPrice ? String(combo.bolivarPrice) : '');
-      setRequirements(combo.requirements.map((r) => ({ ...r })));
+      // Si la cantidad es 1 al editar, la dejamos en '' para que muestre el placeholder "1"
+      setRequirements(combo.requirements.map((r) => ({ ...r, quantity: r.quantity === 1 ? '' : r.quantity })));
       setMode('edit');
    };
 
    const addRequirement = () => {
-      setRequirements((prev) => [...prev, { category: availableCategories[0] || 'OTROS', quantity: 1 }]);
+      setRequirements((prev) => [...prev, { category: availableCategories[0] || 'OTROS', quantity: '' }]);
    };
 
-   const updateRequirement = (idx: number, patch: Partial<ComboRequirement>) => {
+   const updateRequirement = (idx: number, patch: Partial<ComboRequirement & { quantity: number | '' }>) => {
       setRequirements((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
    };
 
@@ -81,7 +82,13 @@ export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, a
       if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return showAlert('Falta', 'Precio USD inválido.');
       if (requirements.length === 0) return showAlert('Falta', 'Añade al menos un requisito.');
 
-      const validReqs = requirements.filter((r) => r.category && r.quantity > 0);
+      const validReqs: ComboRequirement[] = requirements
+         .filter((r) => r.category)
+         .map((r) => ({
+            category: r.category,
+            quantity: typeof r.quantity === 'number' && r.quantity > 0 ? r.quantity : 1,
+         }));
+
       if (validReqs.length === 0) return showAlert('Falta', 'Los requisitos deben tener categoría y cantidad.');
 
       const payload: Omit<Combo, 'id'> = {
@@ -193,13 +200,13 @@ export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, a
                               />
                            </View>
                            <View style={{ flex: 1 }}>
-                              <Text style={styles.label}>Precio Bs ref (€)</Text>
+                              <Text style={styles.label}>Precio Bs TASA (€)</Text>
                               <TextInput
                                  style={styles.input}
                                  value={bolivarPrice}
                                  onChangeText={setBolivarPrice}
                                  keyboardType="numeric"
-                                 placeholder="Opcional"
+                                 placeholder="0.00"
                                  placeholderTextColor={T.inkMute}
                                  editable={!saving}
                               />
@@ -237,9 +244,11 @@ export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, a
                                  <Text style={styles.reqMiniLabel}>Cant.</Text>
                                  <TextInput
                                     style={[styles.input, { textAlign: 'center' }]}
-                                    value={String(req.quantity)}
-                                    onChangeText={(v) => updateRequirement(idx, { quantity: Math.max(1, parseInt(v) || 1) })}
+                                    value={req.quantity === '' ? '' : String(req.quantity)}
+                                    onChangeText={(v) => updateRequirement(idx, { quantity: v === '' ? '' : parseInt(v) || '' })}
                                     keyboardType="number-pad"
+                                    placeholder="1"
+                                    placeholderTextColor={T.inkMute}
                                     editable={!saving}
                                  />
                               </View>

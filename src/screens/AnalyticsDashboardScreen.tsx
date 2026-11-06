@@ -103,7 +103,7 @@ export const AnalyticsDashboardScreen = () => {
       { Icon: ShoppingBag, tag: 'Prendas', value: String(analytics.totalUnitsSold), sub: 'Unidades descontadas', color: '#0EA5E9', lightBg: '#F0F9FF' },
       { Icon: TrendingUp, tag: 'Ventas', value: String(analytics.totalTransactions), sub: 'Transacciones cerradas', color: '#10B981', lightBg: '#ECFDF5' },
       { Icon: CreditCard, tag: 'Ticket Promedio', value: `$${analytics.averageTicket.toFixed(2)}`, sub: 'Promedio por transacción', color: '#F59E0B', lightBg: '#FFFBEB' },
-      { Icon: Coins, tag: 'Ganancia', value: `$${profitData.totalProfit.toFixed(2)}`, sub: `Margen ${profitData.margin.toFixed(1)}%`, color: '#047857', lightBg: '#F0FDF4', isProfit: true },
+      { Icon: Coins, tag: 'Ganancia', value: `$${profitData.totalProfit.toFixed(2)}`, sub: `Margen ${profitData.margin.toFixed(1)}%`, color: '#047857', lightBg: '#F0F9FF', isProfit: true },
    ];
 
    return (
@@ -111,7 +111,7 @@ export const AnalyticsDashboardScreen = () => {
          <ScrollView
             style={styles.scroll}
             contentContainerStyle={[styles.content, { paddingHorizontal: mobile ? 14 : 22 }]}
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator={true}
          >
             {/* HEADER */}
             <View style={styles.headerRow}>
@@ -340,9 +340,9 @@ export const AnalyticsDashboardScreen = () => {
 };
 
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: T.bg },
-   scroll: { flex: 1 },
-   content: { width: '100%', maxWidth: MAX, alignSelf: 'center', paddingTop: 22, paddingBottom: 48 },
+   container: { flex: 1, backgroundColor: T.bg, minHeight: 0 },
+   scroll: { flex: 1, minHeight: 0 },
+   content: { width: '100%', maxWidth: MAX, alignSelf: 'center', paddingTop: 22, paddingBottom: 64 },
    centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: T.bg, padding: 20 },
    loadingText: { marginTop: 10, color: T.inkMute, fontSize: 13 },
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },

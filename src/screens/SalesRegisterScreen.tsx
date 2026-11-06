@@ -384,7 +384,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
    };
 
    // ==========================================
-   // VENDEDORES
+   // Rendimiento
    // ==========================================
    const openCreateSellerModal = () => {
       setSellerModalMode('create');
@@ -975,11 +975,11 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                      </View>
                   </View>
 
-                  {/* LISTA + SECCIONES SCROLLEABLES */}
+                  {/* LISTA + SECCIONES SCROLLEABLES CON BARRA VISIBLE */}
                   <ScrollView
                      style={styles.cartScroll}
-                     showsVerticalScrollIndicator={false}
-                     contentContainerStyle={{ paddingBottom: 12 }}
+                     showsVerticalScrollIndicator={true}
+                     contentContainerStyle={{ paddingBottom: 24, paddingRight: 4 }}
                      keyboardShouldPersistTaps="handled"
                   >
                      {cart.length === 0 ? (
@@ -1317,15 +1317,13 @@ const btn = {
 const chipBase = { borderWidth: 1, borderColor: T.line, borderRadius: 8 };
 
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: T.bg, overflow: 'hidden' },
+   container: { flex: 1, backgroundColor: T.bg },
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
    body: {
       flex: 1,
       width: '100%',
       maxWidth: 1280,
       alignSelf: 'center',
-      minHeight: 0,
-      overflow: 'hidden',
    },
    bodySplit: { flexDirection: 'row' },
    head: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
@@ -1342,17 +1340,15 @@ const styles = StyleSheet.create({
    tabBadge: { minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: T.solid, alignItems: 'center', justifyContent: 'center' },
    tabBadgeText: { fontSize: 11, fontWeight: '800', color: T.onSolid },
 
-   leftPanel: { flex: 1, minHeight: 0, padding: 16 },
-   leftSplit: { flex: 1.25, minHeight: 0, padding: 22, paddingRight: 18 },
-   rightPanel: { flex: 1, minHeight: 0, padding: 16, overflow: 'hidden' },
+   leftPanel: { flex: 1, padding: 16 },
+   leftSplit: { flex: 1.25, padding: 22, paddingRight: 18 },
+   rightPanel: { flex: 1, padding: 16 },
    rightSplit: {
       maxWidth: 470,
-      minHeight: 0,
       padding: 22,
       backgroundColor: T.surface,
       borderLeftWidth: 1,
       borderLeftColor: T.line,
-      overflow: 'hidden',
    },
 
    productsScroll: { flex: 1 },
@@ -1387,7 +1383,7 @@ const styles = StyleSheet.create({
    addToCartBtn: { ...btn, height: 48, gap: 8, backgroundColor: T.solid, marginTop: 4 },
    addToCartText: { fontSize: 14, fontWeight: '800', color: T.onSolid },
 
-   cartScroll: { flex: 1, minHeight: 0 },
+   cartScroll: { flex: 1 },
    emptyCartText: { fontSize: 14, color: T.inkMute, textAlign: 'center', marginTop: 40, lineHeight: 21 },
    cartItemRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: T.line },
    cartItemImg: { width: 44, height: 56, borderRadius: 6 },

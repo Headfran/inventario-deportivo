@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, memo, useMemo, useRef } from '
 import { View, Text, FlatList, Pressable, StyleSheet, Modal, ActivityIndicator, useWindowDimensions, Platform, PanResponder } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Plus, Pencil, Trash2, Layers, ChevronLeft, ChevronRight, MessageCircle, Printer, CheckSquare, Square, Zap, Share2, X } from 'lucide-react-native';
+import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, MessageCircle, Printer, CheckSquare, Square, Zap, Share2, X } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { subscribeToProducts, deleteProduct } from '../services/productService';
 import { ProductFormScreen } from './ProductFormScreen';
@@ -20,15 +20,12 @@ import { MONO as T, display, getColorHex } from '../design';
 const ITEMS_PER_PAGE = 10;
 const MAX = 1180;
 
-// En web la barra de URL del navegador no descuenta del viewport; añadimos colchón.
 const WEB_BOTTOM_BUFFER = Platform.OS === 'web' ? 20 : 0;
 
 const calculateTotalStock = (p: Product) =>
    (p.variants || []).reduce((acc, v) => acc + (v.sizes || []).reduce((a, s) => a + (Number(s.stock) || 0), 0), 0);
 
-// ==========================================
-// TARJETA MEMOIZADA
-// ==========================================
+// TARJETA==========================================
 interface ProductListItemProps {
    item: Product;
    isSelected: boolean;
@@ -109,8 +106,7 @@ const ProductListItem = memo(({
             </View>
          </View>
 
-         {/* Bloque de stock/precio/acciones.
-             En móvil: 2 filas (stock+precio / acciones). En desktop: 1 fila. */}
+         {/* Bloque de stock/precio/acciones. */}
          <View style={[styles.side, isMobile && styles.sideMobile]}>
             <View style={[styles.sideGroup, isMobile && styles.sideGroupMobile]}>
                <Pressable
@@ -156,12 +152,13 @@ const ProductListItem = memo(({
                   <MessageCircle size={17} color={isSelectionModeActive ? T.inkMute : T.inkSoft} />
                </Pressable>
 
+               {/* ICONO CAMBIADO A "+" AL LADO DEL MENSAJE */}
                <Pressable
                   style={({ pressed }) => [styles.actionBtn, isMobile && styles.actionBtnMobile, pressed && styles.pressed]}
                   onPress={() => { if (!isSelectionModeActive) onAdjustStock(item); }}
                   accessibilityLabel="Ajustar stock"
                >
-                  <Layers size={17} color={isSelectionModeActive ? T.inkMute : T.ink} />
+                  <Plus size={17} color={isSelectionModeActive ? T.inkMute : T.ink} />
                </Pressable>
 
                <Pressable
@@ -190,16 +187,15 @@ const ProductListItem = memo(({
    prev.isMobile === next.isMobile
 );
 
-// ==========================================
-// PANTALLA PRINCIPAL
-// ==========================================
+
+// PANTALLA PRINCIPAL==========================================
 export const InventoryListScreen = () => {
    const { width, height } = useWindowDimensions();
    const insets = useSafeAreaInsets();
    const isMobile = width < 600;
    const isCompact = width < 380;
 
-   // En web, el navegador tapa la parte inferior; sumamos buffer.
+   // En web, el navegador tapa la parte inferior
    const bottomPadding = Math.max(insets.bottom, WEB_BOTTOM_BUFFER);
 
    const [products, setProducts] = useState<Product[]>([]);
@@ -326,9 +322,8 @@ export const InventoryListScreen = () => {
 
    const padX = isMobile ? 14 : 22;
 
-   // ==========================================
-   // HEADER (título + botones o bulk bar)
-   // ==========================================
+   
+   // HEADER (título + botones)==========================================
    const renderHeader = () => (
       <View>
          {isSelectionModeActive ? (
@@ -448,7 +443,7 @@ export const InventoryListScreen = () => {
             )}
             ListEmptyComponent={
                <View style={styles.emptyState}>
-                  <Layers size={30} color={T.inkMute} />
+                  <Plus size={30} color={T.inkMute} />
                   <Text style={styles.emptyTitle}>Sin resultados</Text>
                   <Text style={styles.emptyText}>
                      No hay prendas que coincidan con los filtros seleccionados.
