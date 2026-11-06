@@ -9,6 +9,7 @@ import {
    Animated,
    useWindowDimensions,
    Platform,
+   Alert,
 } from 'react-native';
 import {
    Package,
@@ -45,6 +46,7 @@ import {
 } from './src/services/notificationService';
 import { getPendingSales, syncPendingSalesWithFirestore } from './src/services/offlineSyncService';
 import { showConfirm, showAlert } from './src/utils/alert';
+import { AlertHost } from './src/components/AlertHost';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { MONO as T, display, ease, nd, reduced } from './src/design';
 
@@ -640,6 +642,7 @@ export default function App() {
          <SafeAreaProvider>
             <AuthProvider>
                <MainApp />
+               <AlertHost />
             </AuthProvider>
          </SafeAreaProvider>
       </GestureHandlerRootView>

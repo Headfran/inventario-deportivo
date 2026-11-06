@@ -1,40 +1,68 @@
-import { Platform, Alert as RNAlert } from 'react-native';
+type AlertType = 'alert' | 'confirm';
 
-/**
- * Muestra una alerta simple de información o error compatible con Web y Móvil.
- */
-export const showAlert = (title: string, message?: string) => {
-  if (Platform.OS === 'web') {
-    window.alert(message ? `${title}\n\n${message}` : title);
+export interface AlertRequest {
+  id: string;
+  type: AlertType;
+  title: string;
+  message?: string;
+  onConfirm?: () => void;
+  onCancel?: () => void;
+}
+
+type Listener = (req: AlertRequest | null) => void;
+
+let current: AlertRequest | null = null;
+const queue: AlertRequest[] = [];
+let listener: Listener = () => { };
+
+const notify = () => listener(current);
+
+const dispatch = (req: AlertRequest) => {
+  if (current) {
+    queue.push(req);
   } else {
-    RNAlert.alert(title, message);
+    current = req;
+    notify();
   }
 };
 
-/**
- * Muestra un cuadro de confirmación (Aceptar / Cancelar) compatible con Web y Móvil.
- */
+export const subscribeToAlerts = (cb: Listener) => {
+  listener = cb;
+  cb(current);
+  return () => {
+    listener = () => { };
+  };
+};
+
+export const dismissCurrentAlert = () => {
+  current = null;
+  if (queue.length > 0) {
+    current = queue.shift() || null;
+  }
+  notify();
+};
+
+export const showAlert = (title: string, message?: string) => {
+  dispatch({
+    id: `alert_${Date.now()}_${Math.random()}`,
+    type: 'alert',
+    title,
+    message,
+  });
+};
+
 export const showConfirm = (
   title: string,
   message: string,
   onConfirm: () => void,
   onCancel?: () => void
 ) => {
-  if (Platform.OS === 'web') {
-    const confirmed = window.confirm(`${title}\n\n${message}`);
-    if (confirmed) {
-      onConfirm();
-    } else if (onCancel) {
-      onCancel();
-    }
-  } else {
-    RNAlert.alert(
-      title,
-      message,
-      [
-        { text: 'Cancelar', style: 'cancel', onPress: onCancel },
-        { text: 'Confirmar', style: 'destructive', onPress: onConfirm },
-      ]
-    );
-  }
+  dispatch({
+    id: `confirm_${Date.now()}_${Math.random()}`,
+    type: 'confirm',
+    title,
+    message,
+    onConfirm,
+    onCancel,
+  });
 };

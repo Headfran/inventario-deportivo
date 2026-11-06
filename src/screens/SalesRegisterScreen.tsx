@@ -7,7 +7,7 @@ import { Image } from 'expo-image';
 import {
    ShoppingBag, Plus, Minus, CheckCircle2, CreditCard, Banknote, Smartphone,
    User, Phone, ChevronLeft, ChevronRight, X, QrCode, Pencil, Trash2, Crown,
-   Coins, AlertCircle, Check, ChevronDown, ChevronUp, Settings, Sparkles,
+   Coins, AlertCircle, Check, ChevronDown, ChevronUp, Settings,
 } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { Sale, SaleItem, PaymentMethod, Seller, PaymentSplit, SaleCombo } from '../types/sale';
@@ -92,6 +92,8 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
    const [eurRateInput, setEurRateInput] = useState<string>(() => String(getInitialRate('eur')));
    const [usdRateInput, setUsdRateInput] = useState<string>(() => String(getInitialRate('usd')));
 
+   const [isFullBsPayment, setIsFullBsPayment] = useState(false);
+
    const [showSplitModal, setShowSplitModal] = useState(false);
    const [newSplitMethod, setNewSplitMethod] = useState<PaymentMethod>('pago_movil');
    const [newSplitAmount, setNewSplitAmount] = useState('');
@@ -131,7 +133,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
       return () => { unsubProducts(); unsubSellers(); unsubCombos(); };
    }, []);
 
-   // Persistir tasa
+   // Persistir tasas
    useEffect(() => {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
          window.localStorage.setItem(RATE_STORAGE_KEYS.eur, String(eurToBsRate));
@@ -169,7 +171,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
    const isWholesale = cartCount >= WHOLESALE_THRESHOLD;
 
    // ==========================================
-   // PRECIOS CALCULADOS (USD + BS REF + BS ACTUAL)
+   // PRECIOS CALCULADOS POR ITEM
    // ==========================================
    const pricedCart: PricedItem[] = useMemo(() => {
       return cart.map((item) => {
@@ -182,7 +184,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
          const unitPriceUSD = isWholesale && wholesaleUSD > 0 ? wholesaleUSD : retailUSD;
          const bsRefUnit = isWholesale && wholesaleBS > 0 ? wholesaleBS : retailBS;
          const bsRefTotal = bsRefUnit * item.quantity;
-         const bsActualTotal = bsRefTotal * eurToBsRate;   // Bs a cobrar si paga 100% en Bs
+         const bsActualTotal = bsRefTotal * eurToBsRate;
 
          return {
             ...item,
@@ -196,6 +198,9 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
       });
    }, [cart, products, isWholesale, eurToBsRate]);
 
+   // ==========================================
+   // COMBOS
+   // ==========================================
    const comboInfo = useMemo(() => {
       if (appliedCombos.length === 0) {
          return {
@@ -203,23 +208,55 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
             eligibleCount: 0,
             totalCount: 0,
             totalDiscount: 0,
-            appliedResults: [],
-            itemComboMap: {},
+            totalCombosUSD: 0,
+            totalCombosBSRef: 0,
+            consumedQuantities: {} as Record<string, number>,
+            appliedResults: [] as any[],
+            itemComboMap: {} as Record<string, string[]>,
          };
       }
       return checkMultiComboEligibility(cart, products, combos, appliedCombos);
    }, [appliedCombos, cart, products, combos]);
 
-   const comboDiscount = comboInfo.totalDiscount;
+   // ==========================================
+   // TOTALES: items fuera de combos + combos
+   // ==========================================
+   const consumedByCombos = comboInfo.consumedQuantities || {};
 
-   const rawTotalUSD = pricedCart.reduce((s, i) => s + i.totalPrice, 0);
-   const totalUSD = Math.max(0, rawTotalUSD - comboDiscount);
+   const itemsOutsideCombosUSD = useMemo(() => {
+      return pricedCart.reduce((sum, item) => {
+         const key = `${item.productId}_${item.color}_${item.size}`;
+         const consumed = consumedByCombos[key] || 0;
+         const remaining = Math.max(0, item.quantity - consumed);
+         return sum + remaining * item.unitPrice;
+      }, 0);
+   }, [pricedCart, consumedByCombos]);
 
-   const rawTotalBSRef = pricedCart.reduce((s, i) => s + i.bsRefTotal, 0);
-   const totalBSExpected = rawTotalUSD > 0
-      ? rawTotalBSRef * eurToBsRate * (totalUSD / rawTotalUSD)
-      : 0;
-   const totalBSRef = totalBSExpected / (eurToBsRate || 1);
+   const itemsOutsideCombosBSRef = useMemo(() => {
+      return pricedCart.reduce((sum, item) => {
+         const key = `${item.productId}_${item.color}_${item.size}`;
+         const consumed = consumedByCombos[key] || 0;
+         const remaining = Math.max(0, item.quantity - consumed);
+         return sum + remaining * item.bsRefUnit;
+      }, 0);
+   }, [pricedCart, consumedByCombos]);
+
+   // Totales finales
+   const rawTotalUSD = itemsOutsideCombosUSD + comboInfo.totalCombosUSD;
+   const rawTotalBSRef = itemsOutsideCombosBSRef + comboInfo.totalCombosBSRef;
+
+   const totalUSD = rawTotalUSD;
+   const totalBSExpected = rawTotalBSRef * eurToBsRate;
+   const totalBSRef = rawTotalBSRef;
+
+   // Equivalente USD del monto Bs realmente cobrado
+   const totalBSExpectedUSDEquiv = usdToBsRate > 0 ? totalBSExpected / usdToBsRate : 0;
+
+   // Para el recibo: subtotal = suma de TODOS los items a precio normal; discount = subtotal - total
+   const subtotalAllItems = pricedCart.reduce((s, i) => s + i.totalPrice, 0);
+   const discountAmount = subtotalAllItems - totalUSD;
+
+   // Combos: precio Bs y USD totales ya vienen de comboInfo
 
    useEffect(() => {
       if (appliedCombos.length === 0) return;
@@ -227,15 +264,45 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
       if (valid.length !== appliedCombos.length) setAppliedCombos(valid);
    }, [combos, appliedCombos]);
 
+   // Regenerar el split de Bs cuando el toggle está activo
+   useEffect(() => {
+      if (isFullBsPayment && cart.length === 0) {
+         setIsFullBsPayment(false);
+         return;
+      }
+
+      if (isFullBsPayment && totalBSExpected > 0) {
+         setPaymentSplits([{
+            id: `split_bs_full_${Date.now()}`,
+            method: 'pago_movil',
+            currency: 'BS',
+            amount: totalBSExpected,
+         }]);
+      } else if (!isFullBsPayment) {
+         setPaymentSplits((prev) => prev.filter((s) => !s.id.startsWith('split_bs_full_')));
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [isFullBsPayment, totalBSExpected, cart.length]);
+
    // ==========================================
    // PAGOS
    // ==========================================
    const paidUSD = paymentSplits.filter((s) => s.currency === 'USD').reduce((s, p) => s + p.amount, 0);
    const paidBS = paymentSplits.filter((s) => s.currency === 'BS').reduce((s, p) => s + p.amount, 0);
    const paidInUSDEquiv = paidUSD + (usdToBsRate > 0 ? paidBS / usdToBsRate : 0);
-   const remainingInUSDEquiv = Math.max(0, totalUSD - paidInUSDEquiv);
-   const isFullyCovered = remainingInUSDEquiv <= 0.01;
 
+   const remainingInUSDEquiv = Math.max(0, totalUSD - paidInUSDEquiv);
+   const overpaidUSD = Math.max(0, paidInUSDEquiv - totalUSD);
+
+   const bsShortfall = isFullBsPayment ? Math.max(0, totalBSExpected - paidBS) : 0;
+   const bsOverpay = isFullBsPayment ? Math.max(0, paidBS - totalBSExpected) : 0;
+
+   const isCovered = isFullBsPayment ? bsShortfall <= 1 : remainingInUSDEquiv <= 0.01;
+   const isFullyCovered = isCovered;
+
+   // ==========================================
+   // Handlers de producto y carrito
+   // ==========================================
    const handleSelectProduct = (product: Product) => {
       setSelectedProduct(product);
       setSelectedColorIndex(0);
@@ -320,13 +387,14 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
       setCart([]);
       setPaymentSplits([]);
       setAppliedCombos([]);
+      setIsFullBsPayment(false);
       setCustomerName('');
       setCustomerPhone('');
       setNotes('');
    };
 
    // ==========================================
-   // TASA EUR y USD
+   // Tasas
    // ==========================================
    const makeRateHandler = (
       setter: (n: number) => void,
@@ -342,9 +410,16 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
    const handleUsdRateChange = makeRateHandler(setUsdToBsRate, setUsdRateInput);
 
    // ==========================================
-   // SPLITS DE PAGO
+   // Splits
    // ==========================================
    const openSplitModal = () => {
+      if (isFullBsPayment) {
+         showAlert(
+            'Pago en Bs activo',
+            'Desactiva el modo "Pago Total en Bs" si quieres usar métodos mixtos.'
+         );
+         return;
+      }
       setNewSplitMethod('pago_movil');
       setNewSplitAmount('');
       setNewSplitRef('');
@@ -364,7 +439,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
          return;
       }
 
-      // Pago móvil = Bs. Todos los demás métodos = USD.
       const currency: 'USD' | 'BS' = newSplitMethod === 'pago_movil' ? 'BS' : 'USD';
 
       const newSplit: PaymentSplit = {
@@ -383,8 +457,35 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
       setPaymentSplits((prev) => prev.filter((s) => s.id !== id));
    };
 
+   const toggleFullBs = () => {
+      if (!isFullBsPayment) {
+         if (cart.length === 0) {
+            showAlert('Carrito vacío', 'Agrega al menos una prenda antes de activar el pago en Bs.');
+            return;
+         }
+         if (totalBSExpected <= 0) {
+            showAlert(
+               'Sin precios en Bs',
+               'Configura los precios en Bs de los productos o la tasa EUR para usar esta opción.'
+            );
+            return;
+         }
+         if (paymentSplits.length > 0) {
+            showConfirm(
+               'Pago Total en Bs',
+               'Se reemplazarán los pagos actuales por un único Pago Móvil en Bs por el monto exacto. ¿Continuar?',
+               () => setIsFullBsPayment(true)
+            );
+            return;
+         }
+         setIsFullBsPayment(true);
+      } else {
+         setIsFullBsPayment(false);
+      }
+   };
+
    // ==========================================
-   // Rendimiento
+   // Vendedores
    // ==========================================
    const openCreateSellerModal = () => {
       setSellerModalMode('create');
@@ -451,7 +552,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
    };
 
    // ==========================================
-   // COMPLETAR VENTA
+   // Completar venta
    // ==========================================
    const handleCompleteSale = async () => {
       if (cart.length === 0) {
@@ -466,17 +567,48 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
          showAlert('Sin pagos', 'Agrega al menos un método de pago antes de completar la venta.');
          return;
       }
-      if (!isFullyCovered) {
-         const confirmPartial = () => {
+
+      // Modo Pago Total en Bs
+      if (isFullBsPayment) {
+         if (bsOverpay > 1) {
             showConfirm(
-               'Venta parcial',
-               `Aún faltan $${remainingInUSDEquiv.toFixed(2)} equivalente en USD. ¿Registrar la venta de todas formas?`,
+               'Cobro mayor al total en Bs',
+               `Estás cobrando ${bsOverpay.toFixed(2)} Bs de más. El vuelto deberá entregarse al cliente. ¿Registrar la venta de todas formas?`,
                () => executeCompleteSale()
             );
-         };
-         confirmPartial();
+            return;
+         }
+         if (bsShortfall > 1) {
+            showConfirm(
+               'Pago parcial en Bs',
+               `Faltan ${bsShortfall.toFixed(2)} Bs. ¿Registrar la venta de todas formas?`,
+               () => executeCompleteSale()
+            );
+            return;
+         }
+         executeCompleteSale();
          return;
       }
+
+      // Modo normal / mixto
+      if (overpaidUSD > 0.01) {
+         showConfirm(
+            'Cobro mayor al total',
+            `Estás cobrando $${overpaidUSD.toFixed(2)} más de lo que suma el total. ` +
+            `El vuelto deberá entregarse al cliente. ¿Registrar la venta de todas formas?`,
+            () => executeCompleteSale()
+         );
+         return;
+      }
+      if (!isFullyCovered) {
+         showConfirm(
+            'Venta parcial',
+            `Aún faltan $${remainingInUSDEquiv.toFixed(2)} equivalente en USD. ¿Registrar la venta de todas formas?`,
+            () => executeCompleteSale()
+         );
+         return;
+      }
+
       executeCompleteSale();
    };
 
@@ -515,8 +647,8 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
          sellerId: selectedSeller.id,
          sellerName: selectedSeller.name,
          items: itemsPayload,
-         subtotal: rawTotalUSD,
-         discount: comboDiscount,
+         subtotal: subtotalAllItems,
+         discount: discountAmount,
          total: totalUSD,
          paymentMethod: primaryMethod,
          paymentSplits,
@@ -532,8 +664,8 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
 
       if (comboInfo.eligibleCount > 0) {
          const appliedList: SaleCombo[] = comboInfo.appliedResults
-            .filter((r) => r.eligible)
-            .map((r) => ({
+            .filter((r: any) => r.eligible)
+            .map((r: any) => ({
                comboId: r.comboId,
                comboName: r.comboName,
                comboPrice: r.comboPrice,
@@ -593,7 +725,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
    };
 
    // ==========================================
-   // RENDER
+   // Render
    // ==========================================
    const renderProductItem = ({ item }: { item: Product }) => {
       const retail = Number(item.price || 0);
@@ -633,7 +765,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
 
    const checkout = (
       <View style={styles.checkoutSection}>
-         {/* VENDEDOR — siempre visible, compacto */}
+         {/* VENDEDOR */}
          <View style={styles.sectionRow}>
             <Text style={styles.sectionMiniLabel}>Vendedor</Text>
             {selectedSeller && (
@@ -670,7 +802,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
             </P>
          </ScrollView>
 
-         {/* TASA — chip compacto + modal */}
+         {/* TASAS */}
          <P style={styles.ratesChip} onPress={() => setShowRatesModal(true)}>
             <Coins size={13} color="#4338CA" />
             <Text style={styles.ratesChipText}>
@@ -679,13 +811,85 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
             <Settings size={12} color="#4338CA" />
          </P>
 
-         {/* PAGOS — siempre visible */}
+         {/* TOGGLE PAGO TOTAL EN BS */}
+         <P
+            style={[styles.fullBsToggle, isFullBsPayment && styles.fullBsToggleActive]}
+            onPress={toggleFullBs}
+         >
+            <Coins size={16} color={isFullBsPayment ? T.onSolid : '#4338CA'} />
+            <View style={{ flex: 1 }}>
+               <Text style={[styles.fullBsToggleTitle, isFullBsPayment && { color: T.onSolid }]}>
+                  {isFullBsPayment ? 'Pago Total en Bs · ACTIVO' : 'Pago Total en Bolívares'}
+               </Text>
+               <Text style={[styles.fullBsToggleSub, isFullBsPayment && { color: 'rgba(255,255,255,0.7)' }]}>
+                  {isFullBsPayment
+                     ? `${totalBSExpected.toFixed(2)} Bs vía Pago Móvil`
+                     : 'Actívalo si el cliente pagará todo en bolívares'}
+               </Text>
+            </View>
+            {isFullBsPayment && <Check size={18} color={T.onSolid} />}
+         </P>
+
+         {/* COMBOS APLICADOS */}
+         {comboInfo.eligibleCount > 0 && (
+            <View style={styles.comboSection}>
+               <View style={styles.comboSectionHeader}>
+                  <Crown size={14} color="#7C3AED" />
+                  <Text style={styles.comboSectionTitle}>
+                     Combos Aplicados ({comboInfo.eligibleCount})
+                  </Text>
+                  <Text style={styles.comboSectionTotal}>
+                     {isFullBsPayment
+                        ? `${(comboInfo.totalCombosBSRef * eurToBsRate).toFixed(2)} Bs`
+                        : `$${comboInfo.totalCombosUSD.toFixed(2)}`}
+                  </Text>
+               </View>
+
+               {comboInfo.appliedResults
+                  .filter((r: any) => r.eligible)
+                  .map((r: any, idx: number) => (
+                     <View key={`combo_${idx}_${r.comboId}`} style={styles.comboItemRow}>
+                        <View style={styles.comboDot} />
+                        <Text style={styles.comboItemName} numberOfLines={1}>
+                           {r.comboName}
+                        </Text>
+                        <Text style={styles.comboItemAmount}>
+                           {isFullBsPayment
+                              ? `${(r.comboPriceBS * eurToBsRate).toFixed(2)} Bs`
+                              : `$${r.comboPrice.toFixed(2)}`}
+                        </Text>
+                     </View>
+                  ))}
+
+               {!isFullBsPayment && comboInfo.totalCombosBSRef > 0 && (
+                  <View style={styles.comboItemRow}>
+                     <View style={{ width: 6 }} />
+                     <Text style={[styles.comboItemName, { fontStyle: 'italic', color: T.inkMute }]}>
+                        €{comboInfo.totalCombosBSRef.toFixed(2)} ref Bs
+                     </Text>
+                  </View>
+               )}
+
+               {isFullBsPayment && usdToBsRate > 0 && (
+                  <View style={styles.comboItemRow}>
+                     <View style={{ width: 6 }} />
+                     <Text style={[styles.comboItemName, { fontStyle: 'italic', color: T.inkMute }]}>
+                        ≈ ${((comboInfo.totalCombosBSRef * eurToBsRate) / usdToBsRate).toFixed(2)} USD
+                     </Text>
+                  </View>
+               )}
+            </View>
+         )}
+
+         {/* PAGOS */}
          <View style={[styles.sectionRow, { marginTop: 8 }]}>
             <Text style={styles.sectionMiniLabel}>Pagos ({paymentSplits.length})</Text>
-            <P style={styles.addSplitBtn} onPress={openSplitModal}>
-               <Plus size={11} color={T.ink} />
-               <Text style={styles.addSplitText}>Agregar</Text>
-            </P>
+            {!isFullBsPayment && (
+               <P style={styles.addSplitBtn} onPress={openSplitModal}>
+                  <Plus size={11} color={T.ink} />
+                  <Text style={styles.addSplitText}>Agregar</Text>
+               </P>
+            )}
          </View>
 
          {paymentSplits.length === 0 ? (
@@ -711,35 +915,77 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                         <Text style={styles.splitAmount}>
                            {s.currency === 'USD' ? `$${s.amount.toFixed(2)}` : `${s.amount.toFixed(2)} Bs`}
                         </Text>
-                        <P style={styles.splitDeleteBtn} onPress={() => removeSplit(s.id)}>
-                           <Trash2 size={11} color="#DC2626" />
-                        </P>
+                        {!s.id.startsWith('split_bs_full_') && (
+                           <P style={styles.splitDeleteBtn} onPress={() => removeSplit(s.id)}>
+                              <Trash2 size={11} color="#DC2626" />
+                           </P>
+                        )}
                      </View>
                   );
                })}
             </View>
          )}
 
-         {/* ESTADO COBERTURA — compacto, una sola línea */}
+         {/* ESTADO COBERTURA */}
          {paymentSplits.length > 0 && (
-            <View style={[styles.coverageBar, isFullyCovered ? styles.coverageBarOk : styles.coverageBarWarn]}>
-               {isFullyCovered ? (
+            <View
+               style={[
+                  styles.coverageBar,
+                  isFullBsPayment
+                     ? bsShortfall <= 1 && bsOverpay <= 1
+                        ? styles.coverageBarOk
+                        : styles.coverageBarWarn
+                     : overpaidUSD > 0.01
+                        ? styles.coverageBarOver
+                        : isFullyCovered
+                           ? styles.coverageBarOk
+                           : styles.coverageBarWarn,
+               ]}
+            >
+               {isFullBsPayment ? (
+                  bsShortfall > 1 || bsOverpay > 1 ? (
+                     <AlertCircle size={13} color="#B45309" />
+                  ) : (
+                     <Check size={13} color="#047857" />
+                  )
+               ) : overpaidUSD > 0.01 ? (
+                  <AlertCircle size={13} color="#DC2626" />
+               ) : isFullyCovered ? (
                   <Check size={13} color="#047857" />
                ) : (
                   <AlertCircle size={13} color="#B45309" />
                )}
                <Text
-                  style={[styles.coverageText, isFullyCovered ? { color: '#047857' } : { color: '#B45309' }]}
+                  style={[
+                     styles.coverageText,
+                     isFullBsPayment
+                        ? bsShortfall <= 1 && bsOverpay <= 1
+                           ? { color: '#047857' }
+                           : { color: '#B45309' }
+                        : overpaidUSD > 0.01
+                           ? { color: '#DC2626' }
+                           : isFullyCovered
+                              ? { color: '#047857' }
+                              : { color: '#B45309' },
+                  ]}
                   numberOfLines={1}
                >
-                  {isFullyCovered
-                     ? `Cubierto · $${paidUSD.toFixed(2)} + ${paidBS.toFixed(2)} Bs`
-                     : `Falta $${remainingInUSDEquiv.toFixed(2)} · $${paidUSD.toFixed(2)} + ${paidBS.toFixed(2)} Bs`}
+                  {isFullBsPayment
+                     ? bsOverpay > 1
+                        ? `Cobras ${bsOverpay.toFixed(2)} Bs de más`
+                        : bsShortfall > 1
+                           ? `Faltan ${bsShortfall.toFixed(2)} Bs`
+                           : `Cubierto · ${paidBS.toFixed(2)} Bs`
+                     : overpaidUSD > 0.01
+                        ? `Cobras $${overpaidUSD.toFixed(2)} de más · devuelve cambio`
+                        : isFullyCovered
+                           ? `Cubierto · $${paidUSD.toFixed(2)} + ${paidBS.toFixed(2)} Bs`
+                           : `Falta $${remainingInUSDEquiv.toFixed(2)} · $${paidUSD.toFixed(2)} + ${paidBS.toFixed(2)} Bs`}
                </Text>
             </View>
          )}
 
-         {/* CLIENTE Y NOTAS — accordion colapsado */}
+         {/* CLIENTE Y NOTAS */}
          <P style={styles.accordionHeader} onPress={() => setShowClientSection(!showClientSection)}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                <User size={13} color={T.inkSoft} />
@@ -793,28 +1039,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                      />
                   </View>
                </View>
-            </View>
-         )}
-
-         {comboInfo.eligibleCount > 0 && comboDiscount !== 0 && (
-            <View style={styles.comboDiscountLine}>
-               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                  <Crown size={14} color={comboDiscount > 0 ? '#047857' : '#B45309'} />
-                  <Text
-                     style={[styles.comboDiscountLabel, comboDiscount < 0 && { color: '#B45309' }]}
-                     numberOfLines={1}
-                  >
-                     {comboDiscount > 0 ? 'Descuento Combos' : 'Ajuste Combos'} · {comboInfo.eligibleCount}
-                  </Text>
-               </View>
-               <Text
-                  style={[
-                     styles.comboDiscountValue,
-                     comboDiscount > 0 ? { color: '#047857' } : { color: '#B45309' },
-                  ]}
-               >
-                  {comboDiscount > 0 ? '-' : '+'}${Math.abs(comboDiscount).toFixed(2)}
-               </Text>
             </View>
          )}
       </View>
@@ -945,7 +1169,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
 
             {showCart && (
                <View style={[styles.rightPanel, split && styles.rightSplit]}>
-                  {/* HEADER STICKY con total inline */}
+                  {/* HEADER */}
                   <View style={styles.cartHeaderSticky}>
                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
                         <ShoppingBag size={20} color={T.ink} />
@@ -957,7 +1181,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                         )}
                         {comboInfo.eligibleCount > 0 && (
                            <View style={styles.cartHeaderComboBadge}>
-                              <Crown size={10} color="#047857" />
+                              <Crown size={10} color="#7C3AED" />
                               <Text style={styles.cartHeaderComboText}>
                                  {comboInfo.eligibleCount} {comboInfo.eligibleCount === 1 ? 'combo' : 'combos'}
                               </Text>
@@ -971,11 +1195,33 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                         <P style={styles.headerActionBtn} onPress={() => setShowComboManager(true)}>
                            <Settings size={13} color={T.ink} />
                         </P>
-                        <Text style={styles.cartHeaderTotal}>${totalUSD.toFixed(2)}</Text>
+                        <View style={{ alignItems: 'flex-end' }}>
+                           {isFullBsPayment ? (
+                              <>
+                                 <Text style={styles.cartHeaderTotal}>
+                                    {totalBSExpected.toFixed(2)} Bs
+                                 </Text>
+                                 {usdToBsRate > 0 && (
+                                    <Text style={styles.cartHeaderTotalUsd}>
+                                       ≈ ${totalBSExpectedUSDEquiv.toFixed(2)} USD
+                                    </Text>
+                                 )}
+                              </>
+                           ) : (
+                              <>
+                                 <Text style={styles.cartHeaderTotal}>${totalUSD.toFixed(2)}</Text>
+                                 {totalBSRef > 0 && (
+                                    <Text style={styles.cartHeaderTotalUsd}>
+                                       €{totalBSRef.toFixed(2)} ref
+                                    </Text>
+                                 )}
+                              </>
+                           )}
+                        </View>
                      </View>
                   </View>
 
-                  {/* LISTA + SECCIONES SCROLLEABLES CON BARRA VISIBLE */}
+                  {/* LISTA + CHECKOUT */}
                   <ScrollView
                      style={styles.cartScroll}
                      showsVerticalScrollIndicator={true}
@@ -987,57 +1233,80 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                            El carrito está vacío. Selecciona prendas del catálogo para iniciar la venta.
                         </Text>
                      ) : (
-                        pricedCart.map((item, idx) => (
-                           <View key={`${item.productId}_${item.color}_${item.size}`} style={styles.cartItemRow}>
-                              <Pressable onPress={() => item.productImage && setViewerImage(item.productImage)}>
-                                 <Cover uri={item.productImage} name={item.name} bg={T.imgBg} fg={T.line} style={styles.cartItemImg} />
-                              </Pressable>
-                              <View style={{ flex: 1, minWidth: 120 }}>
-                                 <Text style={styles.cartItemName} numberOfLines={2}>{item.name}</Text>
-                                 <Text style={styles.cartItemDetail}>Color: {item.color} · Talla: {item.size}</Text>
-                                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
-                                    <Text style={styles.cartItemPrice}>${item.unitPrice.toFixed(2)} c/u</Text>
-                                    {item.bsRefUnit > 0 && (
-                                       <Text style={styles.cartItemPriceBS}>· €{item.bsRefUnit.toFixed(2)}</Text>
+                        pricedCart.map((item, idx) => {
+                           const itemKey = `${item.productId}_${item.color}_${item.size}`;
+                           const consumed = consumedByCombos[itemKey] || 0;
+                           const isFullyInCombo = consumed > 0 && consumed >= item.quantity;
+                           const isPartiallyInCombo = consumed > 0 && consumed < item.quantity;
+                           const remainingQty = Math.max(0, item.quantity - consumed);
+
+                           return (
+                              <View key={itemKey} style={styles.cartItemRow}>
+                                 <Pressable onPress={() => item.productImage && setViewerImage(item.productImage)}>
+                                    <Cover uri={item.productImage} name={item.name} bg={T.imgBg} fg={T.line} style={styles.cartItemImg} />
+                                 </Pressable>
+                                 <View style={{ flex: 1, minWidth: 120 }}>
+                                    <Text style={styles.cartItemName} numberOfLines={2}>{item.name}</Text>
+                                    <Text style={styles.cartItemDetail}>Color: {item.color} · Talla: {item.size}</Text>
+                                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+                                       <Text style={styles.cartItemPrice}>${item.unitPrice.toFixed(2)} c/u</Text>
+                                       {item.bsRefUnit > 0 && (
+                                          <Text style={styles.cartItemPriceBS}>· €{item.bsRefUnit.toFixed(2)}</Text>
+                                       )}
+                                       {item.isWholesalePrice && (
+                                          <View style={styles.wholesaleItemBadge}>
+                                             <Text style={styles.wholesaleItemBadgeText}>MAYOR</Text>
+                                          </View>
+                                       )}
+                                       {isFullyInCombo && (
+                                          <View style={styles.comboItemBadge}>
+                                             <Crown size={8} color="#7C3AED" />
+                                             <Text style={styles.comboItemBadgeText}>COMBO</Text>
+                                          </View>
+                                       )}
+                                       {isPartiallyInCombo && (
+                                          <View style={styles.comboPartialBadge}>
+                                             <Crown size={8} color="#7C3AED" />
+                                             <Text style={styles.comboItemBadgeText}>
+                                                COMBO ×{consumed}
+                                             </Text>
+                                          </View>
+                                       )}
+                                    </View>
+                                 </View>
+
+                                 <View style={styles.qtyControls}>
+                                    <P style={styles.qtyBtn} onPress={() => updateCartQuantity(idx, -1)}>
+                                       <Minus size={13} color={T.ink} />
+                                    </P>
+                                    <Text style={styles.qtyText}>{item.quantity}</Text>
+                                    <P style={styles.qtyBtn} onPress={() => updateCartQuantity(idx, 1)}>
+                                       <Plus size={13} color={T.ink} />
+                                    </P>
+                                 </View>
+
+                                 <View style={{ alignItems: 'flex-end', minWidth: 76 }}>
+                                    <Text style={styles.cartItemSubtotal}>${item.totalPrice.toFixed(2)}</Text>
+                                    {item.bsRefTotal > 0 && (
+                                       <Text style={styles.cartItemSubtotalBS}>
+                                          {(item.bsRefTotal * eurToBsRate).toFixed(2)} Bs
+                                       </Text>
                                     )}
-                                    {item.isWholesalePrice && (
-                                       <View style={styles.wholesaleItemBadge}>
-                                          <Text style={styles.wholesaleItemBadgeText}>MAYOR</Text>
-                                       </View>
-                                    )}
-                                    {comboInfo.itemComboMap[`${item.productId}_${item.color}_${item.size}`] && (
-                                       <View style={styles.comboItemBadge}>
-                                          <Crown size={8} color="#7C3AED" />
-                                          <Text style={styles.comboItemBadgeText}>COMBO</Text>
-                                       </View>
+                                    {consumed > 0 && (
+                                       <Text style={styles.cartItemComboNote} numberOfLines={1}>
+                                          {isFullyInCombo
+                                             ? 'en combo'
+                                             : `${remainingQty}/${item.quantity} libres`}
+                                       </Text>
                                     )}
                                  </View>
-                              </View>
 
-                              <View style={styles.qtyControls}>
-                                 <P style={styles.qtyBtn} onPress={() => updateCartQuantity(idx, -1)}>
-                                    <Minus size={13} color={T.ink} />
-                                 </P>
-                                 <Text style={styles.qtyText}>{item.quantity}</Text>
-                                 <P style={styles.qtyBtn} onPress={() => updateCartQuantity(idx, 1)}>
-                                    <Plus size={13} color={T.ink} />
+                                 <P style={styles.cartDeleteBtn} onPress={() => removeFromCart(idx)}>
+                                    <Trash2 size={13} color={T.inkMute} />
                                  </P>
                               </View>
-
-                              <View style={{ alignItems: 'flex-end', minWidth: 76 }}>
-                                 <Text style={styles.cartItemSubtotal}>${item.totalPrice.toFixed(2)}</Text>
-                                 {item.bsRefTotal > 0 && (
-                                    <Text style={styles.cartItemSubtotalBS}>
-                                       {(item.bsRefTotal * eurToBsRate).toFixed(2)} Bs
-                                    </Text>
-                                 )}
-                              </View>
-
-                              <P style={styles.cartDeleteBtn} onPress={() => removeFromCart(idx)}>
-                                 <Trash2 size={13} color={T.inkMute} />
-                              </P>
-                           </View>
-                        ))
+                           );
+                        })
                      )}
 
                      {cartCount >= WHOLESALE_THRESHOLD && (
@@ -1055,13 +1324,16 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                      {checkout}
                   </ScrollView>
 
-                  {/* FOOTER STICKY — solo total Bs + botón */}
+                  {/* FOOTER */}
                   <View style={styles.cartFooterSticky}>
-                     {totalBSRef > 0 && (
+                     {!isFullBsPayment && totalBSRef > 0 && (
                         <View style={styles.cartFooterBSRow}>
                            <Text style={styles.cartFooterBSLabel}>Equiv. Bs:</Text>
                            <Text style={styles.cartFooterBSValue}>
-                              {totalBSExpected.toFixed(2)} Bs <Text style={styles.cartFooterBSRef}>(€{totalBSRef.toFixed(2)} @ {eurToBsRate})</Text>
+                              {totalBSExpected.toFixed(2)} Bs{' '}
+                              <Text style={styles.cartFooterBSRef}>
+                                 (€{totalBSRef.toFixed(2)} @ {eurToBsRate})
+                              </Text>
                            </Text>
                         </View>
                      )}
@@ -1082,7 +1354,8 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                      </P>
                   </View>
                </View>
-            )}         </View>
+            )}
+         </View>
 
          {/* LIGHTBOX IMAGEN */}
          <Modal visible={!!viewerImage} transparent animationType="fade">
@@ -1154,7 +1427,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
                         autoFocus
                      />
 
-                     {/* Preview de conversión */}
                      {newSplitMethod === 'pago_movil' && parseFloat(newSplitAmount) > 0 && (
                         <View style={styles.splitConvertPreview}>
                            <Text style={styles.splitConvertText}>
@@ -1391,6 +1663,7 @@ const styles = StyleSheet.create({
    cartItemDetail: { fontSize: 12, color: T.inkMute },
    cartItemPrice: { fontSize: 12, color: T.inkSoft, fontWeight: '700' },
    cartItemPriceBS: { fontSize: 12, color: '#7C3AED', fontWeight: '700' },
+   cartItemComboNote: { fontSize: 9, color: '#7C3AED', fontWeight: '700', marginTop: 2 },
    wholesaleItemBadge: { backgroundColor: '#ECFDF5', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3, borderWidth: 1, borderColor: '#A7F3D0' },
    wholesaleItemBadgeText: { fontSize: 8, fontWeight: '800', color: '#047857' },
    qtyControls: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: T.line, borderRadius: 10, backgroundColor: T.bg },
@@ -1490,7 +1763,6 @@ const styles = StyleSheet.create({
       textAlign: 'center',
    },
 
-   // Header sticky del carrito
    cartHeaderSticky: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -1529,8 +1801,13 @@ const styles = StyleSheet.create({
       fontWeight: '800',
       color: T.ink,
    },
+   cartHeaderTotalUsd: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: T.inkMute,
+      marginTop: 2,
+   },
 
-   // Footer sticky
    cartFooterSticky: {
       borderTopWidth: 1,
       borderTopColor: T.line,
@@ -1563,7 +1840,6 @@ const styles = StyleSheet.create({
       color: '#A78BFA',
    },
 
-   // Secciones compactas
    sectionRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -1594,7 +1870,6 @@ const styles = StyleSheet.create({
       color: T.inkSoft,
    },
 
-   // Chip de tasas
    ratesChip: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1615,7 +1890,34 @@ const styles = StyleSheet.create({
       color: '#4338CA',
    },
 
-   // Barra de cobertura compacta
+   fullBsToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      backgroundColor: '#EEF2FF',
+      borderWidth: 1,
+      borderColor: '#C7D2FE',
+      borderRadius: 10,
+      marginTop: 8,
+      marginBottom: 10,
+   },
+   fullBsToggleActive: {
+      backgroundColor: '#4338CA',
+      borderColor: '#4338CA',
+   },
+   fullBsToggleTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: '#4338CA',
+   },
+   fullBsToggleSub: {
+      fontSize: 11,
+      color: '#6366F1',
+      marginTop: 2,
+   },
+
    coverageBar: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1635,13 +1937,16 @@ const styles = StyleSheet.create({
       backgroundColor: '#FFFBEB',
       borderColor: '#FDE68A',
    },
+   coverageBarOver: {
+      backgroundColor: '#FEF2F2',
+      borderColor: '#FCA5A5',
+   },
    coverageText: {
       fontSize: 11,
       fontWeight: '800',
       flex: 1,
    },
 
-   // Accordion
    accordionHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -1664,12 +1969,66 @@ const styles = StyleSheet.create({
       fontWeight: '800',
    },
 
-   cartHeaderComboBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0' },
-   cartHeaderComboText: { fontSize: 9, fontWeight: '800', color: '#047857', textTransform: 'uppercase' },
+   cartHeaderComboBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: '#F5F3FF', borderWidth: 1, borderColor: '#DDD6FE' },
+   cartHeaderComboText: { fontSize: 9, fontWeight: '800', color: '#7C3AED', textTransform: 'uppercase' },
    headerActionBtn: { width: 30, height: 30, borderRadius: 8, borderWidth: 1, borderColor: T.line, backgroundColor: T.surface, alignItems: 'center', justifyContent: 'center' },
-   comboDiscountLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#A7F3D0', borderRadius: 8, marginTop: 8 },
-   comboDiscountLabel: { fontSize: 12, fontWeight: '800', color: '#047857', flex: 1 },
-   comboDiscountValue: { ...display, fontSize: 16, fontWeight: '800', color: '#047857' },
-   comboItemBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3, backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0' },
-   comboItemBadgeText: { fontSize: 8, fontWeight: '800', color: '#047857' },
+
+   // Sección de combos
+   comboSection: {
+      backgroundColor: '#F5F3FF',
+      borderWidth: 1,
+      borderColor: '#DDD6FE',
+      borderRadius: 8,
+      padding: 10,
+      marginTop: 8,
+      marginBottom: 8,
+      gap: 6,
+   },
+   comboSectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingBottom: 6,
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(124,58,237,0.2)',
+   },
+   comboSectionTitle: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#7C3AED',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      flex: 1,
+   },
+   comboSectionTotal: {
+      ...display,
+      fontSize: 14,
+      fontWeight: '800',
+      color: '#7C3AED',
+   },
+   comboItemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+   },
+   comboDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: '#7C3AED',
+   },
+   comboItemName: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: T.ink,
+      flex: 1,
+   },
+   comboItemAmount: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: '#7C3AED',
+   },
+   comboItemBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3, backgroundColor: '#F5F3FF', borderWidth: 1, borderColor: '#DDD6FE' },
+   comboPartialBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3, backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FED7AA' },
+   comboItemBadgeText: { fontSize: 8, fontWeight: '800', color: '#7C3AED' },
 });
