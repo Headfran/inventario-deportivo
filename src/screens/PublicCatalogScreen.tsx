@@ -132,7 +132,6 @@ const sizeRun = (p: Product): [string, boolean][] => {
    return Array.from(m.entries());
 };
 
-// Fallbacks para productos viejos que aún no tienen bolivarPrice/bolivarWholesalePrice
 const getBolivarRetail = (p: Product): number => {
    if (p.bolivarPrice && p.bolivarPrice > 0) return Number(p.bolivarPrice);
    return Number(p.price || 0) * REF_RATE_MULTIPLIER;
@@ -144,7 +143,6 @@ const getBolivarWholesale = (p: Product): number => {
    if (wholesaleUSD > 0) return wholesaleUSD * REF_RATE_MULTIPLIER;
    return Number(p.price || 0) * REF_RATE_MULTIPLIER;
 };
-
 
 const Chip = ({ label, active, onPress, left }: { label: string; active: boolean; onPress: () => void; left?: React.ReactNode }) => (
    <Pressable onPress={onPress} style={({ pressed }) => [styles.chip, active && styles.chipActive, pressed && styles.pressed]}>
@@ -232,7 +230,6 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
    );
 });
 
-
 export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUri }) => {
    const [products, setProducts] = useState<Product[]>([]);
    const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
@@ -307,12 +304,10 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       setDetailZoomUri(uri);
    }, []);
 
-   // Cantidad total acumulada de prendas en el carrito
    const totalCartQuantity = useMemo(() => {
       return cart.reduce((sum, item) => sum + item.quantity, 0);
    }, [cart]);
 
-   // Bandera global de mayor si el total de piezas es >= 6
    const isGlobalWholesale = totalCartQuantity >= 6;
 
    const addToCart = (product: Product) => {
@@ -595,10 +590,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                })}
             </View>
 
-            <Text style={styles.sectionTitle}>Selecciona una talla</Text>
-            <View style={[styles.wrap, { marginTop: 10, marginBottom: 18 }]}>
+            <Text style={styles.sectionTitle}>Tallas Disponibles</Text>
+            <View style={{ marginTop: 10, marginBottom: 18, gap: 8 }}>
                {activeVariant?.sizes?.map((s) => {
-                  const available = Number(s.stock) > 0;
+                  const stockNum = Number(s.stock) || 0;
+                  const available = stockNum > 0;
                   const isSel = selectedSize === s.size;
                   return (
                      <Pressable
@@ -606,20 +602,28 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                         disabled={!available}
                         onPress={() => setSelectedSize(s.size)}
                         style={[
-                           styles.sizeSelectChip,
-                           !available && styles.sizeSelectChipDisabled,
-                           isSel && styles.sizeSelectChipActive,
+                           styles.sizeRowOption,
+                           !available && styles.sizeRowOptionDisabled,
+                           isSel && styles.sizeRowOptionActive,
                         ]}
                      >
-                        <Text style={[styles.sizeSelectText, !available && styles.sizeSelectTextOff, isSel && styles.sizeSelectTextActive]}>
-                           {s.size}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                           <View style={[styles.sizeRadioIndicator, isSel && styles.sizeRadioIndicatorActive]}>
+                              {isSel && <Check size={10} color={GRAY[900]} strokeWidth={3} />}
+                           </View>
+                           <Text style={[styles.sizeRowText, !available && styles.sizeRowTextOff, isSel && styles.sizeRowTextActive]}>
+                              Talla {s.size}
+                           </Text>
+                        </View>
+                        <Text style={[styles.sizeRowStock, !available && styles.sizeRowTextOff, isSel && styles.sizeRowStockActive]}>
+                           {available ? `${stockNum} ${stockNum === 1 ? 'disponible' : 'disponibles'}` : 'Agotado'}
                         </Text>
                      </Pressable>
                   );
                })}
             </View>
 
-            <Text style={styles.sectionTitle}>Cantidad y Accesos Rápidos</Text>
+            <Text style={styles.sectionTitle}>Cantidad</Text>
             <View style={styles.quantityContainer}>
                <Pressable style={styles.qtyBtn} onPress={() => setQuantity((q) => Math.max(1, q - 1))}>
                   <Minus size={16} color={GRAY[800]} />
@@ -1180,12 +1184,59 @@ const styles = StyleSheet.create({
    colorChipText: { fontSize: 12, fontWeight: '700', color: GRAY[800] },
    colorChipTextActive: { color: '#FFFFFF' },
 
-   sizeSelectChip: { minWidth: 36, height: 32, paddingHorizontal: 10, borderRadius: 6, borderWidth: 1, borderColor: GRAY[300], backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
-   sizeSelectChipDisabled: { backgroundColor: GRAY[100], borderColor: GRAY[200], opacity: 0.5 },
-   sizeSelectChipActive: { backgroundColor: GRAY[900], borderColor: GRAY[900] },
-   sizeSelectText: { fontSize: 12, fontWeight: '800', color: GRAY[900] },
-   sizeSelectTextOff: { color: GRAY[400], textDecorationLine: 'line-through' },
-   sizeSelectTextActive: { color: '#FFFFFF' },
+   sizeRowOption: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: GRAY[300],
+      backgroundColor: '#FFFFFF',
+   },
+   sizeRowOptionDisabled: {
+      backgroundColor: GRAY[100],
+      borderColor: GRAY[200],
+      opacity: 0.6,
+   },
+   sizeRowOptionActive: {
+      backgroundColor: GRAY[900],
+      borderColor: GRAY[900],
+   },
+   sizeRadioIndicator: {
+      width: 16,
+      height: 16,
+      borderRadius: 8,
+      borderWidth: 2,
+      borderColor: GRAY[400],
+      justifyContent: 'center',
+      alignItems: 'center',
+   },
+   sizeRadioIndicatorActive: {
+      borderColor: '#FFFFFF',
+      backgroundColor: '#FFFFFF',
+   },
+   sizeRowText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: GRAY[900],
+   },
+   sizeRowTextOff: {
+      color: GRAY[400],
+      textDecorationLine: 'line-through',
+   },
+   sizeRowTextActive: {
+      color: '#FFFFFF',
+   },
+   sizeRowStock: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: GRAY[600],
+   },
+   sizeRowStockActive: {
+      color: GRAY[200],
+   },
 
    quantityContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' },
    qtyBtn: { width: 32, height: 32, borderRadius: 6, borderWidth: 1, borderColor: GRAY[300], justifyContent: 'center', alignItems: 'center', backgroundColor: GRAY[100] },

@@ -229,7 +229,12 @@ export const SellerPerformanceScreen: React.FC = () => {
             </ScrollView>
          </View>
 
-         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+         {/* CONTENIDO DESPLAZABLE PRINCIPAL */}
+         <ScrollView 
+            style={{ flex: 1 }} 
+            contentContainerStyle={styles.scrollContent} 
+            showsVerticalScrollIndicator={true}
+         >
             {/* KPIs GLOBALES */}
             <View style={styles.kpiGrid}>
                <View style={styles.kpiCard}>
