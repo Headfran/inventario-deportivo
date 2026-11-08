@@ -20,7 +20,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
    sale,
    visible,
    onClose,
-   storeName = 'Mi Tienda de Ropa',
+   storeName = 'JD Store',
 }) => {
    if (!sale) return null;
 
@@ -42,7 +42,6 @@ export const SaleReceiptModal: React.FC<Props> = ({
    const hasSplits = sale.paymentSplits && sale.paymentSplits.length > 0;
    const subtotalReal = sale.subtotal ?? sale.total;
 
-   // Lista normalizada de combos (compatibilidad con ventas antiguas)
    const appliedCombosList =
       sale.appliedCombos && sale.appliedCombos.length > 0
          ? sale.appliedCombos
@@ -54,7 +53,6 @@ export const SaleReceiptModal: React.FC<Props> = ({
    const hasComboAdjustment = hasCombos && !!sale.discount && sale.discount !== 0;
    const isAdjustmentPositive = hasComboAdjustment && sale.discount! > 0;
 
-   // Set de itemKeys que pertenecen a algún combo (agregado de todos los combos)
    const comboItemKeys = new Set<string>();
    appliedCombosList.forEach((c) => {
       (c.itemKeys || []).forEach((key) => comboItemKeys.add(key));
@@ -137,6 +135,14 @@ export const SaleReceiptModal: React.FC<Props> = ({
                            <Text style={styles.ticketVal}>
                               {paymentLabels[sale.paymentMethod] || sale.paymentMethod} · {sale.paymentSplits!.length} registro(s)
                            </Text>
+                        </View>
+                     )}
+
+                     {/* NOTAS */}
+                     {sale.notes && sale.notes.trim().length > 0 && (
+                        <View style={styles.notesBlock}>
+                           <Text style={styles.notesLabel}>Notas</Text>
+                           <Text style={styles.notesText}>{sale.notes}</Text>
                         </View>
                      )}
 
@@ -363,6 +369,29 @@ const styles = StyleSheet.create({
       borderColor: '#FDE68A',
    },
    comboBadgeText: { fontSize: 9, fontWeight: '800', color: '#7C3AED', letterSpacing: 0.5 },
+
+   // Notas
+   notesBlock: {
+      marginTop: 8,
+      padding: 10,
+      backgroundColor: '#FFFBEB',
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+      borderRadius: 8,
+   },
+   notesLabel: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: '#B45309',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: 4,
+   },
+   notesText: {
+      fontSize: 12,
+      color: '#78350F',
+      lineHeight: 17,
+   },
 
    ticketRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 12 },
    ticketLabel: { fontSize: 13, color: T.inkSoft, flexShrink: 1 },

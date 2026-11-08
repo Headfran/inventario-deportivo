@@ -39,6 +39,8 @@ import { EditSaleModal } from '../components/EditSaleModal';
 import { calculateSaleProfit } from '../services/salesHistoryService';
 import { MONO as T, display } from '../design';
 
+const STORE_NAME = 'JD Store';
+
 const safeFixed = (val: any, decimals: number = 2): string => {
    const num = Number(val);
    return isNaN(num) ? (0).toFixed(decimals) : num.toFixed(decimals);
@@ -121,6 +123,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                (sale.customerName && sale.customerName.toLowerCase().includes(queryLower)) ||
                (sale.sellerName && sale.sellerName.toLowerCase().includes(queryLower)) ||
                (sale.customerPhone && sale.customerPhone.includes(queryLower)) ||
+               (sale.notes && sale.notes.toLowerCase().includes(queryLower)) ||
                (sale.items &&
                   sale.items.some(
                      (item) =>
@@ -212,6 +215,15 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
 
       const formattedDate = formatDateTime(sale.createdAt, 'long');
 
+      const notesHtml = sale.notes && sale.notes.trim().length > 0
+         ? `
+            <div style="margin: 8px 0; padding: 8px; border: 1px solid #fde68a; background: #fffbeb; border-radius: 4px;">
+              <div style="font-weight: bold; font-size: 10px; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px;">Notas:</div>
+              <div style="margin-top: 4px; font-size: 11px; color: #78350f; white-space: pre-wrap; word-wrap: break-word;">${sale.notes.trim()}</div>
+            </div>
+          `
+         : '';
+
       printWindow.document.write(`
           <html>
             <head>
@@ -226,13 +238,14 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
               </style>
             </head>
             <body>
-              <div class="center bold" style="font-size: 14px;">MI TIENDA</div>
+              <div class="center bold" style="font-size: 14px;">${STORE_NAME.toUpperCase()}</div>
               <div class="center">Comprobante de Venta</div>
               <div class="center">#${sale.receiptNumber}</div>
               <div class="divider"></div>
               <div>Fecha: ${formattedDate}</div>
               ${sale.sellerName ? `<div>Vendedor: ${sale.sellerName}</div>` : ''}
               ${sale.customerName ? `<div>Cliente: ${sale.customerName}</div>` : ''}
+              ${notesHtml}
               <div class="divider"></div>
               <table>${itemsHtml}</table>
               <div class="divider"></div>
@@ -259,6 +272,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
    const handleShareWhatsApp = (sale: Sale) => {
       const formattedDate = formatDateTime(sale.createdAt, 'short');
       let message = `🧾 *COMPROBANTE DE COMPRA*\n`;
+      message += `🏢 *${STORE_NAME.toUpperCase()}*\n`;
       message += `*Recibo:* #${sale.receiptNumber}\n`;
       message += `*Fecha:* ${formattedDate}\n`;
       if (sale.customerName) message += `*Cliente:* ${sale.customerName}\n`;
@@ -270,6 +284,9 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
 
       message += `----------------------------\n`;
       if (Number(sale.discount) > 0) message += `*Descuento:* -$${safeFixed(sale.discount)}\n`;
+      if (sale.notes && sale.notes.trim().length > 0) {
+         message += `📝 *Notas:* ${sale.notes.trim()}\n`;
+      }
       message += `*TOTAL CANCELADO:* *$${safeFixed(sale.total)}*\n`;
       message += `*Método de Pago:* ${(sale.paymentMethod || '').replace('_', ' ').toUpperCase()}\n\n`;
       message += `¡Gracias por elegirnos! 🛍️`;
@@ -300,7 +317,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
 
    return (
       <View style={styles.container}>
-         {/* HEADER BANNER NEGRO */}
+         {/* HEADER */}
          <View style={styles.header}>
             <View style={styles.headerLeft}>
                <View style={styles.headerIconBox}>
@@ -429,6 +446,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => {
                const isVoided = item.status === 'voided';
+               const hasNotes = !!(item.notes && item.notes.trim().length > 0);
                return (
                   <P
                      style={[styles.saleCard, isVoided && styles.saleCardVoided]}
@@ -473,7 +491,6 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                               </View>
                            )}
                         </View>
-
                      </View>
 
                      <View style={styles.saleDetailsDivider} />
@@ -490,6 +507,12 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                               <Text style={styles.customerText} numberOfLines={1}>
                                  👤 {item.customerName}
                               </Text>
+                           </View>
+                        )}
+                        {hasNotes && (
+                           <View style={styles.notesBadge}>
+                              <FileText size={10} color="#B45309" />
+                              <Text style={styles.notesBadgeText}>NOTAS</Text>
                            </View>
                         )}
                         <View style={styles.paymentTag}>
@@ -535,7 +558,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                         </P>
                      </View>
 
-                     <ScrollView style={{ padding: 16 }}>
+                     <ScrollView style={{ padding: 16 }} keyboardShouldPersistTaps="handled">
                         {selectedSale.status === 'voided' && (
                            <View style={styles.voidedAlertBox}>
                               <AlertTriangle size={16} color="#DC2626" style={{ marginRight: 8 }} />
@@ -547,7 +570,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
 
                         <View style={styles.ticketBox}>
                            <View style={styles.ticketHeader}>
-                              <Text style={styles.ticketMainTitle}>COMPROBANTE DE VENTA</Text>
+                              <Text style={styles.ticketMainTitle}>{STORE_NAME.toUpperCase()}</Text>
                               <Text style={styles.ticketNumber}>#{selectedSale.receiptNumber}</Text>
                               <Text style={styles.ticketMeta}>
                                  {formatDateTime(selectedSale.createdAt, 'long')}
@@ -570,6 +593,13 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                                     </View>
                                  )}
                               </>
+                           )}
+
+                           {selectedSale.notes && selectedSale.notes.trim().length > 0 && (
+                              <View style={styles.notesBlock}>
+                                 <Text style={styles.notesLabel}>Notas</Text>
+                                 <Text style={styles.notesText}>{selectedSale.notes}</Text>
+                              </View>
                            )}
 
                            <View style={styles.divider} />
@@ -751,7 +781,6 @@ const styles = StyleSheet.create({
    container: { flex: 1, backgroundColor: T.bg },
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
-   // Header banner negro
    header: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -810,7 +839,6 @@ const styles = StyleSheet.create({
       marginTop: 2,
    },
 
-   // Filtros
    filterSection: {
       paddingHorizontal: 16,
       paddingTop: 14,
@@ -891,7 +919,6 @@ const styles = StyleSheet.create({
    chipText: { fontSize: 12, color: T.inkSoft, fontWeight: '700' },
    chipTextActive: { color: T.onSolid, fontWeight: '800' },
 
-   // Lista
    listContent: { padding: 16, paddingBottom: 60 },
    saleCard: {
       backgroundColor: T.surface,
@@ -961,6 +988,16 @@ const styles = StyleSheet.create({
       color: '#DC2626',
       letterSpacing: 0.5,
    },
+   statusPillEdited: {
+      marginTop: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+      backgroundColor: '#FFFBEB',
+   },
+   statusPillEditedText: { fontSize: 9, fontWeight: '800', color: '#B45309', letterSpacing: 0.5 },
 
    saleDetailsDivider: { height: 1, backgroundColor: T.line, marginVertical: 12 },
    saleMetaRow: {
@@ -973,6 +1010,20 @@ const styles = StyleSheet.create({
    metaInline: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
    metaText: { fontSize: 12, color: T.inkMute },
    customerText: { fontSize: 12, fontWeight: '600', color: T.inkSoft },
+
+   notesBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 3,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+      backgroundColor: '#FFFBEB',
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+   },
+   notesBadgeText: { fontSize: 8, fontWeight: '800', color: '#B45309', letterSpacing: 0.3 },
+
    paymentTag: {
       backgroundColor: T.bg,
       paddingHorizontal: 8,
@@ -1001,7 +1052,6 @@ const styles = StyleSheet.create({
       lineHeight: 18,
    },
 
-   // Modal detalle
    modalOverlay: {
       flex: 1,
       backgroundColor: T.overlay,
@@ -1074,6 +1124,28 @@ const styles = StyleSheet.create({
    itemSpec: { fontSize: 12, color: T.inkMute },
    itemSubtotal: { fontSize: 14, fontWeight: '800', color: T.ink },
 
+   notesBlock: {
+      marginTop: 10,
+      padding: 10,
+      backgroundColor: '#FFFBEB',
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+      borderRadius: 8,
+   },
+   notesLabel: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: '#B45309',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: 4,
+   },
+   notesText: {
+      fontSize: 12,
+      color: '#78350F',
+      lineHeight: 17,
+   },
+
    totalRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -1137,8 +1209,19 @@ const styles = StyleSheet.create({
       backgroundColor: '#FEF2F2',
    },
    actionBtnDangerText: { fontSize: 13, fontWeight: '800', color: '#DC2626' },
+   actionBtnEdit: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      height: 44,
+      paddingHorizontal: 14,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: T.ink,
+      backgroundColor: T.bg,
+   },
+   actionBtnEditText: { fontSize: 13, fontWeight: '800', color: T.ink },
 
-   // Modal anulación
    voidModalCard: {
       width: '100%',
       maxWidth: 400,
@@ -1203,21 +1286,9 @@ const styles = StyleSheet.create({
    },
    confirmVoidText: { fontSize: 13, fontWeight: '800', color: T.onSolid },
 
-   // Métrica ganancia
    metricBoxProfit: { backgroundColor: 'rgba(16,185,129,0.2)', borderColor: '#10B981' },
-
-   // Ganancia por venta
    saleProfitSmall: { fontSize: 10, fontWeight: '700', color: '#047857', marginTop: 2 },
 
-   // Status EDITADA
-   statusPillEdited: { marginTop: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, borderWidth: 1, borderColor: '#FDE68A', backgroundColor: '#FFFBEB' },
-   statusPillEditedText: { fontSize: 9, fontWeight: '800', color: '#B45309', letterSpacing: 0.5 },
-
-   // Botón Editar
-   actionBtnEdit: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 44, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: T.ink, backgroundColor: T.bg },
-   actionBtnEditText: { fontSize: 13, fontWeight: '800', color: T.ink },
-
-   // Historial de ediciones
    editHistoryBox: { marginTop: 12, backgroundColor: T.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: T.line },
    editHistoryTitle: { fontSize: 11, fontWeight: '800', color: T.inkSoft, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
    editHistoryRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: T.line },

@@ -56,10 +56,12 @@ export interface ComboUnitResult {
   comboId: string;
   comboName: string;
   comboPrice: number;
+  comboPriceBS: number;
   eligible: boolean;
   discount: number;
   itemKeys: Set<string>;
   normalPrice: number;
+  takenQuantities: Record<string, number>;
 }
 
 export interface MultiComboResult {
@@ -67,8 +69,11 @@ export interface MultiComboResult {
   eligibleCount: number;
   totalCount: number;
   totalDiscount: number;
+  totalCombosUSD: number;
+  totalCombosBSRef: number;
+  consumedQuantities: Record<string, number>;
   appliedResults: ComboUnitResult[];
-  itemComboMap: Record<string, string[]>;  // itemKey → nombres de combos
+  itemComboMap: Record<string, string[]>;
 }
 
 export const checkMultiComboEligibility = (
@@ -82,18 +87,21 @@ export const checkMultiComboEligibility = (
     eligibleCount: 0,
     totalCount: 0,
     totalDiscount: 0,
+    totalCombosUSD: 0,
+    totalCombosBSRef: 0,
+    consumedQuantities: {},
     appliedResults: [],
     itemComboMap: {},
   };
   if (!appliedCombos.length) return empty;
 
-  // Pool con cantidades restantes
   const pool = items.map((item) => {
     const product = products.find((p) => (p.id || p.code) === item.productId);
     return {
       key: `${item.productId}_${item.color}_${item.size}`,
       category: product?.category || 'OTROS',
       remaining: item.quantity,
+      initialQty: item.quantity,
       unitPrice: Number(product?.price) || item.unitPrice,
     };
   });
@@ -103,9 +111,10 @@ export const checkMultiComboEligibility = (
   for (const applied of appliedCombos) {
     const combo = combos.find((c) => c.id === applied.comboId);
     if (!combo) continue;
+    const comboPriceBS =
+      combo.bolivarPrice && combo.bolivarPrice > 0 ? combo.bolivarPrice : combo.price;
 
     for (let i = 0; i < applied.quantity; i++) {
-      // Copia del pool para este intento (no modifica el real hasta validar)
       const poolCopy = pool.map((p) => ({ ...p }));
       const taken: Record<string, number> = {};
       let normalPrice = 0;
@@ -127,7 +136,6 @@ export const checkMultiComboEligibility = (
       }
 
       if (eligible) {
-        // Aplicar al pool real
         for (const [key, qty] of Object.entries(taken)) {
           const entry = pool.find((p) => p.key === key);
           if (entry) entry.remaining -= qty;
@@ -136,26 +144,35 @@ export const checkMultiComboEligibility = (
           comboId: combo.id!,
           comboName: combo.name,
           comboPrice: combo.price,
+          comboPriceBS,
           eligible: true,
           discount: normalPrice - combo.price,
           itemKeys: new Set(Object.keys(taken)),
           normalPrice,
+          takenQuantities: taken,
         });
       } else {
         results.push({
           comboId: combo.id!,
           comboName: combo.name,
           comboPrice: combo.price,
+          comboPriceBS,
           eligible: false,
           discount: 0,
           itemKeys: new Set(),
           normalPrice: 0,
+          takenQuantities: {},
         });
       }
     }
   }
 
-  // Mapa itemKey → [nombres de combos]  (para badge en items)
+  const consumedQuantities: Record<string, number> = {};
+  pool.forEach((entry) => {
+    const consumed = entry.initialQty - entry.remaining;
+    if (consumed > 0) consumedQuantities[entry.key] = consumed;
+  });
+
   const itemComboMap: Record<string, string[]> = {};
   results.filter((r) => r.eligible).forEach((r) => {
     r.itemKeys.forEach((key) => {
@@ -164,6 +181,9 @@ export const checkMultiComboEligibility = (
     });
   });
 
+  const eligibleResults = results.filter((r) => r.eligible);
+  const totalCombosUSD = eligibleResults.reduce((s, r) => s + r.comboPrice, 0);
+  const totalCombosBSRef = eligibleResults.reduce((s, r) => s + r.comboPriceBS, 0);
   const totalDiscount = results.reduce((s, r) => s + r.discount, 0);
 
   return {
@@ -171,6 +191,9 @@ export const checkMultiComboEligibility = (
     eligibleCount: results.filter((r) => r.eligible).length,
     totalCount: results.length,
     totalDiscount,
+    totalCombosUSD,
+    totalCombosBSRef,
+    consumedQuantities,
     appliedResults: results,
     itemComboMap,
   };

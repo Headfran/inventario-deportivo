@@ -352,6 +352,8 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
       totalAmount: newTotal,
       editHistory: [...previousHistory, newEntry],
       updatedAt: Timestamp.now(),
+      appliedCombos: [],
+      appliedCombo: null,
     });
   });
 };

@@ -47,11 +47,12 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
 
    const [isPickerSearchFocused, setIsPickerSearchFocused] = useState(false);
 
-   // Bloqueos por complejidad
-   const hasCombos = !!(sale?.appliedCombos?.length || sale?.appliedCombo);
-   const hasSplits = !!(sale?.paymentSplits?.length);
+   // Solo bloqueamos si la venta está anulada
    const isVoided = sale?.status === 'voided';
-   const isBlocked = hasCombos || hasSplits || isVoided;
+
+   // Advertencias informativas (no bloquean la edición)
+   const hadCombos = !!(sale?.appliedCombos?.length || sale?.appliedCombo);
+   const hadSplits = !!(sale?.paymentSplits && sale.paymentSplits.length > 1);
 
    useEffect(() => {
       if (!visible) return;
@@ -75,8 +76,8 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
       [items]
    );
 
-   // Nota: si la venta tenía descuento (combo), se bloquea. Solo descuentos manuales se preservan aquí.
-   const newDiscount = sale?.discount && !hasCombos ? Math.min(sale.discount, newSubtotal) : 0;
+   // Los combos y descuentos de combos se limpian al editar (se envían vacíos al service)
+   const newDiscount = 0;
    const newTotal = Math.max(0, newSubtotal - newDiscount);
 
    const totalDiff = sale ? newTotal - sale.total : 0;
@@ -162,9 +163,15 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
             ? `Se cobrarán $${diffAmount.toFixed(2)} extra vía ${paymentLabels[adjustmentMethod] || adjustmentMethod}.`
             : 'No hay diferencia de pago.';
 
+      const extraNote = hadCombos
+         ? '\n\nNota: los combos aplicados a esta venta se eliminarán y los artículos quedarán a precio normal.'
+         : hadSplits
+            ? '\n\nNota: los pagos divididos originales quedarán como referencia histórica.'
+            : '';
+
       showConfirm(
          'Confirmar Edición',
-         `${summary}\n\n¿Guardar cambios en la venta #${sale.receiptNumber}?`,
+         `${summary}${extraNote}\n\n¿Guardar cambios en la venta #${sale.receiptNumber}?`,
          async () => {
             try {
                setSaving(true);
@@ -220,27 +227,35 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
                   </P>
                </View>
 
-               {isBlocked && (
+               {/* Bloqueo: solo si está anulada */}
+               {isVoided && (
                   <View style={styles.blockedBanner}>
                      <AlertTriangle size={16} color="#B45309" />
                      <Text style={styles.blockedText}>
-                        {isVoided
-                           ? 'Esta venta está anulada. No se puede editar.'
-                           : hasCombos
-                              ? 'Esta venta tiene combos aplicados. Anula la venta y crea una nueva.'
-                              : 'Esta venta tiene pagos divididos. Anula la venta y crea una nueva.'}
+                        Esta venta está anulada y no se puede editar.
                      </Text>
                   </View>
                )}
 
-               {!isBlocked && (
+               {/* Advertencia: si tenía combos o splits (no bloquea) */}
+               {!isVoided && (hadCombos || hadSplits) && (
+                  <View style={styles.warnBanner}>
+                     <AlertTriangle size={16} color="#B45309" />
+                     <Text style={styles.warnText}>
+                        Esta venta tenía {hadCombos && 'combos aplicados'}{hadCombos && hadSplits && ' y '}{hadSplits && 'pagos divididos'}.
+                        Al guardar se recalcularán los totales y se limpiarán los combos. Los pagos divididos quedarán como referencia histórica.
+                     </Text>
+                  </View>
+               )}
+
+               {!isVoided && (
                   <>
                      <ScrollView style={{ padding: 16 }} keyboardShouldPersistTaps="handled">
                         {/* ITEMS ACTUALES */}
                         <View style={styles.sectionHeaderRow}>
                            <Text style={styles.sectionLabel}>Artículos actuales</Text>
                            <P style={styles.addItemBtn} onPress={() => setShowPicker(!showPicker)}>
-                              <Plus size={12} color={T.pill} />
+                              <Plus size={12} color={T.onSolid} />
                               <Text style={styles.addItemBtnText}>
                                  {showPicker ? 'Cerrar' : 'Agregar prenda'}
                               </Text>
@@ -449,7 +464,7 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
                   </>
                )}
 
-               {isBlocked && (
+               {isVoided && (
                   <View style={styles.footer}>
                      <P style={styles.cancelBtn} onPress={onClose}>
                         <Text style={styles.cancelBtnText}>Cerrar</Text>
@@ -470,8 +485,33 @@ const styles = StyleSheet.create({
    subtitle: { fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 2 },
    pressed: { opacity: 0.85 },
 
-   blockedBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, backgroundColor: '#FFFBEB', borderBottomWidth: 1, borderBottomColor: '#FDE68A' },
+   blockedBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 12,
+      backgroundColor: '#FFFBEB',
+      borderBottomWidth: 1,
+      borderBottomColor: '#FDE68A',
+   },
    blockedText: { flex: 1, fontSize: 12, color: '#B45309', fontWeight: '700' },
+
+   warnBanner: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      padding: 12,
+      backgroundColor: '#FFFBEB',
+      borderBottomWidth: 1,
+      borderBottomColor: '#FDE68A',
+   },
+   warnText: {
+      flex: 1,
+      fontSize: 12,
+      color: '#B45309',
+      fontWeight: '600',
+      lineHeight: 16,
+   },
 
    sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
    sectionLabel: { fontSize: 12, fontWeight: '800', color: T.inkSoft, textTransform: 'uppercase', letterSpacing: 0.5 },
