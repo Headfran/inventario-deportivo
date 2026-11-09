@@ -276,7 +276,7 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
     }).join('');
 
     return `
-    <article class="card">
+    <div class="card">
       <div class="image-container">
         ${imagesMarkup}
         <div class="brand-badge">${p.brand || 'EXCLUSIVE'}</div>
@@ -291,25 +291,66 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
         </div>
       </div>
       ${showPrices ? `<div class="card-price">$${Number(p.price || 0).toFixed(2)}</div>` : ''}
-    </article>`;
+    </div>`;
   };
 
   // ==========================================
-  // PRE-PAGINACIÓN: 9 cards por página (3x3)
+  // PRE-PAGINACIÓN: 6 cards por página (3 columnas × 2 filas)
+  // Reduce a 6 para dar 60mm de margen de seguridad a A4
   // ==========================================
-  const ITEMS_PER_PAGE = 9;
+  const ITEMS_PER_PAGE = 6;
   const pages: Product[][] = [];
   for (let i = 0; i < products.length; i += ITEMS_PER_PAGE) {
     pages.push(products.slice(i, i + ITEMS_PER_PAGE));
   }
 
+  const totalPages = pages.length;
+
+  const renderHeader = (pageNum: number, isFirst: boolean) => {
+    if (isFirst) {
+      return `
+        <header class="sheet-header sheet-header-main">
+          <div>
+            <img src="/logo.png" class="logo-img" alt="" onerror="this.style.display='none'; document.getElementById('text-logo').style.display='block';" />
+            <h1 id="text-logo" class="store-title" style="display:none;">${storeName}</h1>
+            <p class="store-subtitle">${categoryFilterName ? `${categoryFilterName} • ` : ''}${subtitle || 'Lookbook Oficial'}</p>
+          </div>
+          <div class="header-right">
+            ${currentDate}<br/>${products.length} Referencias
+          </div>
+        </header>`;
+    }
+    return `
+      <header class="sheet-header sheet-header-compact">
+        <div class="compact-brand">${storeName}</div>
+        <div class="compact-page">Página ${pageNum} / ${totalPages}</div>
+      </header>`;
+  };
+
+  const renderFooter = (isLast: boolean) => {
+    if (isLast) {
+      return `
+        <footer class="sheet-footer sheet-footer-main">
+          Colección sujeta a disponibilidad • Diseñado para ${storeName}
+        </footer>`;
+    }
+    return `<footer class="sheet-footer sheet-footer-mini">&nbsp;</footer>`;
+  };
+
   const pagesMarkup = pages.length > 0
-    ? pages.map((group, pageIdx) => `
-      <div class="page-grid">
-        ${group.map(renderCard).join('')}
-      </div>
-    `).join('')
-    : `<p style="text-align:center;color:#94a3b8;font-style:italic;padding:40px;grid-column:1/-1;">No hay prendas en Bodega o Vitrina para esta selección.</p>`;
+    ? pages.map((group, idx) => {
+      const isFirst = idx === 0;
+      const isLast = idx === pages.length - 1;
+      return `
+          <div class="sheet">
+            ${renderHeader(idx + 1, isFirst)}
+            <div class="grid">
+              ${group.map(renderCard).join('')}
+            </div>
+            ${renderFooter(isLast)}
+          </div>`;
+    }).join('')
+    : `<div class="sheet"><p style="text-align:center;color:#94a3b8;font-style:italic;padding:40px;">No hay prendas en Bodega o Vitrina para esta selección.</p></div>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -319,174 +360,260 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
   <title>${storeName} — Lookbook</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    @page { size: A4 portrait; margin: 8mm; }
+    @page { size: A4 portrait; margin: 0; }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
       padding: 0;
       background: #ffffff;
       color: #0f172a;
-      font-family: 'Inter', sans-serif;
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
       color-adjust: exact;
     }
 
-    .toolbar { position: fixed; top: 15px; right: 15px; display: flex; gap: 8px; z-index: 9999; }
-    .toolbar button { padding: 10px 16px; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; text-transform: uppercase; border-radius: 6px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    .toolbar {
+      position: fixed;
+      top: 15px;
+      right: 15px;
+      display: flex;
+      gap: 8px;
+      z-index: 9999;
+    }
+    .toolbar button {
+      padding: 10px 16px;
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      background: #fff;
+      cursor: pointer;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
     .toolbar button.primary { background: #0f172a; color: #fff; border: none; }
 
-    .page { max-width: 900px; margin: 0 auto; padding: 10px; }
-
-    /* ============ HEADER ============ */
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-      border-bottom: 2px solid #0f172a;
-      padding-bottom: 8px;
-      margin-bottom: 10px;
-      /* No separar del primer grid */
-      page-break-after: avoid;
-      break-after: avoid;
-    }
-    .logo-img { max-height: 36px; margin-bottom: 4px; object-fit: contain; }
-    .store-title { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; text-transform: uppercase; margin: 0; color: #0f172a; }
-    .store-subtitle { font-size: 10px; font-weight: 500; color: #64748b; margin: 4px 0 0; text-transform: uppercase; letter-spacing: 1px; }
-    .header-right { text-align: right; font-size: 9px; font-weight: 600; color: #475569; text-transform: uppercase; }
-
-    /* ============ PAGE GRID (página = 3x3 cards) ============ */
-    .page-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      justify-content: flex-start;
-      align-content: flex-start;
-      /* Cada página salta a la siguiente */
+    /* ============================================
+       HOJA (página = 1 sheet)
+       Dimensiones A4 explícitas en mm. El padding
+       interno de 8mm es equivalente al @page margin
+       pero explícito para que Safari no lo ignore.
+       ============================================ */
+    .sheet {
+      position: relative;
+      width: 210mm;
+      height: 297mm;
+      padding: 8mm;
+      margin: 0;
+      background: #ffffff;
+      overflow: hidden;
+      /* Salto de página entre sheets — declarado aquí, en un div de bloque (NO flex) */
       page-break-after: always;
       break-after: page;
+      /* Contener todo dentro de la hoja físicamente */
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
-    .page-grid:last-of-type {
+    .sheet:last-child {
       page-break-after: auto;
       break-after: auto;
     }
 
-    /* ============ CARD (protegida contra cortes) ============ */
+    /* ============================================
+       HEADER (bloque normal, sin flex anidado conflictivo)
+       ============================================ */
+    .sheet-header {
+      width: 100%;
+      height: 22mm;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 2mm;
+      margin-bottom: 4mm;
+      /* No separar del contenido siguiente */
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    .sheet-header-compact {
+      height: 8mm;
+      align-items: center;
+      border-bottom-width: 1px;
+      margin-bottom: 3mm;
+    }
+    .logo-img { max-height: 10mm; margin-bottom: 1mm; object-fit: contain; }
+    .store-title { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; text-transform: uppercase; margin: 0; color: #0f172a; }
+    .store-subtitle { font-size: 10px; font-weight: 500; color: #64748b; margin: 1mm 0 0; text-transform: uppercase; letter-spacing: 1px; }
+    .header-right { text-align: right; font-size: 9px; font-weight: 600; color: #475569; text-transform: uppercase; }
+    .compact-brand { font-size: 9px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 1px; }
+    .compact-page { font-size: 8px; font-weight: 600; color: #64748b; }
+
+    /* ============================================
+       GRID DE CARDS: 3 columnas × 2 filas
+       display: block + inline-block (NO flex) para que Safari respete page-break-inside
+       font-size: 0 para eliminar el espacio entre inline-blocks
+       ============================================ */
+    .grid {
+      display: block;
+      font-size: 0;
+      width: 100%;
+      height: auto;
+    }
+    .grid > .card {
+      display: inline-block;
+      vertical-align: top;
+      width: calc((100% - 8mm) / 3);
+      margin-right: 4mm;
+      margin-bottom: 4mm;
+      font-size: 12px;
+    }
+    .grid > .card:nth-child(3n) {
+      margin-right: 0;
+    }
+
+    /* ============================================
+       CARD — altura fija, protegida contra cortes
+       ============================================ */
     .card {
-      width: calc((100% - 20px) / 3);
-      flex: 0 0 auto;
-      height: 280px;
+      height: 88mm;
       display: flex;
       flex-direction: column;
       background: #fff;
       border: 1px solid #e2e8f0;
       border-radius: 6px;
       overflow: hidden;
-      /* Protección contra cortes en iOS/Safari */
+      /* 3 prefijos para máxima compatibilidad */
       page-break-inside: avoid !important;
       -webkit-column-break-inside: avoid !important;
       break-inside: avoid !important;
-      /* Quitar box-shadow que puede causar bugs en print */
-      box-shadow: none;
     }
 
-    /* ============ IMAGEN ============ */
+    /* IMAGEN */
     .image-container {
-      height: 150px;
+      height: 45mm;
       width: 100%;
       flex-shrink: 0;
       position: relative;
       border-bottom: 1px solid #e2e8f0;
       background-color: #f8fafc;
     }
-
-    .img-wrap { width: 100%; height: 100%; display: flex; padding: 4px; gap: 4px; }
-
+    .img-wrap { width: 100%; height: 100%; display: flex; padding: 1mm; gap: 1mm; }
     .img-wrap img {
       width: 100%;
       height: 100%;
       object-fit: contain;
-      border-radius: 4px;
-      /* Sin filter drop-shadow (causa bugs en iOS print) */
+      border-radius: 3px;
     }
-
     .dual-img img { width: 50%; background: #ffffff; }
 
     .brand-badge {
       position: absolute;
-      bottom: 6px;
-      left: 6px;
+      bottom: 1.5mm;
+      left: 1.5mm;
       background: #0f172a;
       color: #fff;
       font-size: 7px;
       font-weight: 700;
       letter-spacing: 1px;
-      padding: 2px 5px;
+      padding: 0.5mm 1.5mm;
       border-radius: 3px;
     }
 
-    /* ============ CUERPO ============ */
+    /* CUERPO */
     .card-body {
-      padding: 8px 10px;
+      padding: 2mm 2.5mm;
       display: flex;
       flex-direction: column;
-      height: 100px;
-      flex-shrink: 0;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
     }
-
     .card-meta {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      height: 24px;
-      overflow: hidden;
-      margin-bottom: 4px;
+      flex-shrink: 0;
+      margin-bottom: 1mm;
+      gap: 1mm;
     }
-    .card-name { font-size: 11px; font-weight: 800; margin: 0; color: #0f172a; line-height: 1.1; flex: 1; }
-    .card-code { font-size: 8px; font-weight: 700; color: #64748b; background: #f1f5f9; padding: 2px 4px; border-radius: 3px; flex-shrink: 0; margin-left: 4px; }
+    .card-name {
+      font-size: 11px;
+      font-weight: 800;
+      margin: 0;
+      color: #0f172a;
+      line-height: 1.15;
+      flex: 1;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .card-code {
+      font-size: 8px;
+      font-weight: 700;
+      color: #64748b;
+      background: #f1f5f9;
+      padding: 1px 3px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
 
     .variants-container {
-      height: 56px;
+      flex: 1;
+      min-height: 0;
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      gap: 1mm;
       overflow: hidden;
       background: #f8fafc;
       border: 1px solid #f1f5f9;
-      border-radius: 4px;
-      padding: 4px 8px;
+      border-radius: 3px;
+      padding: 1.5mm 2mm;
       justify-content: center;
     }
-
     .variant-row { display: flex; align-items: center; width: 100%; }
-    .color-circle { width: 8px; height: 8px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.15); flex-shrink: 0; margin-right: 5px; }
-
-    .variant-info { display: flex; align-items: center; gap: 4px; flex: 1; overflow: hidden; }
+    .color-circle {
+      width: 2.5mm;
+      height: 2.5mm;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.15);
+      flex-shrink: 0;
+      margin-right: 1.5mm;
+    }
+    .variant-info { display: flex; align-items: center; gap: 1mm; flex: 1; overflow: hidden; }
     .color-name { font-size: 9px; font-weight: 700; color: #334155; white-space: nowrap; line-height: 1; }
-
-    .leader { flex: 1; border-bottom: 1px dotted #94a3b8; margin: 0 4px; opacity: 0.5; }
-
+    .leader { flex: 1; border-bottom: 1px dotted #94a3b8; margin: 0 1mm; opacity: 0.5; }
     .sizes { font-size: 8px; font-weight: 700; color: #059669; white-space: nowrap; line-height: 1; }
     .sep { color: #cbd5e1; font-weight: 400; margin: 0 1px; }
 
-    /* ============ PRECIO ============ */
+    /* PRECIO */
     .card-price {
-      height: 30px;
+      height: 8mm;
       flex-shrink: 0;
       background: #ffffff;
-      padding: 6px 12px;
+      padding: 1.5mm 2.5mm;
       font-size: 12px;
       font-weight: 800;
       color: #0f172a;
       text-align: right;
       border-top: 1px dashed #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
     }
 
-    /* ============ FOOTER ============ */
-    .footer {
-      margin-top: 10px;
+    /* ============================================
+       FOOTER — dentro del sheet, empujado abajo con padding
+       ============================================ */
+    .sheet-footer {
+      position: absolute;
+      left: 8mm;
+      right: 8mm;
+      bottom: 8mm;
       border-top: 1px solid #e2e8f0;
-      padding-top: 8px;
+      padding-top: 2mm;
       font-size: 8px;
       font-weight: 500;
       color: #94a3b8;
@@ -494,12 +621,25 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
       text-transform: uppercase;
       letter-spacing: 1px;
     }
+    .sheet-footer-mini {
+      border-top: none;
+      padding-top: 0;
+      height: 4mm;
+    }
 
-    /* ============ PRINT ============ */
+    /* ============================================
+       PRINT
+       ============================================ */
     @media print {
       .toolbar { display: none !important; }
-      .page { max-width: 100%; padding: 0; margin: 0; }
-      .card { box-shadow: none !important; }
+      .sheet {
+        width: 210mm;
+        height: 297mm;
+        margin: 0;
+        padding: 8mm;
+        box-shadow: none;
+      }
+      .grid > .card { box-shadow: none; }
     }
   </style>
 </head>
@@ -509,24 +649,7 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
     <button onclick="window.close()">Cerrar</button>
   </div>
 
-  <div class="page">
-    <header class="header">
-      <div>
-        <img src="/logo.png" class="logo-img" alt="" onerror="this.style.display='none'; document.getElementById('text-logo').style.display='block';" />
-        <h1 id="text-logo" class="store-title" style="display:none;">${storeName}</h1>
-        <p class="store-subtitle">${categoryFilterName ? `${categoryFilterName} • ` : ''}${subtitle || 'Lookbook Oficial'}</p>
-      </div>
-      <div class="header-right">
-        ${currentDate}<br/>${products.length} Referencias
-      </div>
-    </header>
-
-    ${pagesMarkup}
-
-    <footer class="footer">
-      Colección sujeta a disponibilidad • Diseñado para ${storeName}
-    </footer>
-  </div>
+  ${pagesMarkup}
 
   <script>
     (function(){
