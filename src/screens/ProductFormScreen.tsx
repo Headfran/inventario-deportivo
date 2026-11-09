@@ -253,7 +253,29 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
          showAlert('Atención', 'Debes mantener al menos un color.');
          return;
       }
-      setVariants((prev) => prev.filter((_, i) => i !== colorIdx));
+
+      const target = variants[colorIdx];
+      const colorName = target?.color?.trim() || `Color #${colorIdx + 1}`;
+      const sizesCount = target?.sizes?.length || 0;
+      const totalStock = (target?.sizes || []).reduce((sum, s) => sum + (Number(s.stock) || 0), 0);
+
+      // Detalle del impacto para el mensaje
+      const detailParts: string[] = [];
+      if (sizesCount > 0) {
+         detailParts.push(`${sizesCount} ${sizesCount === 1 ? 'talla' : 'tallas'}`);
+      }
+      if (totalStock > 0) {
+         detailParts.push(`${totalStock} ${totalStock === 1 ? 'unidad' : 'unidades'} en stock`);
+      }
+      const detail = detailParts.length > 0 ? ` (${detailParts.join(' · ')})` : '';
+
+      showConfirm(
+         'Eliminar Color',
+         `¿Eliminar el color "${colorName}"${detail}?\n\nEsta acción no se puede deshacer.`,
+         () => {
+            setVariants((prev) => prev.filter((_, i) => i !== colorIdx));
+         }
+      );
    };
 
    const handleToggleSize = (colorIdx: number, sizeName: string) => {

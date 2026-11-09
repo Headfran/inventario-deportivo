@@ -243,13 +243,16 @@ const updateLoadingWindow = (win: any, progress: CatalogPrintProgress): void => 
 };
 
 // ==========================================
-// Catálogo HTML (sin cambios)
+// Catálogo HTML 
 // ==========================================
 const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, imageMap: Map<string, string>): string => {
   const { showPrices, storeName = 'Catálogo', categoryFilterName, subtitle } = options;
   const currentDate = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  const cardsMarkup = products.map((p) => {
+  // ==========================================
+  // Render de una card individual
+  // ==========================================
+  const renderCard = (p: Product): string => {
     const img1 = p.images?.[0] ? (imageMap.get(p.images[0]) || FALLBACK_IMAGE) : FALLBACK_IMAGE;
     const img2 = p.images?.[1] ? (imageMap.get(p.images[1]) || null) : null;
 
@@ -289,18 +292,45 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
       </div>
       ${showPrices ? `<div class="card-price">$${Number(p.price || 0).toFixed(2)}</div>` : ''}
     </article>`;
-  }).join('');
+  };
+
+  // ==========================================
+  // PRE-PAGINACIÓN: 9 cards por página (3x3)
+  // ==========================================
+  const ITEMS_PER_PAGE = 9;
+  const pages: Product[][] = [];
+  for (let i = 0; i < products.length; i += ITEMS_PER_PAGE) {
+    pages.push(products.slice(i, i + ITEMS_PER_PAGE));
+  }
+
+  const pagesMarkup = pages.length > 0
+    ? pages.map((group, pageIdx) => `
+      <div class="page-grid">
+        ${group.map(renderCard).join('')}
+      </div>
+    `).join('')
+    : `<p style="text-align:center;color:#94a3b8;font-style:italic;padding:40px;grid-column:1/-1;">No hay prendas en Bodega o Vitrina para esta selección.</p>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${storeName} — Lookbook</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    @page { size: A4 portrait; margin: 10mm; }
+    @page { size: A4 portrait; margin: 8mm; }
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; font-family: 'Inter', sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      color: #0f172a;
+      font-family: 'Inter', sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      color-adjust: exact;
+    }
 
     .toolbar { position: fixed; top: 15px; right: 15px; display: flex; gap: 8px; z-index: 9999; }
     .toolbar button { padding: 10px 16px; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; text-transform: uppercase; border-radius: 6px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
@@ -308,83 +338,169 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
 
     .page { max-width: 900px; margin: 0 auto; padding: 10px; }
 
-    .header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 15px; }
-    .logo-img { max-height: 40px; margin-bottom: 4px; object-fit: contain; }
+    /* ============ HEADER ============ */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+      /* No separar del primer grid */
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    .logo-img { max-height: 36px; margin-bottom: 4px; object-fit: contain; }
     .store-title { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; text-transform: uppercase; margin: 0; color: #0f172a; }
     .store-subtitle { font-size: 10px; font-weight: 500; color: #64748b; margin: 4px 0 0; text-transform: uppercase; letter-spacing: 1px; }
     .header-right { text-align: right; font-size: 9px; font-weight: 600; color: #475569; text-transform: uppercase; }
 
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-
-    .card {
-      height: 310px;
-      display: flex; flex-direction: column;
-      background: #fff; border: 1px solid #e2e8f0;
-      border-radius: 10px; overflow: hidden;
-      break-inside: avoid;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.02);
+    /* ============ PAGE GRID (página = 3x3 cards) ============ */
+    .page-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-start;
+      align-content: flex-start;
+      /* Cada página salta a la siguiente */
+      page-break-after: always;
+      break-after: page;
+    }
+    .page-grid:last-of-type {
+      page-break-after: auto;
+      break-after: auto;
     }
 
+    /* ============ CARD (protegida contra cortes) ============ */
+    .card {
+      width: calc((100% - 20px) / 3);
+      flex: 0 0 auto;
+      height: 280px;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      overflow: hidden;
+      /* Protección contra cortes en iOS/Safari */
+      page-break-inside: avoid !important;
+      -webkit-column-break-inside: avoid !important;
+      break-inside: avoid !important;
+      /* Quitar box-shadow que puede causar bugs en print */
+      box-shadow: none;
+    }
+
+    /* ============ IMAGEN ============ */
     .image-container {
-      height: 170px; width: 100%; flex-shrink: 0;
+      height: 150px;
+      width: 100%;
+      flex-shrink: 0;
       position: relative;
       border-bottom: 1px solid #e2e8f0;
       background-color: #f8fafc;
-      background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
-      background-size: 10px 10px;
     }
 
     .img-wrap { width: 100%; height: 100%; display: flex; padding: 4px; gap: 4px; }
 
     .img-wrap img {
-      width: 100%; height: 100%;
+      width: 100%;
+      height: 100%;
       object-fit: contain;
-      border-radius: 6px;
-      filter: drop-shadow(0 4px 8px rgba(0,0,0,0.1));
+      border-radius: 4px;
+      /* Sin filter drop-shadow (causa bugs en iOS print) */
     }
 
     .dual-img img { width: 50%; background: #ffffff; }
 
-    .brand-badge { position: absolute; bottom: 8px; left: 8px; background: #0f172a; color: #fff; font-size: 7px; font-weight: 700; letter-spacing: 1px; padding: 3px 6px; border-radius: 4px; }
+    .brand-badge {
+      position: absolute;
+      bottom: 6px;
+      left: 6px;
+      background: #0f172a;
+      color: #fff;
+      font-size: 7px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      padding: 2px 5px;
+      border-radius: 3px;
+    }
 
-    .card-body { padding: 10px; display: flex; flex-direction: column; height: 112px; }
+    /* ============ CUERPO ============ */
+    .card-body {
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      height: 100px;
+      flex-shrink: 0;
+    }
 
-    .card-meta { display: flex; justify-content: space-between; align-items: flex-start; height: 26px; overflow: hidden; margin-bottom: 6px; }
+    .card-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      height: 24px;
+      overflow: hidden;
+      margin-bottom: 4px;
+    }
     .card-name { font-size: 11px; font-weight: 800; margin: 0; color: #0f172a; line-height: 1.1; flex: 1; }
-    .card-code { font-size: 8px; font-weight: 700; color: #64748b; background: #f1f5f9; padding: 2px 4px; border-radius: 4px; flex-shrink: 0; margin-left: 6px; }
+    .card-code { font-size: 8px; font-weight: 700; color: #64748b; background: #f1f5f9; padding: 2px 4px; border-radius: 3px; flex-shrink: 0; margin-left: 4px; }
 
     .variants-container {
-      height: 72px;
-      display: flex; flex-direction: column; gap: 4px;
+      height: 56px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
       overflow: hidden;
       background: #f8fafc;
       border: 1px solid #f1f5f9;
-      border-radius: 6px;
-      padding: 6px 8px;
+      border-radius: 4px;
+      padding: 4px 8px;
       justify-content: center;
     }
 
     .variant-row { display: flex; align-items: center; width: 100%; }
-    .color-circle { width: 9px; height: 9px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.15); flex-shrink: 0; margin-right: 6px; }
+    .color-circle { width: 8px; height: 8px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.15); flex-shrink: 0; margin-right: 5px; }
 
     .variant-info { display: flex; align-items: center; gap: 4px; flex: 1; overflow: hidden; }
     .color-name { font-size: 9px; font-weight: 700; color: #334155; white-space: nowrap; line-height: 1; }
 
-    .leader {
-      flex: 1;
-      border-bottom: 1px dotted #94a3b8;
-      margin: 0 4px;
-      opacity: 0.5;
-    }
+    .leader { flex: 1; border-bottom: 1px dotted #94a3b8; margin: 0 4px; opacity: 0.5; }
 
     .sizes { font-size: 8px; font-weight: 700; color: #059669; white-space: nowrap; line-height: 1; }
     .sep { color: #cbd5e1; font-weight: 400; margin: 0 1px; }
 
-    .card-price { height: 28px; flex-shrink: 0; background: #ffffff; padding: 6px 12px; font-size: 11px; font-weight: 800; color: #0f172a; text-align: right; border-top: 1px dashed #e2e8f0; }
+    /* ============ PRECIO ============ */
+    .card-price {
+      height: 30px;
+      flex-shrink: 0;
+      background: #ffffff;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #0f172a;
+      text-align: right;
+      border-top: 1px dashed #e2e8f0;
+    }
 
-    .footer { margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 12px; font-size: 8px; font-weight: 500; color: #94a3b8; text-align: center; text-transform: uppercase; letter-spacing: 1px; }
+    /* ============ FOOTER ============ */
+    .footer {
+      margin-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 8px;
+      font-size: 8px;
+      font-weight: 500;
+      color: #94a3b8;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
 
-    @media print { .toolbar { display: none !important; } .page { padding: 0; } .card { box-shadow: none; border-color: #e2e8f0; } }
+    /* ============ PRINT ============ */
+    @media print {
+      .toolbar { display: none !important; }
+      .page { max-width: 100%; padding: 0; margin: 0; }
+      .card { box-shadow: none !important; }
+    }
   </style>
 </head>
 <body>
@@ -405,9 +521,7 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
       </div>
     </header>
 
-    <main class="grid">
-      ${cardsMarkup || '<p style="grid-column:1/-1;text-align:center;color:#94a3b8;font-style:italic;padding:40px;">No hay prendas en Bodega o Vitrina para esta selección.</p>'}
-    </main>
+    ${pagesMarkup}
 
     <footer class="footer">
       Colección sujeta a disponibilidad • Diseñado para ${storeName}
@@ -421,11 +535,15 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
         var imgs = Array.from(document.images);
         if(!imgs.length) { setTimeout(doPrint, 500); return; }
         var loaded = 0;
-        imgs.forEach(i => {
-          if(i.complete) loaded++;
-          else { i.onload = i.onerror = function(){ loaded++; if(loaded === imgs.length) setTimeout(doPrint, 500); } }
+        imgs.forEach(function(i){
+          if(i.complete) { loaded++; if(loaded === imgs.length) setTimeout(doPrint, 500); }
+          else {
+            i.onload = i.onerror = function(){
+              loaded++;
+              if(loaded === imgs.length) setTimeout(doPrint, 500);
+            };
+          }
         });
-        if(loaded === imgs.length) setTimeout(doPrint, 500);
       };
     })();
   </script>

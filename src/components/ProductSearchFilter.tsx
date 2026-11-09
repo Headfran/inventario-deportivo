@@ -149,11 +149,26 @@ export const ProductSearchFilter: React.FC<Props> = ({
       const isAll = cat === 'all';
       const isActive = isAll ? filters.category === 'all' || !filters.category : filters.category === cat;
 
+      const handleCategoryPress = () => {
+         // Si ya está activa la misma categoría
+         if (isActive && !isAll) return;
+
+         // Cambio de categoría: resetea filtros secundarios
+         onFilterChange({
+            ...filters,
+            category: isAll ? 'all' : cat,
+            brand: '',
+            color: '',
+            size: '',
+            status: 'all',
+         });
+      };
+
       return (
          <Pressable
             key={cat}
             style={({ pressed }) => [styles.categoryChip, isActive && styles.categoryChipActive, pressed && styles.pressed]}
-            onPress={() => updateFilter('category', isAll ? 'all' : cat)}
+            onPress={handleCategoryPress}
          >
             {getCategoryIcon(cat, isActive)}
             <Text style={[styles.categoryText, isActive && styles.categoryTextActive]}>{isAll ? 'Todas' : cat}</Text>

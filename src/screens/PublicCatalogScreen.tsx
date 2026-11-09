@@ -284,6 +284,19 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       setCurrentPage(1);
    };
 
+   // Cambio de categoría: resetea los filtros secundarios (mantiene el query)
+   const handleCategoryChange = (cat: string) => {
+      setFilters((prev) => ({
+         ...prev,
+         category: cat,
+         brand: '',
+         color: '',
+         size: '',
+         status: 'all',
+      }));
+      setCurrentPage(1);
+   };
+
    const openDetail = useCallback((p: Product) => {
       setDetailProduct(p);
       setSelectedImageIndex(0);
@@ -292,7 +305,8 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       const firstVariant = p.variants?.[0];
       if (firstVariant) {
          setSelectedColor(firstVariant.color);
-         const firstAvailableSize = firstVariant.sizes?.find((s) => Number(s.stock) > 0)?.size || firstVariant.sizes?.[0]?.size || '';
+         // Solo selecciona una talla si tiene stock > 0 (no fallback a agotada)
+         const firstAvailableSize = firstVariant.sizes?.find((s) => Number(s.stock) > 0)?.size || '';
          setSelectedSize(firstAvailableSize);
       } else {
          setSelectedColor('');
@@ -310,24 +324,43 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const isGlobalWholesale = totalCartQuantity >= 6;
 
+   // Calcula cuántas unidades adicionales se pueden agregar
+   const getMaxAddable = useCallback((product: Product, color: string, size: string): number => {
+      const variant = product.variants?.find((v) => v.color === color);
+      const sizeObj = variant?.sizes?.find((s) => s.size === size);
+      const stock = Number(sizeObj?.stock) || 0;
+      const productKey = product.id || product.code;
+      const inCart = cart
+         .filter((i) => (i.product.id || i.product.code) === productKey && i.color === color && i.size === size)
+         .reduce((sum, i) => sum + i.quantity, 0);
+      return Math.max(0, stock - inCart);
+   }, [cart]);
+
    const addToCart = (product: Product) => {
       if (!selectedColor || !selectedSize) return;
-      const newItem: CartItem = {
-         cartId: `${product.id || product.code}-${selectedColor}-${selectedSize}`,
-         product,
-         color: selectedColor,
-         size: selectedSize,
-         quantity,
-      };
 
+      const maxAddable = getMaxAddable(product, selectedColor, selectedSize);
+      const toAdd = Math.min(quantity, maxAddable);
+      if (toAdd <= 0) return;
+
+      const cartId = `${product.id || product.code}-${selectedColor}-${selectedSize}`;
       setCart((prev) => {
-         const existingIndex = prev.findIndex((i) => i.cartId === newItem.cartId);
+         const existingIndex = prev.findIndex((i) => i.cartId === cartId);
          if (existingIndex > -1) {
             const updated = [...prev];
-            updated[existingIndex].quantity += quantity;
+            updated[existingIndex] = {
+               ...updated[existingIndex],
+               quantity: updated[existingIndex].quantity + toAdd,
+            };
             return updated;
          }
-         return [...prev, newItem];
+         return [...prev, {
+            cartId,
+            product,
+            color: selectedColor,
+            size: selectedSize,
+            quantity: toAdd,
+         }];
       });
 
       setDetailProduct(null);
@@ -342,28 +375,49 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       setCart((prev) =>
          prev.map((item) => {
             if (item.cartId !== cartId) return item;
-            const newQty = Math.max(1, item.quantity + delta);
+            const variant = item.product.variants?.find((v) => v.color === item.color);
+            const sizeObj = variant?.sizes?.find((s) => s.size === item.size);
+            const stock = Number(sizeObj?.stock) || 0;
+            const newQty = Math.max(1, Math.min(stock, item.quantity + delta));
             return { ...item, quantity: newQty };
          })
       );
    };
 
+   // MENSAJE WHATSAPP
    const sendWhatsAppCheckout = () => {
       if (cart.length === 0) return;
-      let text = `¡Hola! JDSTORE, me interesan los siguientes productos de mi carrito:\n\n`;
-      cart.forEach((item, index) => {
-         const retailPrice = Number(item.product.price || 0);
-         const wholesalePrice = Number(item.product.wholesalePrice) || retailPrice * 0.85;
-         const itemUnitPrice = isGlobalWholesale ? wholesalePrice : retailPrice;
-         const bolivarUnitPrice = isGlobalWholesale
-            ? getBolivarWholesale(item.product)
-            : getBolivarRetail(item.product);
 
-         text += `${index + 1}. *${item.product.name}* (Marca: ${item.product.brand}, Código: ${item.product.code})\n`;
-         text += `   - Color: ${item.color} | Talla: ${item.size} | Cantidad: ${item.quantity}\n`;
-         text += `   - Tipo: ${isGlobalWholesale ? 'Al Mayor (6+ un)' : 'Al Detal'} | Unitario: $${itemUnitPrice.toFixed(2)} (${bolivarUnitPrice.toFixed(2)}€) | Subtotal: $${(itemUnitPrice * item.quantity).toFixed(2)}\n\n`;
+      const calcUnitUSD = (product: Product) => {
+         const retail = Number(product.price || 0);
+         const wholesale = Number(product.wholesalePrice) || retail * 0.85;
+         return isGlobalWholesale ? wholesale : retail;
+      };
+
+      const calcUnitBS = (product: Product) => {
+         return isGlobalWholesale ? getBolivarWholesale(product) : getBolivarRetail(product);
+      };
+
+      const totalUSD = cart.reduce((sum, item) => sum + calcUnitUSD(item.product) * item.quantity, 0);
+      const totalBS = cart.reduce((sum, item) => sum + calcUnitBS(item.product) * item.quantity, 0);
+
+      let text = `¡Hola! JDSTORE 🛍️ Me interesa:\n\n`;
+      cart.forEach((item, index) => {
+         const unitUSD = calcUnitUSD(item.product);
+         const unitBS = calcUnitBS(item.product);
+         const lineUSD = unitUSD * item.quantity;
+         const lineBS = unitBS * item.quantity;
+
+         text += `${index + 1}. *${item.product.brand} ${item.product.name}*\n`;
+         text += `   SKU: ${item.product.code} · ${item.color} · ${item.size} · x${item.quantity}\n`;
+         text += `   💵 $${lineUSD.toFixed(2)} USD\n`;
+         text += `   💶 €${lineBS.toFixed(2)} (pago en Bs)\n\n`;
       });
-      text += `Total de piezas: ${totalCartQuantity} | Quedo atento a la disponibilidad y pago. ¡Gracias!`;
+      text += `📦 Total: ${totalCartQuantity} ${totalCartQuantity === 1 ? 'pieza' : 'piezas'}\n`;
+      text += `💵 $${totalUSD.toFixed(2)} USD\n`;
+      text += `💶 €${totalBS.toFixed(2)} (pago en Bs)\n\n`;
+      text += `¡Gracias!`;
+
       const encoded = encodeURIComponent(text);
       const url = `https://wa.me/?text=${encoded}`;
       if (typeof window !== 'undefined') {
@@ -402,7 +456,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          key={cat}
          label={cat === 'all' ? 'Todas' : cat}
          active={filters.category === cat}
-         onPress={() => setFilters((prev) => ({ ...prev, category: cat }))}
+         onPress={() => handleCategoryChange(cat)}
       />
    ));
 
@@ -527,9 +581,46 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       const bolivarRetail = getBolivarRetail(p);
       const bolivarWholesale = getBolivarWholesale(p);
 
-      const isWholesale = quantity >= 6;
+      // ==== VALIDACIÓN DE STOCK ====
+      const activeVariant = p.variants?.find((v) => v.color === selectedColor) || p.variants?.[0];
+      const selectedSizeObj = activeVariant?.sizes?.find((s) => s.size === selectedSize);
+      const availableStock = Number(selectedSizeObj?.stock) || 0;
+      const maxAddable = getMaxAddable(p, selectedColor, selectedSize);
+      const isOutOfStock = availableStock === 0;
+      const isAtMax = maxAddable === 0;
+      const canAdd = !!selectedColor && !!selectedSize && !isOutOfStock && !isAtMax;
+      const displayQty = Math.max(1, Math.min(quantity, Math.max(1, maxAddable)));
+
+      const isWholesale = displayQty >= 6;
       const activeUnitPrice = isWholesale ? wholesalePrice : retailPrice;
       const activeRefUnitPrice = isWholesale ? bolivarWholesale : bolivarRetail;
+
+      const handleQtyDelta = (delta: number) => {
+         setQuantity((q) => {
+            const base = Math.max(1, Math.min(q, Math.max(1, maxAddable)));
+            const next = base + delta;
+            if (next < 1) return 1;
+            if (maxAddable > 0 && next > maxAddable) return maxAddable;
+            return next;
+         });
+      };
+
+      const handleQuickSet = (n: number) => {
+         setQuantity(Math.max(1, Math.min(n, maxAddable)));
+      };
+
+      const handleColorChange = (color: string) => {
+         setSelectedColor(color);
+         const variant = p.variants?.find((v) => v.color === color);
+         const firstAvail = variant?.sizes?.find((s) => Number(s.stock) > 0)?.size || '';
+         setSelectedSize(firstAvail);
+         setQuantity(1);
+      };
+
+      const handleSizeChange = (size: string) => {
+         setSelectedSize(size);
+         setQuantity(1);
+      };
 
       const gallery = (
          <View style={{ position: 'relative' }}>
@@ -554,8 +645,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          </View>
       );
 
-      const activeVariant = p.variants?.find((v) => v.color === selectedColor) || p.variants?.[0];
-
       const info = (
          <View style={{ padding: 24 }}>
             <View style={styles.detailHeaderRow}>
@@ -573,15 +662,12 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             <View style={[styles.wrap, { marginTop: 10, marginBottom: 18 }]}>
                {(p.variants || []).map((v) => {
                   const isSel = selectedColor === v.color;
+                  const hasAnyStock = (v.sizes || []).some((s) => Number(s.stock) > 0);
                   return (
                      <Pressable
                         key={v.color}
-                        onPress={() => {
-                           setSelectedColor(v.color);
-                           const firstAvail = v.sizes?.find((s) => Number(s.stock) > 0)?.size || v.sizes?.[0]?.size || '';
-                           setSelectedSize(firstAvail);
-                        }}
-                        style={[styles.colorChipOption, isSel && styles.colorChipOptionActive]}
+                        onPress={() => handleColorChange(v.color)}
+                        style={[styles.colorChipOption, isSel && styles.colorChipOptionActive, !hasAnyStock && { opacity: 0.5 }]}
                      >
                         <View style={[styles.swatch, { backgroundColor: getColorHex(v.color) }]} />
                         <Text style={[styles.colorChipText, isSel && styles.colorChipTextActive]}>{v.color}</Text>
@@ -600,7 +686,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                      <Pressable
                         key={s.size}
                         disabled={!available}
-                        onPress={() => setSelectedSize(s.size)}
+                        onPress={() => handleSizeChange(s.size)}
                         style={[
                            styles.sizeRowOption,
                            !available && styles.sizeRowOptionDisabled,
@@ -625,17 +711,35 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
             <Text style={styles.sectionTitle}>Cantidad</Text>
             <View style={styles.quantityContainer}>
-               <Pressable style={styles.qtyBtn} onPress={() => setQuantity((q) => Math.max(1, q - 1))}>
+               <Pressable
+                  style={[styles.qtyBtn, (displayQty <= 1 || maxAddable === 0) && { opacity: 0.4 }]}
+                  onPress={() => handleQtyDelta(-1)}
+                  disabled={displayQty <= 1 || maxAddable === 0}
+               >
                   <Minus size={16} color={GRAY[800]} />
                </Pressable>
-               <Text style={styles.qtyText}>{quantity}</Text>
-               <Pressable style={styles.qtyBtn} onPress={() => setQuantity((q) => q + 1)}>
+               <Text style={styles.qtyText}>{displayQty}</Text>
+               <Pressable
+                  style={[styles.qtyBtn, (displayQty >= maxAddable || maxAddable === 0) && { opacity: 0.4 }]}
+                  onPress={() => handleQtyDelta(1)}
+                  disabled={displayQty >= maxAddable || maxAddable === 0}
+               >
                   <Plus size={16} color={GRAY[800]} />
                </Pressable>
-               <Pressable style={styles.qtyQuickBtnWholesale} onPress={() => setQuantity(6)}>
+               <Pressable
+                  style={[styles.qtyQuickBtnWholesale, maxAddable < 6 && { opacity: 0.4 }]}
+                  onPress={() => handleQuickSet(6)}
+                  disabled={maxAddable < 6}
+               >
                   <Text style={styles.qtyQuickTextWholesale}>6 (Al Mayor)</Text>
                </Pressable>
             </View>
+
+            {maxAddable > 0 && (
+               <Text style={styles.stockLimitHint}>
+                  Máx. agregable: {maxAddable} {maxAddable === 1 ? 'unidad' : 'unidades'}
+               </Text>
+            )}
 
             <View style={styles.dualPricesCleanRowBottom}>
                <View style={styles.priceColumnClean}>
@@ -667,7 +771,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
             <View style={styles.totalPreviewRow}>
                <Text style={styles.totalPreviewLabel}>Total estimado:</Text>
-               <Text style={styles.totalPreviewValue}>${(activeUnitPrice * quantity).toFixed(2)}  ({activeRefUnitPrice.toFixed(2)}€)</Text>
+               <Text style={styles.totalPreviewValue}>${(activeUnitPrice * displayQty).toFixed(2)}  ({activeRefUnitPrice.toFixed(2)}€)</Text>
             </View>
          </View>
       );
@@ -675,12 +779,18 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       const footer = (
          <View style={styles.detailFooter}>
             <Pressable
-               style={({ pressed }) => [styles.waMain, pressed && styles.pressed, (!selectedColor || !selectedSize) && { opacity: 0.5 }]}
-               disabled={!selectedColor || !selectedSize}
+               style={({ pressed }) => [styles.waMain, pressed && styles.pressed, !canAdd && { opacity: 0.5 }]}
+               disabled={!canAdd}
                onPress={() => addToCart(p)}
             >
                <ShoppingCart size={20} color="#FFFFFF" />
-               <Text style={styles.waMainText}>Agregar al Carrito</Text>
+               <Text style={styles.waMainText}>
+                  {isOutOfStock
+                     ? 'Agotado'
+                     : isAtMax
+                        ? 'Stock máximo en carrito'
+                        : 'Agregar al Carrito'}
+               </Text>
             </Pressable>
          </View>
       );
@@ -885,7 +995,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             </View>
          </Modal>
 
-         {/* MODAL LIGHTBOX / ZOOM INDEPENDIENTE A PANTALLA COMPLETA */}
+         {/* MODAL LIGHTBOX / ZOOM */}
          <Modal visible={!!detailZoomUri} transparent animationType="fade">
             <View style={styles.lightboxOverlay}>
                <Pressable style={styles.lightboxCloseBtn} onPress={() => setDetailZoomUri(null)}>
@@ -928,6 +1038,10 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                               const itemBolivarUnit = isGlobalWholesale
                                  ? getBolivarWholesale(item.product)
                                  : getBolivarRetail(item.product);
+                              const variant = item.product.variants?.find((v) => v.color === item.color);
+                              const sizeObj = variant?.sizes?.find((s) => s.size === item.size);
+                              const stock = Number(sizeObj?.stock) || 0;
+                              const canIncrease = item.quantity < stock;
 
                               return (
                                  <View key={item.cartId} style={styles.cartItemRow}>
@@ -949,7 +1063,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                                                 <Minus size={12} color={GRAY[800]} />
                                              </Pressable>
                                              <Text style={styles.cartQtyNumber}>{item.quantity}</Text>
-                                             <Pressable style={styles.cartQtyBtn} onPress={() => updateCartQuantity(item.cartId, 1)}>
+                                             <Pressable
+                                                style={[styles.cartQtyBtn, !canIncrease && { opacity: 0.35 }]}
+                                                onPress={() => updateCartQuantity(item.cartId, 1)}
+                                                disabled={!canIncrease}
+                                             >
                                                 <Plus size={12} color={GRAY[800]} />
                                              </Pressable>
                                           </View>
@@ -1170,6 +1288,8 @@ const styles = StyleSheet.create({
    totalPreviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, backgroundColor: GRAY[100], padding: 10, borderRadius: 8 },
    totalPreviewLabel: { fontSize: 13, fontWeight: '700', color: GRAY[700] },
    totalPreviewValue: { fontSize: 15, fontWeight: '800', color: GRAY[900] },
+
+   stockLimitHint: { fontSize: 11, fontWeight: '700', color: '#B45309', marginTop: 6, fontStyle: 'italic' },
 
    detailHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
    detailBrand: { fontSize: 13, fontWeight: '800', color: GRAY[500], letterSpacing: 1, textTransform: 'uppercase' },
