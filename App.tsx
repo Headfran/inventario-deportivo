@@ -68,7 +68,7 @@ const NAV: { id: StaffTab; label: string; Icon: any }[] = [
 const OWNER_ONLY_TABS: StaffTab[] = ['sellers', 'analytics'];
 
 // ==========================================
-// Persistencia (localStorage)
+// Persistencia de pestaña activa (localStorage)
 // ==========================================
 const NAV_STORAGE_KEY = 'jdstore.activeTab.v1';
 
@@ -90,19 +90,6 @@ const getStoredTab = (): StaffTab | null => {
 const storeTab = (tab: StaffTab) => {
    if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.setItem(NAV_STORAGE_KEY, tab);
-   }
-};
-
-const PORTAL_STORAGE_KEY = 'jdstore.showStaffPortal.v1';
-
-const getStoredPortal = (): boolean => {
-   if (typeof window === 'undefined' || !window.localStorage) return false;
-   return window.localStorage.getItem(PORTAL_STORAGE_KEY) === 'true';
-};
-
-const storePortal = (open: boolean) => {
-   if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(PORTAL_STORAGE_KEY, String(open));
    }
 };
 
@@ -156,7 +143,10 @@ const MainApp = () => {
       lockSession,
    } = useAuth();
 
-   const [showStaffPortal, setShowStaffPortal] = useState<boolean>(() => getStoredPortal());
+   // ⚠️ El portal SIEMPRE inicia cerrado.
+   // Los clientes ven el catálogo público por defecto.
+   // El dueño/vendedor debe pulsar "Personal" para entrar al panel.
+   const [showStaffPortal, setShowStaffPortal] = useState<boolean>(false);
    const [activeTab, setActiveTab] = useState<StaffTab>(() => getStoredTab() ?? 'inventory');
    const [notificationsEnabled, setNotificationsEnabled] = useState(false);
 
@@ -257,10 +247,6 @@ const MainApp = () => {
       }
    }, [user, isLocked]);
 
-   useEffect(() => {
-      storePortal(showStaffPortal);
-   }, [showStaffPortal]);
-
    // Persistir tab activo (usando safeActiveTab)
    useEffect(() => {
       if (user && hasPin && !isLocked) {
@@ -333,7 +319,6 @@ const MainApp = () => {
       clearSessionUnlocked();
       setSessionUnlocked(false);
       setShowStaffPortal(false);
-      storePortal(false);
    };
 
    const confirmLogout = () => {
@@ -345,7 +330,6 @@ const MainApp = () => {
             clearSessionUnlocked();
             setSessionUnlocked(false);
             setShowStaffPortal(false);
-            storePortal(false);
          }
       );
    };
@@ -408,7 +392,6 @@ const MainApp = () => {
                   clearSessionUnlocked();
                   setSessionUnlocked(false);
                   setShowStaffPortal(false);
-                  storePortal(false);
                }}
                onLogout={confirmLogout}
             />
@@ -659,7 +642,6 @@ const styles = StyleSheet.create({
    container: { flex: 1, backgroundColor: T.bg },
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
-   // Banner negro
    topBar: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -720,7 +702,6 @@ const styles = StyleSheet.create({
    lockButtonText: { color: T.onBar, fontSize: 13, fontWeight: '700' },
    tabContent: { flex: 1 },
 
-   // Indicadores
    onlineChip: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -756,7 +737,6 @@ const styles = StyleSheet.create({
    },
    syncBtnText: { color: T.onBar, fontSize: 12, fontWeight: '700' },
 
-   // Menú lateral
    menuRoot: { flex: 1 },
    backdrop: { ...StyleSheet.absoluteFill, backgroundColor: T.overlay },
    drawer: {
