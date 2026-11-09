@@ -258,8 +258,24 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          new Set(products.map((p) => String(p.category || '')).filter(Boolean))
       );
 
+      // Categorías prioritarias: SIEMPRE salen primero, en este orden exacto.
+      // Se muestran incluso si no hay prendas en esa categoría actualmente.
+      const PRIORITY_CATEGORIES = [
+         'Camisas',
+         'Franelillas',
+         'Shorts',
+         'Camisas AAA',
+         'Franelillas AAA',
+      ];
+
+      // El resto de categorías que existan en productos pero no estén en la prioridad,
+      // ordenadas alfabéticamente para que sea predecible
+      const otherCategories = rawCategories
+         .filter((c) => c !== 'all' && !PRIORITY_CATEGORIES.includes(c))
+         .sort((a, b) => a.localeCompare(b, 'es'));
+
       return {
-         categories: [...rawCategories.filter((c) => c !== 'all'), 'all'],
+         categories: [...PRIORITY_CATEGORIES, ...otherCategories, 'all'],
          brands: Array.from(new Set(products.map((p) => p.brand).filter(Boolean))),
          colors: Array.from(new Set(products.flatMap((p) => (p.variants || []).map((v) => v.color)).filter(Boolean))),
          sizes: Array.from(new Set(products.flatMap((p) => (p.variants || []).flatMap((v) => (v.sizes || []).map((s) => s.size))).filter(Boolean))),
