@@ -11,8 +11,7 @@ import {
 } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { Sale, SaleItem, PaymentMethod, Seller, PaymentSplit, SaleCombo } from '../types/sale';
-import { subscribeToProducts } from '../services/productService';
-import { subscribeToSellers, createSeller, updateSeller, deleteSeller } from '../services/sellerService';
+import { createSeller, updateSeller, deleteSeller } from '../services/sellerService';
 import { enqueuePendingSale } from '../services/offlineSyncService';
 import { createSale } from '../services/saleService';
 import { showAlert, showConfirm } from '../utils/alert';
@@ -21,7 +20,7 @@ import { ProductSearchFilter } from '../components/ProductSearchFilter';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { Cover } from '../components/Cover';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { subscribeToCombos, checkMultiComboEligibility } from '../services/comboService';
+import { checkMultiComboEligibility } from '../services/comboService';
 import { Combo, AppliedCombo } from '../types/combo';
 import { ComboManagerModal } from '../components/ComboManagerModal';
 import { ComboApplyModal } from '../components/ComboApplyModal';
@@ -58,6 +57,9 @@ const getInitialRate = (which: 'eur' | 'usd'): number => {
 interface Props {
    isOnline?: boolean;
    onPendingChange?: () => void | Promise<number>;
+   products: Product[];
+   sellers: Seller[];
+   combos: Combo[];
 }
 
 interface PricedItem extends SaleItem {
@@ -67,13 +69,10 @@ interface PricedItem extends SaleItem {
    isWholesalePrice: boolean;
 }
 
-export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendingChange }) => {
+export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendingChange, products, sellers, combos, }) => {
    const { width } = useWindowDimensions();
    const split = width >= 900;
    const [panel, setPanel] = useState<'catalog' | 'cart'>('catalog');
-
-   const [products, setProducts] = useState<Product[]>([]);
-   const [sellers, setSellers] = useState<Seller[]>([]);
 
    const [filters, setFilters] = useState<FilterOptions>({
       query: '', category: 'all', brand: '', color: '', size: '', status: 'all',
@@ -117,7 +116,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const [sellerNameInput, setSellerNameInput] = useState('');
    const [savingSeller, setSavingSeller] = useState(false);
 
-   const [combos, setCombos] = useState<Combo[]>([]);
    const [appliedCombos, setAppliedCombos] = useState<AppliedCombo[]>([]);
    const [showComboManager, setShowComboManager] = useState(false);
    const [showComboApply, setShowComboApply] = useState(false);
@@ -125,14 +123,10 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const insets = useSafeAreaInsets();
 
    useEffect(() => {
-      const unsubProducts = subscribeToProducts(setProducts);
-      const unsubSellers = subscribeToSellers((data) => {
-         setSellers(data);
-         if (data.length > 0 && !selectedSeller) setSelectedSeller(data[0]);
-      });
-      const unsubCombos = subscribeToCombos(setCombos);
-      return () => { unsubProducts(); unsubSellers(); unsubCombos(); };
-   }, []);
+      if (!selectedSeller && sellers.length > 0) {
+         setSelectedSeller(sellers[0]);
+      }
+   }, [sellers, selectedSeller]);
 
    // Persistir tasas
    useEffect(() => {

@@ -1,6 +1,6 @@
 import { db } from './firebase';
 import {
-  collection, doc, runTransaction, onSnapshot, query, orderBy, Timestamp,
+  collection, doc, runTransaction, onSnapshot, query, orderBy, Timestamp, limit,
 } from 'firebase/firestore';
 import { Sale } from '../types/sale';
 import { Product } from '../types/inventory';
@@ -96,13 +96,27 @@ export const createSale = async (
   });
 };
 
-export const subscribeToSales = (callback: (sales: Sale[]) => void) => {
-  const q = query(collection(db, 'sales'), orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snapshot) => {
-    const salesList: Sale[] = snapshot.docs.map((docSnap) => ({
-      id: docSnap.id,
-      ...docSnap.data(),
-    })) as Sale[];
-    callback(salesList);
-  });
+export const subscribeToSales = (
+  callback: (sales: Sale[]) => void,
+  options?: { limit?: number }
+) => {
+  const maxDocs = options?.limit ?? 100;
+  const q = query(
+    collection(db, 'sales'),
+    orderBy('createdAt', 'desc'),
+    limit(maxDocs)
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const salesList: Sale[] = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      })) as Sale[];
+      callback(salesList);
+    },
+    (error) => {
+      console.error('Error escuchando ventas:', error);
+    }
+  );
 };

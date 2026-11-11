@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions } from 'react-native';
-import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn } from 'lucide-react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions, ActivityIndicator } from 'react-native';
+import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn, RefreshCw } from 'lucide-react-native';
 import { Product } from '../types/inventory';
-import { subscribeToProducts } from '../services/productService';
+import { fetchAllProducts } from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { Cover } from '../components/Cover';
 import { LIGHT, Tone, display, ease, nd, reduced, useEnter, getColorHex } from '../design';
@@ -240,6 +240,8 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
 
 export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUri }) => {
    const [products, setProducts] = useState<Product[]>([]);
+   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+   const [isRefreshing, setIsRefreshing] = useState(false);
    const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
    const [detailProduct, setDetailProduct] = useState<Product | null>(null);
    const [selectedImageIndex, setSelectedImageIndex] = useState(0);
@@ -256,18 +258,43 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
 
+   // ============================================================
+   // CARGA CACHE-FIRST (0 reads si el cache está poblado)
+   // ============================================================
    useEffect(() => {
-      const unsub = subscribeToProducts(setProducts);
-      return () => unsub();
+      let cancelled = false;
+      (async () => {
+         try {
+            const data = await fetchAllProducts(); // cache-first por defecto
+            if (!cancelled) setProducts(data);
+         } catch (e) {
+            console.warn('No se pudo cargar el catálogo:', e);
+         } finally {
+            if (!cancelled) setIsLoadingProducts(false);
+         }
+      })();
+      return () => { cancelled = true; };
    }, []);
+
+   // Refresco manual: fuerza getDocs desde servidor (N reads, uso explícito)
+   const handleRefresh = useCallback(async () => {
+      if (isRefreshing) return;
+      setIsRefreshing(true);
+      try {
+         const data = await fetchAllProducts({ fromServer: true });
+         setProducts(data);
+      } catch (e) {
+         console.warn('Error refrescando catálogo:', e);
+      } finally {
+         setIsRefreshing(false);
+      }
+   }, [isRefreshing]);
 
    const { categories, brands, colors, sizes } = useMemo(() => {
       const rawCategories: string[] = Array.from(
          new Set(products.map((p) => String(p.category || '')).filter(Boolean))
       );
 
-      // Categorías prioritarias: SIEMPRE salen primero, en este orden exacto.
-      // Se muestran incluso si no hay prendas en esa categoría actualmente.
       const PRIORITY_CATEGORIES = [
          'Camisas',
          'Franelillas',
@@ -276,8 +303,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          'Franelillas AAA',
       ];
 
-      // El resto de categorías que existan en productos pero no estén en la prioridad,
-      // ordenadas alfabéticamente para que sea predecible
       const otherCategories = rawCategories
          .filter((c) => c !== 'all' && !PRIORITY_CATEGORIES.includes(c))
          .sort((a, b) => a.localeCompare(b, 'es'));
@@ -308,7 +333,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       setCurrentPage(1);
    };
 
-   // Cambio de categoría: resetea los filtros secundarios (mantiene el query)
    const handleCategoryChange = (cat: string) => {
       setFilters((prev) => ({
          ...prev,
@@ -329,7 +353,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       const firstVariant = p.variants?.[0];
       if (firstVariant) {
          setSelectedColor(firstVariant.color);
-         // Solo selecciona una talla si tiene stock > 0 (no fallback a agotada)
          const firstAvailableSize = firstVariant.sizes?.find((s) => Number(s.stock) > 0)?.size || '';
          setSelectedSize(firstAvailableSize);
       } else {
@@ -348,7 +371,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const isGlobalWholesale = totalCartQuantity >= 6;
 
-   // Calcula cuántas unidades adicionales se pueden agregar
    const getMaxAddable = useCallback((product: Product, color: string, size: string): number => {
       const variant = product.variants?.find((v) => v.color === color);
       const sizeObj = variant?.sizes?.find((s) => s.size === size);
@@ -408,7 +430,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       );
    };
 
-   // MENSAJE WHATSAPP
    const sendWhatsAppCheckout = () => {
       if (cart.length === 0) return;
 
@@ -605,7 +626,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       const bolivarRetail = getBolivarRetail(p);
       const bolivarWholesale = getBolivarWholesale(p);
 
-      // ==== VALIDACIÓN DE STOCK ====
       const activeVariant = p.variants?.find((v) => v.color === selectedColor) || p.variants?.[0];
       const selectedSizeObj = activeVariant?.sizes?.find((s) => s.size === selectedSize);
       const availableStock = Number(selectedSizeObj?.stock) || 0;
@@ -856,6 +876,20 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                </View>
 
                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  {/* BOTÓN DE REFRESCO MANUAL (opcional, para forzar getDocs) */}
+                  <Pressable
+                     style={({ pressed }) => [styles.refreshBarBtn, pressed && styles.pressed]}
+                     onPress={handleRefresh}
+                     disabled={isRefreshing}
+                     accessibilityLabel="Refrescar catálogo"
+                  >
+                     {isRefreshing ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                     ) : (
+                        <RefreshCw size={16} color="#FFFFFF" />
+                     )}
+                  </Pressable>
+
                   <Pressable
                      style={({ pressed }) => [styles.cartBarBtn, pressed && styles.pressed]}
                      onPress={() => setIsCartModalOpen(true)}
@@ -882,59 +916,68 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             </View>
          </View>
 
-         <FlatList
-            key={cols}
-            data={paginatedProducts}
-            keyExtractor={(item) => item.id || item.code}
-            numColumns={cols}
-            columnWrapperStyle={{ gap: GAP, marginBottom: GAP * 2, paddingHorizontal: PAD, width: '100%', maxWidth: MAX, alignSelf: 'center' }}
-            contentContainerStyle={{ paddingBottom: 56 }}
-            renderItem={({ item }) => <ProductCard item={item} width={cardW} compact={mobile} onOpen={openDetail} onZoom={handleZoomImage} />}
-            ListHeaderComponent={header}
-            ListFooterComponent={
-               totalPages > 1 ? (
-                  <View style={[styles.inner, styles.paginationContainer, { paddingHorizontal: PAD }]}>
-                     <Pressable
-                        style={[styles.pageBtn, currentPage === 1 && styles.pageBtnDisabled]}
-                        disabled={currentPage === 1}
-                        onPress={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                     >
-                        <ChevronLeft size={18} color={currentPage === 1 ? GRAY[300] : GRAY[800]} />
-                        <Text style={[styles.pageBtnText, currentPage === 1 && { color: GRAY[300] }]}>Anterior</Text>
-                     </Pressable>
+         {isLoadingProducts && products.length === 0 ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60 }}>
+               <ActivityIndicator size="large" color={GRAY[800]} />
+               <Text style={{ marginTop: 14, fontSize: 14, color: GRAY[500], fontWeight: '600' }}>
+                  Cargando catálogo…
+               </Text>
+            </View>
+         ) : (
+            <FlatList
+               key={cols}
+               data={paginatedProducts}
+               keyExtractor={(item) => item.id || item.code}
+               numColumns={cols}
+               columnWrapperStyle={{ gap: GAP, marginBottom: GAP * 2, paddingHorizontal: PAD, width: '100%', maxWidth: MAX, alignSelf: 'center' }}
+               contentContainerStyle={{ paddingBottom: 56 }}
+               renderItem={({ item }) => <ProductCard item={item} width={cardW} compact={mobile} onOpen={openDetail} onZoom={handleZoomImage} />}
+               ListHeaderComponent={header}
+               ListFooterComponent={
+                  totalPages > 1 ? (
+                     <View style={[styles.inner, styles.paginationContainer, { paddingHorizontal: PAD }]}>
+                        <Pressable
+                           style={[styles.pageBtn, currentPage === 1 && styles.pageBtnDisabled]}
+                           disabled={currentPage === 1}
+                           onPress={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                        >
+                           <ChevronLeft size={18} color={currentPage === 1 ? GRAY[300] : GRAY[800]} />
+                           <Text style={[styles.pageBtnText, currentPage === 1 && { color: GRAY[300] }]}>Anterior</Text>
+                        </Pressable>
 
-                     <Text style={styles.pageIndicator}>
-                        Página {currentPage} de {totalPages}
-                     </Text>
+                        <Text style={styles.pageIndicator}>
+                           Página {currentPage} de {totalPages}
+                        </Text>
 
-                     <Pressable
-                        style={[styles.pageBtn, currentPage === totalPages && styles.pageBtnDisabled]}
-                        disabled={currentPage === totalPages}
-                        onPress={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                     >
-                        <Text style={[styles.pageBtnText, currentPage === totalPages && { color: GRAY[300] }]}>Siguiente</Text>
-                        <ChevronRight size={18} color={currentPage === totalPages ? GRAY[300] : GRAY[800]} />
-                     </Pressable>
+                        <Pressable
+                           style={[styles.pageBtn, currentPage === totalPages && styles.pageBtnDisabled]}
+                           disabled={currentPage === totalPages}
+                           onPress={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                        >
+                           <Text style={[styles.pageBtnText, currentPage === totalPages && { color: GRAY[300] }]}>Siguiente</Text>
+                           <ChevronRight size={18} color={currentPage === totalPages ? GRAY[300] : GRAY[800]} />
+                        </Pressable>
+                     </View>
+                  ) : undefined
+               }
+               ListEmptyComponent={
+                  <View style={styles.emptyBox}>
+                     <Text style={styles.emptyTitle}>No se encontraron prendas</Text>
+                     <Text style={styles.emptySub}>Prueba cambiando los filtros de marca, color o talla.</Text>
+                     {activeFiltersCount > 0 && (
+                        <Pressable style={({ pressed }) => [styles.emptyBtn, pressed && styles.pressed]} onPress={handleResetFilters}>
+                           <Text style={styles.waMainText}>Restablecer filtros</Text>
+                        </Pressable>
+                     )}
                   </View>
-               ) : undefined
-            }
-            ListEmptyComponent={
-               <View style={styles.emptyBox}>
-                  <Text style={styles.emptyTitle}>No se encontraron prendas</Text>
-                  <Text style={styles.emptySub}>Prueba cambiando los filtros de marca, color o talla.</Text>
-                  {activeFiltersCount > 0 && (
-                     <Pressable style={({ pressed }) => [styles.emptyBtn, pressed && styles.pressed]} onPress={handleResetFilters}>
-                        <Text style={styles.waMainText}>Restablecer filtros</Text>
-                     </Pressable>
-                  )}
-               </View>
-            }
-            initialNumToRender={20}
-            maxToRenderPerBatch={20}
-            windowSize={7}
-            removeClippedSubviews
-            keyboardShouldPersistTaps="handled"
-         />
+               }
+               initialNumToRender={20}
+               maxToRenderPerBatch={20}
+               windowSize={7}
+               removeClippedSubviews
+               keyboardShouldPersistTaps="handled"
+            />
+         )}
 
          {/* MODAL DE FILTROS */}
          <Modal visible={isFilterModalOpen} transparent animationType="fade">
@@ -1149,6 +1192,7 @@ const styles = StyleSheet.create({
    staffBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 999 },
    staffText: { fontSize: 13, fontWeight: '600', color: '#FFFFFF' },
 
+   refreshBarBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: GRAY[600] },
    cartBarBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: GRAY[600] },
    cartCountBadge: { position: 'absolute', top: -4, right: -4, backgroundColor: GRAY[600], minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
    cartCountBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },

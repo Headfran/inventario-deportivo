@@ -12,7 +12,7 @@ import {
 import Animated, { useSharedValue, useAnimatedStyle } from 'react-native-reanimated';
 import { Product, Shelf, ShelfLocation, ProductVariant } from '../types/inventory';
 import { subscribeToShelves, deleteShelf, updateShelf } from '../services/shelfService';
-import { subscribeToProducts, updateProduct } from '../services/productService';
+import { updateProduct } from '../services/productService';
 import { showConfirm, showAlert } from '../utils/alert';
 import { EditShelfModal } from './EditShelfModal';
 import { ProductSearchFilter } from '../components/ProductSearchFilter';
@@ -95,9 +95,12 @@ const ScrollRow = ({ children, style, contentContainerStyle }: {
    );
 };
 
-export const ShelfMapScreen = () => {
+interface ShelfMapScreenProps {
+   products: Product[];
+}
+
+export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
    const [shelves, setShelves] = useState<Shelf[]>([]);
-   const [products, setProducts] = useState<Product[]>([]);
 
    const [activeShelf, setActiveShelf] = useState<Shelf | null>(null);
    const [showVitrinaDetail, setShowVitrinaDetail] = useState(false);
@@ -173,18 +176,15 @@ export const ShelfMapScreen = () => {
       }
    }, [inspectedSpace]);
 
+   // Suscripción única a estantes (colección pequeña, cambia poco)
    useEffect(() => {
       const unsubShelves = subscribeToShelves((data) => {
          setShelves(data);
          // Refrescar el estante activo si cambió en Firestore
-         if (activeShelf) {
-            const updated = data.find((s) => s.id === activeShelf.id);
-            if (updated) setActiveShelf(updated);
-         }
+         setActiveShelf((prev) => prev ? (data.find((s) => s.id === prev.id) || prev) : prev);
       });
-      const unsubProducts = subscribeToProducts(setProducts);
-      return () => { unsubShelves(); unsubProducts(); };
-   }, [activeShelf?.id]);
+      return () => unsubShelves();
+   }, []);
 
    useEffect(() => {
       if (activeShelf || showVitrinaDetail) {
@@ -196,6 +196,7 @@ export const ShelfMapScreen = () => {
       }
       cellLayoutsRef.current = {};
       setTimeout(measureContainer, 50);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
    }, [activeShelf?.id, showVitrinaDetail]);
 
    const measureContainer = useCallback(() => {
@@ -364,9 +365,6 @@ export const ShelfMapScreen = () => {
       setHasUnsavedChanges(true);
    };
 
-   // ==========================================
-   // APILADO INTELIGENTE: agrupa variantes del mismo color en una sola celda
-   // ==========================================
    const handleSmartStack = () => {
       if (!activeShelf) return;
 
@@ -375,7 +373,6 @@ export const ShelfMapScreen = () => {
          for (let s = 1; s <= activeShelf.spacesPerRow; s++) cells.push({ row: r, space: s });
       }
 
-      // Agrupar items por color
       const itemsByColor = new Map<string, InspectedItem[]>();
       products.forEach((p) => {
          (p.variants || []).forEach((v, vIdx) => {
@@ -415,9 +412,6 @@ export const ShelfMapScreen = () => {
       showAlert('Listo', `${itemsByColor.size} grupos de color apilados. Revisa y guarda.`);
    };
 
-   // ==========================================
-   // AUTO-ORDENAR POR SKU: agrupa prendas del mismo código en celdas consecutivas
-   // ==========================================
    const handleAutoSort = () => {
       if (!activeShelf) return;
 
@@ -426,7 +420,6 @@ export const ShelfMapScreen = () => {
          for (let s = 1; s <= activeShelf.spacesPerRow; s++) cells.push({ row: r, space: s });
       }
 
-      // Agrupar items por SKU
       const itemsByCode = new Map<string, InspectedItem[]>();
       products.forEach((p) => {
          (p.variants || []).forEach((v, vIdx) => {
@@ -467,9 +460,6 @@ export const ShelfMapScreen = () => {
       showAlert('Listo', `${sortedCodes.length} SKU ordenados alfabéticamente. Revisa y guarda.`);
    };
 
-   // ==========================================
-   // VACIAR ESTANTE AL STASH
-   // ==========================================
    const handleClearToStash = () => {
       if (!activeShelf) return;
       showConfirm(
@@ -505,9 +495,6 @@ export const ShelfMapScreen = () => {
       );
    };
 
-   // ==========================================
-   // ACCIONES DE CELDA COMPLETA (desde el inspector)
-   // ==========================================
    const handleBulkMoveFromInspector = () => {
       if (!inspectedSpace || inspectedSpace.items.length === 0 || inspectedSpace.isStash) return;
       const first = inspectedSpace.items[0];
@@ -548,9 +535,6 @@ export const ShelfMapScreen = () => {
       );
    };
 
-   // ==========================================
-   // TOGGLE CELDA DESCONOCIDA
-   // ==========================================
    const toggleUnknownCell = async (row: number, space: number) => {
       if (!activeShelf?.id) {
          showAlert('Atención', 'Guarda el estante primero antes de marcar celdas.');
@@ -569,9 +553,6 @@ export const ShelfMapScreen = () => {
       }
    };
 
-   // ==========================================
-   // GUARDAR / DESCARTAR
-   // ==========================================
    const handleSaveChangesToFirebase = async () => {
       const performSave = async () => {
          setSaving(true);
@@ -625,9 +606,6 @@ export const ShelfMapScreen = () => {
       setStash([]);
    };
 
-   // ==========================================
-   // VITRINA
-   // ==========================================
    const assignProductToVitrina = async (product: Product, variantIndex: number, sizeToDisplay?: string) => {
       if (!product.id) return;
       try {
@@ -801,7 +779,6 @@ export const ShelfMapScreen = () => {
             )}
 
             {showVitrinaDetail ? (
-               // ===== VISTA VITRINA =====
                <View>
                   <View style={styles.matrixNavRow}>
                      <P style={styles.backBtn} onPress={() => setShowVitrinaDetail(false)}>
@@ -919,7 +896,6 @@ export const ShelfMapScreen = () => {
                   </View>
                </View>
             ) : activeShelf ? (
-               // ===== VISTA MATRIZ =====
                <View>
                   <View style={styles.matrixNavRow}>
                      <P
@@ -1035,13 +1011,11 @@ export const ShelfMapScreen = () => {
                                           dragY={dragY}
                                           isDragging={isDragging}
                                           onPress={() => {
-                                             // 1. Modo marcar desconocidas (prioridad)
                                              if (isMarkingUnknown) {
                                                 toggleUnknownCell(rowNum, spaceNum);
                                                 return;
                                              }
 
-                                             // 2. Modo asignación
                                              if (selectedVariant) {
                                                 if (selectedVariant.bulkItems && selectedVariant.sourceShelf === activeShelf.name) {
                                                    selectedVariant.bulkItems.forEach((it) => {
@@ -1054,7 +1028,6 @@ export const ShelfMapScreen = () => {
                                                    });
                                                    setSelectedVariant(null);
                                                 } else if (selectedVariant.bulkItems && selectedVariant.stashIndex === undefined) {
-                                                   // bulk move desde otra celda
                                                    selectedVariant.bulkItems.forEach((it) => {
                                                       handleAssignToSpaceLocal(it.product.id!, it.variantIndex, activeShelf.name, rowNum, spaceNum);
                                                    });
@@ -1206,7 +1179,6 @@ export const ShelfMapScreen = () => {
                   </View>
                </View>
             ) : (
-               // ===== DASHBOARD PRINCIPAL =====
                <>
                   <View style={[styles.sectionHeader, { justifyContent: 'space-between' }]}>
                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
@@ -1327,7 +1299,6 @@ export const ShelfMapScreen = () => {
                      ) : (
                         paginatedProducts.map((p) => (
                            <View key={p.id || p.code} style={styles.catalogCard}>
-                              {/* IMAGEN con lightbox al click */}
                               <Pressable
                                  style={styles.catalogImgWrapper}
                                  onPress={() => {
@@ -1356,7 +1327,6 @@ export const ShelfMapScreen = () => {
                                  )}
                               </Pressable>
 
-                              {/* INFO */}
                               <View style={styles.catalogInfo}>
                                  <View style={styles.catalogHeaderRow}>
                                     <View style={{ flex: 1, minWidth: 0 }}>
@@ -1537,7 +1507,6 @@ export const ShelfMapScreen = () => {
                         </View>
                      ))}
 
-                     {/* ACCIONES DE CELDA COMPLETA */}
                      {!inspectedSpace?.isStash && inspectedSpace && inspectedSpace.items.length > 0 && (
                         <View style={styles.bulkCellActionsBox}>
                            <Text style={styles.bulkCellActionsTitle}>
@@ -1830,7 +1799,6 @@ const styles = StyleSheet.create({
    viewerDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.3)' },
    viewerDotActive: { backgroundColor: T.onBar, width: 12 },
 
-   // ===== Inventario general (tarjetas tipo catálogo) =====
    catalogCard: {
       flexDirection: 'row',
       backgroundColor: T.surface,

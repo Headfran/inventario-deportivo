@@ -6,6 +6,12 @@ import {
   doc,
   runTransaction,
   Timestamp,
+  limit,
+  startAfter,
+  getDocs,
+  getDocsFromCache,
+  QueryDocumentSnapshot,
+  DocumentData,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -88,82 +94,98 @@ export const formatDateTime = (dateVal: any, style: 'short' | 'long' = 'short'):
   return `${day}/${month}/${year} ${hoursStr}:${minutes} ${ampm}`;
 };
 
-export const subscribeToSales = (callback: (sales: Sale[]) => void) => {
+// ==========================================
+// Normalizador compartido (una sola fuente de verdad)
+// ==========================================
+const normalizeSaleDoc = (docSnap: QueryDocumentSnapshot<DocumentData>): Sale => {
+  const data = docSnap.data();
+
+  const normalizedItems: SaleItem[] = (data.items || []).map((item: any) => ({
+    productId: item.productId || 'unknown',
+    productCode: item.productCode || item.code || 'S/N',
+    brand: item.productBrand || item.brand || 'Genérico',
+    name: item.productName || item.name || 'Artículo Desconocido',
+    color: item.variantColor || item.color || 'N/A',
+    size: item.size || 'N/A',
+    quantity: Number(item.quantity) || 1,
+    unitPrice: Number(item.unitPrice) || 0,
+    totalPrice: Number(item.subtotal || item.totalPrice) || 0,
+    purchasePrice: item.purchasePrice !== undefined ? Number(item.purchasePrice) : undefined,
+    unitPriceBSRef: item.unitPriceBSRef,
+    totalBSRef: item.totalBSRef,
+  }));
+
+  const normalizedHistory: SaleEditEntry[] = (data.editHistory || []).map((h: any) => ({
+    editedAt: parseDate(h.editedAt),
+    reason: h.reason || '',
+    previousTotal: Number(h.previousTotal) || 0,
+    newTotal: Number(h.newTotal) || 0,
+    refundAmount: Number(h.refundAmount) || 0,
+    chargeAmount: Number(h.chargeAmount) || 0,
+    adjustmentMethod: h.adjustmentMethod || undefined,
+    previousItems: (h.previousItems || []).map((item: any) => ({
+      productId: item.productId || 'unknown',
+      productCode: item.productCode || 'S/N',
+      brand: item.brand || 'Genérico',
+      name: item.name || '',
+      color: item.color || 'N/A',
+      size: item.size || 'N/A',
+      quantity: Number(item.quantity) || 1,
+      unitPrice: Number(item.unitPrice) || 0,
+      totalPrice: Number(item.totalPrice) || 0,
+      purchasePrice: item.purchasePrice !== undefined ? Number(item.purchasePrice) : undefined,
+    })),
+  }));
+
+  return {
+    id: docSnap.id,
+    receiptNumber: data.receiptNumber || 'S/N',
+    createdAt: parseDate(data.createdAt),
+    sellerId: data.sellerId || '',
+    sellerName: data.sellerName || 'Vendedor',
+    customerName: data.customerName || 'Cliente General',
+    customerPhone: data.customerPhone || '',
+    items: normalizedItems,
+    subtotal: Number(data.subtotal) || 0,
+    discount: Number(data.discount) || 0,
+    total: Number(data.totalAmount || data.total) || 0,
+    paymentMethod: data.paymentMethod || 'efectivo',
+    status: data.status || 'completed',
+    notes: data.notes || '',
+    isWholesale: !!data.isWholesale,
+    totalBS: data.totalBS ? Number(data.totalBS) : undefined,
+    totalBSRef: data.totalBSRef ? Number(data.totalBSRef) : undefined,
+    eurToBsRate: data.eurToBsRate ? Number(data.eurToBsRate) : undefined,
+    usdToBsRate: data.usdToBsRate ? Number(data.usdToBsRate) : undefined,
+    paymentSplits: data.paymentSplits || [],
+    appliedCombos: data.appliedCombos || [],
+    appliedCombo: data.appliedCombo,
+    editHistory: normalizedHistory,
+  } as Sale;
+};
+
+// ==========================================
+// onSnapshot LIMITADO
+// Solo sincroniza las N ventas más recientes.
+// Para historial completo → fetchSalesPage (paginado).
+// ==========================================
+export const subscribeToSales = (
+  callback: (sales: Sale[]) => void,
+  options?: { limit?: number }
+) => {
   if (!db) return () => { };
 
-  const q = query(collection(db, 'sales'), orderBy('createdAt', 'desc'));
+  const maxDocs = options?.limit ?? 100;
+  const q = query(
+    collection(db, 'sales'),
+    orderBy('createdAt', 'desc'),
+    limit(maxDocs)
+  );
 
   return onSnapshot(
     q,
     (snapshot) => {
-      const salesList: Sale[] = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data();
-
-        const normalizedItems: SaleItem[] = (data.items || []).map((item: any) => ({
-          productId: item.productId || 'unknown',
-          productCode: item.productCode || item.code || 'S/N',
-          brand: item.productBrand || item.brand || 'Genérico',
-          name: item.productName || item.name || 'Artículo Desconocido',
-          color: item.variantColor || item.color || 'N/A',
-          size: item.size || 'N/A',
-          quantity: Number(item.quantity) || 1,
-          unitPrice: Number(item.unitPrice) || 0,
-          totalPrice: Number(item.subtotal || item.totalPrice) || 0,
-          purchasePrice: item.purchasePrice !== undefined ? Number(item.purchasePrice) : undefined,
-          unitPriceBSRef: item.unitPriceBSRef,
-          totalBSRef: item.totalBSRef,
-        }));
-
-        const normalizedHistory: SaleEditEntry[] = (data.editHistory || []).map((h: any) => ({
-          editedAt: parseDate(h.editedAt),
-          reason: h.reason || '',
-          previousTotal: Number(h.previousTotal) || 0,
-          newTotal: Number(h.newTotal) || 0,
-          refundAmount: Number(h.refundAmount) || 0,
-          chargeAmount: Number(h.chargeAmount) || 0,
-          adjustmentMethod: h.adjustmentMethod || undefined,
-          previousItems: (h.previousItems || []).map((item: any) => ({
-            productId: item.productId || 'unknown',
-            productCode: item.productCode || 'S/N',
-            brand: item.brand || 'Genérico',
-            name: item.name || '',
-            color: item.color || 'N/A',
-            size: item.size || 'N/A',
-            quantity: Number(item.quantity) || 1,
-            unitPrice: Number(item.unitPrice) || 0,
-            totalPrice: Number(item.totalPrice) || 0,
-            purchasePrice: item.purchasePrice !== undefined ? Number(item.purchasePrice) : undefined,
-          })),
-        }));
-
-        return {
-          id: docSnap.id,
-          receiptNumber: data.receiptNumber || 'S/N',
-          createdAt: parseDate(data.createdAt),
-          sellerId: data.sellerId || '',
-          sellerName: data.sellerName || 'Vendedor',
-          customerName: data.customerName || 'Cliente General',
-          customerPhone: data.customerPhone || '',
-          items: normalizedItems,
-          subtotal: Number(data.subtotal) || 0,
-          discount: Number(data.discount) || 0,
-          total: Number(data.totalAmount || data.total) || 0,
-          paymentMethod: data.paymentMethod || 'efectivo',
-          status: data.status || 'completed',
-          notes: data.notes || '',
-          isWholesale: !!data.isWholesale,
-          totalBS: data.totalBS ? Number(data.totalBS) : undefined,
-          totalBSRef: data.totalBSRef ? Number(data.totalBSRef) : undefined,
-          eurToBsRate: data.eurToBsRate ? Number(data.eurToBsRate) : undefined,
-          usdToBsRate: data.usdToBsRate ? Number(data.usdToBsRate) : undefined,
-          paymentSplits: data.paymentSplits || [],
-          appliedCombos: data.appliedCombos || [],
-          appliedCombo: data.appliedCombo,
-          editHistory: normalizedHistory,
-        } as Sale;
-      });
-
-      callback(salesList);
+      callback(snapshot.docs.map(normalizeSaleDoc));
     },
     (error) => {
       console.error('Error escuchando historial de ventas:', error);
@@ -171,6 +193,58 @@ export const subscribeToSales = (callback: (sales: Sale[]) => void) => {
   );
 };
 
+// ==========================================
+// Paginación cache-first (para scroll infinito / historial completo)
+// ==========================================
+export interface SalesPageResult {
+  sales: Sale[];
+  lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+  hasMore: boolean;
+  fromCache: boolean;
+}
+
+export const fetchSalesPage = async (
+  pageSize: number = 30,
+  lastDoc: QueryDocumentSnapshot<DocumentData> | null = null,
+  preferCache: boolean = true
+): Promise<SalesPageResult> => {
+  if (!db) return { sales: [], lastDoc: null, hasMore: false, fromCache: false };
+
+  const col = collection(db, 'sales');
+  const q = lastDoc
+    ? query(col, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(pageSize))
+    : query(col, orderBy('createdAt', 'desc'), limit(pageSize));
+
+  // 1) Caché primero
+  if (preferCache) {
+    try {
+      const cached = await getDocsFromCache(q);
+      if (!cached.empty) {
+        return {
+          sales: cached.docs.map(normalizeSaleDoc),
+          lastDoc: cached.docs[cached.docs.length - 1] || null,
+          hasMore: cached.docs.length === pageSize,
+          fromCache: true,
+        };
+      }
+    } catch {
+      /* cache miss → servidor */
+    }
+  }
+
+  // 2) Servidor
+  const snap = await getDocs(q);
+  return {
+    sales: snap.docs.map(normalizeSaleDoc),
+    lastDoc: snap.docs[snap.docs.length - 1] || null,
+    hasMore: snap.docs.length === pageSize,
+    fromCache: false,
+  };
+};
+
+// ==========================================
+// Resto del archivo SIN cambios
+// ==========================================
 export const voidSale = async (sale: Sale, reason?: string): Promise<boolean> => {
   if (!db || sale.status === 'voided') return false;
 
@@ -221,9 +295,6 @@ export const voidSale = async (sale: Sale, reason?: string): Promise<boolean> =>
   }
 };
 
-// ==========================================
-// NUEVO: Edición de venta (intercambios / reembolsos)
-// ==========================================
 export interface EditSaleParams {
   sale: Sale;
   newItems: SaleItem[];
@@ -241,7 +312,6 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
 
   const { sale, newItems, newSubtotal, newDiscount, newTotal, reason, adjustmentMethod } = params;
 
-  // 1. Calcular diffs por item
   const oldMap = new Map<string, { item: SaleItem; qty: number }>();
   sale.items.forEach((item) => {
     const key = `${item.productId}_${item.color}_${item.size}`;
@@ -258,7 +328,7 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
     productId: string;
     color: string;
     size: string;
-    diff: number;   // > 0 = destock (añadido), < 0 = restock (devuelto)
+    diff: number;
   }
 
   const stockDiffs: StockDiff[] = [];
@@ -277,7 +347,6 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
     });
   });
 
-  // 2. Agrupar diffs por producto
   const diffsByProduct = new Map<string, StockDiff[]>();
   stockDiffs.forEach((d) => {
     if (!diffsByProduct.has(d.productId)) diffsByProduct.set(d.productId, []);
@@ -290,9 +359,7 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
   const refundAmount = totalDiff < 0 ? Math.abs(totalDiff) : 0;
   const chargeAmount = totalDiff > 0 ? totalDiff : 0;
 
-  // 3. Transacción atómica
   await runTransaction(db, async (transaction) => {
-    // 3.1 Leer todos los productos y la venta primero
     const productRefs = uniqueProductIds.map((id) => doc(db, 'products', id));
     const productSnaps = await Promise.all(productRefs.map((ref) => transaction.get(ref)));
     const saleRef = doc(db, 'sales', sale.id);
@@ -300,7 +367,6 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
 
     if (!saleSnap.exists()) throw new Error('Venta no encontrada en Firestore');
 
-    // 3.2 Aplicar diffs de stock
     productSnaps.forEach((snap, i) => {
       if (!snap.exists()) return;
       const productId = uniqueProductIds[i];
@@ -315,7 +381,6 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
             ...variant,
             sizes: (variant.sizes || []).map((sObj: any) => {
               if (String(sObj.size).trim() !== String(d.size).trim()) return sObj;
-              // diff > 0 (añadido) → restar stock. diff < 0 (devuelto) → sumar stock
               const newStock = Math.max(0, Number(sObj.stock) - d.diff);
               return { ...sObj, stock: newStock };
             }),
@@ -329,7 +394,6 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
       });
     });
 
-    // 3.3 Actualizar la venta con historial
     const existingData = saleSnap.data() || {};
     const previousHistory = existingData.editHistory || [];
 
@@ -358,9 +422,6 @@ export const editSale = async (params: EditSaleParams): Promise<void> => {
   });
 };
 
-// ==========================================
-// Helpers de ganancia
-// ==========================================
 export const calculateSaleProfit = (sale: Sale): { profit: number; determined: boolean } => {
   let profit = 0;
   let determined = true;
@@ -373,7 +434,6 @@ export const calculateSaleProfit = (sale: Sale): { profit: number; determined: b
     profit += (item.unitPrice - item.purchasePrice) * item.quantity;
   });
 
-  // Ajustar por descuento (el descuento reduce ganancia proporcionalmente)
   if (sale.discount && sale.discount !== 0) {
     profit -= sale.discount;
   }

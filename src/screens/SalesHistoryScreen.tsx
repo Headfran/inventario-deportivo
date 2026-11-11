@@ -109,7 +109,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
    const [editingSale, setEditingSale] = useState<Sale | null>(null);
 
    useEffect(() => {
-      const unsub = subscribeToSales(setSales);
+      const unsub = subscribeToSales(setSales, { limit: 1000 });
       return () => unsub();
    }, []);
 

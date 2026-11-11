@@ -88,7 +88,7 @@ export const SellerPerformanceScreen: React.FC = () => {
    const [customDateRange, setCustomDateRange] = useState<{ start: Date; end: Date } | null>(null);
 
    useEffect(() => {
-      const unsubS = subscribeToSales(setSales);
+      const unsubS = subscribeToSales(setSales, { limit: 1000 });
       const unsubL = subscribeToLayaways(setLayaways);
       return () => {
          unsubS();
@@ -230,9 +230,9 @@ export const SellerPerformanceScreen: React.FC = () => {
          </View>
 
          {/* CONTENIDO DESPLAZABLE PRINCIPAL */}
-         <ScrollView 
-            style={{ flex: 1 }} 
-            contentContainerStyle={styles.scrollContent} 
+         <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={true}
          >
             {/* KPIs GLOBALES */}

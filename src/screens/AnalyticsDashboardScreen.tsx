@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { DollarSign, ShoppingBag, TrendingUp, CreditCard, Award, PieChart, CalendarRange, Shirt, Coins } from 'lucide-react-native';
 import { Sale, subscribeToSales, calculateSaleProfit } from '../services/salesHistoryService';
-import { subscribeToProducts } from '../services/productService';
 import { Product } from '../types/inventory';
 import { TimeRangeOption, filterSalesByTimeRange, calculateAnalytics } from '../services/analyticsService';
 import { DateRangePickerModal } from '../components/DateRangePickerModal';
@@ -20,9 +19,12 @@ const P = ({ style, ...rest }: any) => (
    <Pressable {...rest} style={({ pressed }: any) => [style, pressed && styles.pressed]} />
 );
 
-export const AnalyticsDashboardScreen = () => {
+interface AnalyticsDashboardScreenProps {
+   catalog: Product[];
+}
+
+export const AnalyticsDashboardScreen: React.FC<AnalyticsDashboardScreenProps> = ({ catalog }) => {
    const [allSales, setAllSales] = useState<Sale[]>([]);
-   const [catalog, setCatalog] = useState<Product[]>([]);
    const [timeRange, setTimeRange] = useState<TimeRangeOption>('30days');
    const [loading, setLoading] = useState(true);
 
@@ -34,14 +36,15 @@ export const AnalyticsDashboardScreen = () => {
    const wide = width >= 1000;
 
    useEffect(() => {
-      const unsubSales = subscribeToSales((sales) => {
-         setAllSales(sales);
-         setLoading(false);
-      });
-      const unsubProducts = subscribeToProducts(setCatalog);
+      const unsubSales = subscribeToSales(
+         (sales) => {
+            setAllSales(sales);
+            setLoading(false);
+         },
+         { limit: 1000 }
+      );
       return () => {
          unsubSales();
-         unsubProducts();
       };
    }, []);
 

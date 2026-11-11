@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, MessageCircle, Printer, CheckSquare, Square, Zap, Share2, X } from 'lucide-react-native';
 import { Product } from '../types/inventory';
-import { subscribeToProducts, deleteProduct } from '../services/productService';
+import { deleteProduct } from '../services/productService';
 import { ProductFormScreen } from './ProductFormScreen';
 import { StockAdjustModal } from './StockAdjustModal';
 import { ProductShareModal } from '../components/ProductShareModal';
@@ -106,7 +106,6 @@ const ProductListItem = memo(({
             </View>
          </View>
 
-         {/* Bloque de stock/precio/acciones. */}
          <View style={[styles.side, isMobile && styles.sideMobile]}>
             <View style={[styles.sideGroup, isMobile && styles.sideGroupMobile]}>
                <Pressable
@@ -152,7 +151,6 @@ const ProductListItem = memo(({
                   <MessageCircle size={17} color={isSelectionModeActive ? T.inkMute : T.inkSoft} />
                </Pressable>
 
-               {/* ICONO CAMBIADO A "+" AL LADO DEL MENSAJE */}
                <Pressable
                   style={({ pressed }) => [styles.actionBtn, isMobile && styles.actionBtnMobile, pressed && styles.pressed]}
                   onPress={() => { if (!isSelectionModeActive) onAdjustStock(item); }}
@@ -189,16 +187,18 @@ const ProductListItem = memo(({
 
 
 // PANTALLA PRINCIPAL==========================================
-export const InventoryListScreen = () => {
+interface InventoryListScreenProps {
+   products: Product[];
+}
+
+export const InventoryListScreen: React.FC<InventoryListScreenProps> = ({ products }) => {
    const { width, height } = useWindowDimensions();
    const insets = useSafeAreaInsets();
    const isMobile = width < 600;
    const isCompact = width < 380;
 
-   // En web, el navegador tapa la parte inferior
    const bottomPadding = Math.max(insets.bottom, WEB_BOTTOM_BUFFER);
 
-   const [products, setProducts] = useState<Product[]>([]);
    const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
    const [sharingProduct, setSharingProduct] = useState<Product | null>(null);
    const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
@@ -207,27 +207,24 @@ export const InventoryListScreen = () => {
    const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
    const [bulkShareStatus, setBulkShareStatus] = useState<string | null>(null);
 
-   // Visor de imágenes
    const [previewImages, setPreviewImages] = useState<string[] | null>(null);
    const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0);
 
-   // Selección y paginación
    const [selectedIds, setSelectedIds] = useState<string[]>([]);
    const [currentPage, setCurrentPage] = useState(1);
    const [filters, setFilters] = useState<FilterOptions>({
       query: '', category: 'all', brand: '', color: '', size: '', status: 'all',
    });
 
+   // Mantener el modal de ajuste sincronizado cuando products cambia externamente
    useEffect(() => {
-      const unsubscribe = subscribeToProducts((data) => {
-         setProducts(data);
-         if (adjustingProduct) {
-            const updated = data.find((p) => p.id === adjustingProduct.id);
-            if (updated) setAdjustingProduct(updated);
-         }
-      });
-      return () => unsubscribe();
-   }, [adjustingProduct?.id]);
+      if (!adjustingProduct) return;
+      const updated = products.find((p) => p.id === adjustingProduct.id);
+      if (updated && updated !== adjustingProduct) {
+         setAdjustingProduct(updated);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [products]);
 
    const handleFilterChange = useCallback((newFilters: FilterOptions) => {
       setFilters(newFilters);
@@ -332,7 +329,6 @@ export const InventoryListScreen = () => {
    );
 
    const padX = isMobile ? 14 : 22;
-
 
    // HEADER (título + botones)==========================================
    const renderHeader = () => (
@@ -578,7 +574,6 @@ const styles = StyleSheet.create({
    inner: { width: '100%', maxWidth: MAX, alignSelf: 'center' },
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
-   // Encabezado
    topActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 14, paddingTop: 24, paddingBottom: 18 },
    topActionsMobile: { paddingTop: 18, paddingBottom: 14, alignItems: 'flex-start' },
    heading: { flex: 1, minWidth: 160, gap: 4 },
@@ -594,7 +589,6 @@ const styles = StyleSheet.create({
    newBtnText: { fontSize: 13, fontWeight: '800', color: T.onSolid },
    compactButton: { minWidth: 44, paddingHorizontal: 13 },
 
-   // Bulk bar
    bulkBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: T.bar, borderRadius: 12 },
    bulkLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
    bulkCloseBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 8 },
@@ -605,16 +599,13 @@ const styles = StyleSheet.create({
    bulkPrimaryText: { fontSize: 12, fontWeight: '800', color: T.solid },
    bulkDangerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(220,38,38,0.6)', backgroundColor: 'rgba(127,29,29,0.55)', borderRadius: 8 },
 
-   // Select all
    selectAllRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, paddingVertical: 4 },
    selectAllText: { fontSize: 12, color: T.inkSoft, fontWeight: '700', textTransform: 'uppercase' },
 
-   // Lista
    list: { flex: 1 },
    listContent: { width: '100%', maxWidth: MAX, alignSelf: 'center', paddingTop: 8, paddingBottom: 32, gap: 8, flexGrow: 1 },
    emptyList: { justifyContent: 'center' },
 
-   // Card
    card: { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 12, paddingRight: 16, backgroundColor: T.surface, borderRadius: 12, borderWidth: 1, borderColor: 'transparent' },
    cardMobile: { flexDirection: 'column', alignItems: 'stretch', gap: 12, paddingRight: 12 },
    cardSelected: { borderColor: T.ink, backgroundColor: T.bg },
@@ -634,7 +625,6 @@ const styles = StyleSheet.create({
    dot: { width: 11, height: 11, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(0,0,0,0.3)' },
    variantCount: { fontSize: 12, color: T.inkMute, fontWeight: '600' },
 
-   // Side (desktop: fila única / móvil: 2 filas)
    side: { flexDirection: 'row', alignItems: 'center', gap: 18 },
    sideMobile: { flexDirection: 'column', alignItems: 'stretch', gap: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: T.line, width: '100%' },
    sideGroup: { flexDirection: 'row', alignItems: 'center', gap: 18 },
@@ -685,7 +675,6 @@ const styles = StyleSheet.create({
       textAlign: 'right',
    },
 
-   // Paginación
    paginationBar: { borderTopWidth: 1, borderTopColor: T.line, paddingVertical: 10, backgroundColor: T.bg },
    pageRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
    pageNavBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 8, paddingHorizontal: 8 },
@@ -694,16 +683,13 @@ const styles = StyleSheet.create({
    pageIndicator: { ...display, fontSize: 24, fontWeight: '700', color: T.inkMute },
    pageNumber: { color: T.ink },
 
-   // Empty
    emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 48, paddingHorizontal: 24, gap: 10 },
    emptyTitle: { ...display, fontSize: 32, fontWeight: '800', color: T.ink, textTransform: 'uppercase' },
    emptyText: { color: T.inkMute, fontSize: 13, textAlign: 'center', lineHeight: 19 },
 
-   // Overlay de bulk share
    bulkShareOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,10,0.9)', zIndex: 1000, justifyContent: 'center', alignItems: 'center' },
    bulkShareText: { color: T.onBar, marginTop: 12, fontSize: 15, fontWeight: '800', textTransform: 'uppercase' },
 
-   // Visor de imágenes
    imageViewerContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', width: '100%', height: '100%', position: 'relative' },
    closeViewerBtn: { position: 'absolute', top: 30, right: 20, zIndex: 20, padding: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 22 },
    navButtonLeft: { position: 'absolute', left: 20, top: '50%', marginTop: -25, zIndex: 20, padding: 10, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 30 },
