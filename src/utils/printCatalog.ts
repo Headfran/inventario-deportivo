@@ -260,20 +260,22 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
       ? `<div class="img-wrap dual-img"><img src="${img1}" class="img-left"/><img src="${img2}" class="img-right"/></div>`
       : `<div class="img-wrap single-img"><img src="${img1}" /></div>`;
 
-    const variantsMarkup = (p.variants || []).map((v: any) => {
-      const availableSizes = sortSizes((v.sizes || []).filter((s: any) => Number(s.stock) > 0).map((s: any) => String(s.size))).join(' <span class="sep">|</span> ');
-      const fallbackHex = COLOR_MAP[v.color] || v.colorHex || '#cbd5e1';
+    const variantsMarkup = (p.variants || [])
+      .filter((v: any) => (v.sizes || []).some((s: any) => Number(s.stock) > 0))
+      .map((v: any) => {
+        const availableSizes = sortSizes((v.sizes || []).filter((s: any) => Number(s.stock) > 0).map((s: any) => String(s.size))).join(' <span class="sep">|</span> ');
+        const fallbackHex = COLOR_MAP[v.color] || v.colorHex || '#cbd5e1';
 
-      return `
-        <div class="variant-row">
-          <div class="color-circle" style="background-color: ${fallbackHex};"></div>
-          <div class="variant-info">
-            <span class="color-name">${v.color || 'Único'}</span>
-            <div class="leader"></div>
-            <span class="sizes">${availableSizes}</span>
-          </div>
-        </div>`;
-    }).join('');
+        return `
+      <div class="variant-row">
+        <div class="color-circle" style="background-color: ${fallbackHex};"></div>
+        <div class="variant-info">
+          <span class="color-name">${v.color || 'Único'}</span>
+          <div class="leader"></div>
+          <span class="sizes">${availableSizes}</span>
+        </div>
+      </div>`;
+      }).join('');
 
     return `
     <div class="card">
@@ -350,7 +352,7 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
             ${renderFooter(isLast)}
           </div>`;
     }).join('')
-    : `<div class="sheet"><p style="text-align:center;color:#94a3b8;font-style:italic;padding:40px;">No hay prendas en Bodega o Vitrina para esta selección.</p></div>`;
+    : `<div class="sheet"><p style="text-align:center;color:#94a3b8;font-style:italic;padding:40px;">No hay prendas con stock disponible para esta selección.</p></div>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -693,9 +695,11 @@ export const generateCatalogPrint = async (
 
   // Filtro estricto: solo variantes con ubicaciones
   const validProducts = products.reduce((acc: Product[], p) => {
-    const validVariants = (p.variants || []).filter(v => v.locations && v.locations.length > 0);
-    if (validVariants.length > 0) {
-      acc.push({ ...p, variants: validVariants });
+    const variantsWithStock = (p.variants || []).filter(v =>
+      (v.sizes || []).some(s => Number(s.stock) > 0)
+    );
+    if (variantsWithStock.length > 0) {
+      acc.push({ ...p, variants: variantsWithStock });
     }
     return acc;
   }, []);

@@ -57,6 +57,7 @@ const getInitialRate = (which: 'eur' | 'usd'): number => {
 
 interface Props {
    isOnline?: boolean;
+   onPendingChange?: () => void | Promise<number>;
 }
 
 interface PricedItem extends SaleItem {
@@ -66,7 +67,7 @@ interface PricedItem extends SaleItem {
    isWholesalePrice: boolean;
 }
 
-export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
+export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendingChange }) => {
    const { width } = useWindowDimensions();
    const split = width >= 900;
    const [panel, setPanel] = useState<'catalog' | 'cart'>('catalog');
@@ -252,11 +253,27 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
    // Equivalente USD del monto Bs realmente cobrado
    const totalBSExpectedUSDEquiv = usdToBsRate > 0 ? totalBSExpected / usdToBsRate : 0;
 
-   // Para el recibo: subtotal = suma de TODOS los items a precio normal; discount = subtotal - total
-   const subtotalAllItems = pricedCart.reduce((s, i) => s + i.totalPrice, 0);
-   const discountAmount = subtotalAllItems - totalUSD;
+   // ==========================================
+   // SUBTOTAL "DE LISTA" SEGÚN EL MODO DE COBRO
+   // - Modo USD/mixto: suma de precios USD del catálogo
+   // - Modo Bs: suma de precios € convertidos a USD vía Bs (lo que el cliente paga)
+   // ==========================================
+   const subtotalAllItems = useMemo(() => {
+      if (isFullBsPayment) {
+         if (usdToBsRate <= 0) return 0;
+         return pricedCart.reduce(
+            (s, i) => s + (i.bsRefTotal * eurToBsRate) / usdToBsRate,
+            0
+         );
+      }
+      return pricedCart.reduce((s, i) => s + i.totalPrice, 0);
+   }, [pricedCart, isFullBsPayment, eurToBsRate, usdToBsRate]);
 
-   // Combos: precio Bs y USD totales ya vienen de comboInfo
+   // Total cobrado real expresado en USD
+   const finalTotalUSD = isFullBsPayment ? totalBSExpectedUSDEquiv : totalUSD;
+
+   // Descuento real (solo combos o descuentos explícitos, NUNCA negativo)
+   const discountAmount = Math.max(0, subtotalAllItems - finalTotalUSD);
 
    useEffect(() => {
       if (appliedCombos.length === 0) return;
@@ -623,8 +640,17 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
             paymentSplits.length > 1 ? 'mixto' :
                'efectivo';
 
+      // ============================================================
+      // ITEMS: precios efectivos según modo de cobro
+      // ============================================================
       const itemsPayload = pricedCart.map((item) => {
          const product = products.find((p) => (p.id || p.code) === item.productId);
+
+         // Precio efectivo cobrado por unidad en USD (mode-aware)
+         const effectiveUnitUSD = isFullBsPayment && usdToBsRate > 0
+            ? (item.bsRefUnit * eurToBsRate) / usdToBsRate
+            : item.unitPrice;
+
          return {
             productId: item.productId,
             brand: item.brand,
@@ -633,23 +659,31 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
             color: item.color,
             size: item.size,
             quantity: item.quantity,
+            // Precios de catálogo (histórico / auditoría)
             unitPrice: item.unitPrice,
             totalPrice: item.totalPrice,
-            productImage: item.productImage,
+            // Precios efectivos cobrados (mode-aware)
+            effectiveUnitPriceUSD: effectiveUnitUSD,
+            effectiveTotalUSD: effectiveUnitUSD * item.quantity,
+            // Precios en Bs (siempre presentes para trazabilidad)
             unitPriceBSRef: item.bsRefUnit,
             totalBSRef: item.bsRefTotal,
             purchasePrice: (product as any)?.purchasePrice,
          };
       });
 
+      // ============================================================
+      // Payload: subtotal / discount / total respetan el modo de cobro
+      // ============================================================
       const saleDataToSave: any = {
          receiptNumber,
          sellerId: selectedSeller.id,
          sellerName: selectedSeller.name,
          items: itemsPayload,
-         subtotal: subtotalAllItems,
-         discount: discountAmount,
-         total: totalUSD,
+         subtotal: subtotalAllItems,       // mode-aware (precio de lista en el modo correcto)
+         discount: discountAmount,          // nunca negativo (solo combos / descuentos reales)
+         total: finalTotalUSD,              // monto efectivamente cobrado en USD
+         totalCatalogUSD: totalUSD,         // valor de catálogo en USD (auditoría)
          paymentMethod: primaryMethod,
          paymentSplits,
          totalBS: totalBSExpected,
@@ -657,6 +691,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
          eurToBsRate,
          usdToBsRate,
          isWholesale,
+         isFullBsPayment,                   // marca el modo para la factura
       };
       if (customerName.trim()) saleDataToSave.customerName = customerName.trim();
       if (customerPhone.trim()) saleDataToSave.customerPhone = customerPhone.trim();
@@ -689,9 +724,13 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
       const buildCompletedSale = (id: string) =>
          ({ id, ...saleDataToSave, createdAt: { toDate: () => new Date() } } as Sale);
 
+      // ============================================================
+      // MODO OFFLINE EXPLÍCITO (isOnline === false)
+      // ============================================================
       if (isOffline) {
          try {
             await enqueuePendingSale(buildOfflineSale() as any);
+            onPendingChange?.();
             setLastCompletedSale(buildCompletedSale(`OFFLINE-${Date.now()}`));
             resetCart();
             if (!split) setPanel('catalog');
@@ -703,19 +742,44 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true }) => {
          return;
       }
 
+      // ============================================================
+      // MODO ONLINE — intenta Firestore directo
+      // ============================================================
       try {
          const saleId = await createSale(saleDataToSave);
          setLastCompletedSale(buildCompletedSale(saleId));
          resetCart();
          if (!split) setPanel('catalog');
       } catch (error: any) {
-         console.warn('Fallo en la red online. Guardando en cola offline:', error);
+         const code = error?.code || '';
+         const msg = error?.message || String(error);
+
+         // 🔍 Distinguir error de RED de error de NEGOCIO
+         const isNetworkError =
+            code === 'unavailable' ||
+            code === 'deadline-exceeded' ||
+            code === 'network-request-failed' ||
+            /network|offline|connection|timeout|fetch/i.test(msg);
+
+         if (!isNetworkError) {
+            // Stock, permisos, undefined, producto borrado, etc. → mostrar y NO encolar
+            console.warn('❌ createSale FALLÓ (no-red):', error);
+            showAlert('No se pudo registrar la venta', msg);
+            return;
+         }
+
+         // Es red real → encolar offline
+         console.warn('📡 Fallo de red. Encolando venta offline:', error);
          try {
             await enqueuePendingSale(buildOfflineSale() as any);
+            onPendingChange?.();
             setLastCompletedSale(buildCompletedSale(`OFFLINE-${Date.now()}`));
             resetCart();
             if (!split) setPanel('catalog');
-            showAlert('📡 Venta Guardada en Cola', `Fallo de conexión. La venta #${receiptNumber} fue respaldada localmente.`);
+            showAlert(
+               '📡 Venta Guardada en Cola',
+               `Fallo de conexión. La venta #${receiptNumber} fue respaldada localmente.`
+            );
          } catch {
             showAlert('Error en Venta', 'No se pudo completar la transacción.');
          }

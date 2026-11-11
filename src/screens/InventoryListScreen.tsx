@@ -10,7 +10,7 @@ import { StockAdjustModal } from './StockAdjustModal';
 import { ProductShareModal } from '../components/ProductShareModal';
 import { CatalogPrintModal } from '../components/CatalogPrintModal';
 import { BulkUpdateModal } from '../components/BulkUpdateModal';
-import { showConfirm, showAlert } from '../utils/alert';
+import { showConfirm, showConfirmWithText, showAlert } from '../utils/alert';
 import { ProductSearchFilter } from '../components/ProductSearchFilter';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { advancedBulkNativeShare } from '../utils/shareUtils';
@@ -283,18 +283,29 @@ export const InventoryListScreen = () => {
    }, []);
 
    const handleDeleteItem = useCallback((product: Product) => {
-      showConfirm('Eliminar', `¿Borrar "${product.name}"?`, async () => { await deleteProduct(product); });
+      showConfirmWithText(
+         'Eliminar Prenda',
+         `¿Borrar permanentemente "${product.name}" (SKU: ${product.code})?\n\nEsta acción no se puede deshacer y también se eliminarán sus imágenes en la nube.`,
+         'ELIMINAR',
+         async () => { await deleteProduct(product); },
+         undefined,
+         'Escribe ELIMINAR'
+      );
    }, []);
 
    const handleDeleteMulti = () => {
-      showConfirm(
+      const count = selectedIds.length;
+      showConfirmWithText(
          'Borrado Masivo',
-         `¿Eliminar ${selectedIds.length} prendas permanentemente?`,
+         `¿Eliminar ${count} ${count === 1 ? 'prenda' : 'prendas'} permanentemente?\n\nEsta acción no se puede deshacer y también se eliminarán las imágenes asociadas en la nube.`,
+         `ELIMINAR ${count}`,
          async () => {
             await Promise.all(selectedProductsObjects.map(p => deleteProduct(p)));
             setSelectedIds([]);
-            showAlert('Eliminadas', 'Las prendas fueron borradas.');
-         }
+            showAlert('Eliminadas', `${count} ${count === 1 ? 'prenda fue borrada' : 'prendas fueron borradas'}.`);
+         },
+         undefined,
+         `Escribe ELIMINAR ${count}`
       );
    };
 
@@ -322,7 +333,7 @@ export const InventoryListScreen = () => {
 
    const padX = isMobile ? 14 : 22;
 
-   
+
    // HEADER (título + botones)==========================================
    const renderHeader = () => (
       <View>

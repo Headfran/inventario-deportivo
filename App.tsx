@@ -172,10 +172,46 @@ const MainApp = () => {
       try {
          const pending = await getPendingSales();
          setPendingCount(pending.length);
+         return pending.length;
       } catch (e) {
          console.warn('Error al verificar cola offline:', e);
+         return 0;
       }
    };
+
+   const trySyncSilent = async () => {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && !navigator.onLine) return;
+      try {
+         const result = await syncPendingSalesWithFirestore();
+         await checkPendingSales();
+         if (result.success > 0) {
+            showAlert(
+               '🔄 Sincronización Automática',
+               `Se enviaron ${result.success} ventas pendientes.`
+            );
+         }
+      } catch (e) {
+         console.warn('Sync silencioso falló:', e);
+      }
+   };
+
+   // 🔑 Sync al arrancar la app (aquí agarra las ventas viejas que dejaste respaldadas)
+   useEffect(() => {
+      const t = setTimeout(() => {
+         checkPendingSales();
+         trySyncSilent();
+      }, 2500); // pequeña espera a que se resuelva auth
+      return () => clearTimeout(t);
+   }, []);
+
+   // 🔁 Reintento cada 60s mientras haya pendientes
+   useEffect(() => {
+      if (pendingCount <= 0) return;
+      const id = setInterval(() => {
+         trySyncSilent();
+      }, 60_000);
+      return () => clearInterval(id);
+   }, [pendingCount]);
 
    const handleManualSync = async () => {
       if (Platform.OS === 'web' && typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -201,32 +237,32 @@ const MainApp = () => {
    };
 
    useEffect(() => {
-      checkPendingSales();
-
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
          setIsOnline(navigator.onLine);
+
          const handleOnline = async () => {
             setIsOnline(true);
-            const result = await syncPendingSalesWithFirestore();
-            if (result.success > 0) {
-               showAlert(
-                  '🔄 Sincronización Automática',
-                  `Se han enviado ${result.success} ventas pendientes.`
-               );
-            }
-            checkPendingSales();
+            await trySyncSilent();
          };
          const handleOffline = () => setIsOnline(false);
+         const handleVisibility = () => {
+            if (document.visibilityState === 'visible') {
+               checkPendingSales();
+               trySyncSilent();
+            }
+         };
 
          window.addEventListener('online', handleOnline);
          window.addEventListener('offline', handleOffline);
+         document.addEventListener('visibilitychange', handleVisibility);
+
          return () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
+            document.removeEventListener('visibilitychange', handleVisibility);
          };
-      } else {
-         setIsOnline(true);
       }
+      // En nativo, revisa al volver a foco
    }, []);
 
    // Notificaciones FCM
@@ -450,7 +486,7 @@ const MainApp = () => {
                   </View>
                )}
 
-               {pendingCount > 0 && (
+               {(pendingCount > 0 || isOwner) && (
                   <P
                      style={styles.syncBtn}
                      onPress={handleManualSync}
@@ -488,7 +524,7 @@ const MainApp = () => {
          <View style={styles.tabContent}>
             {safeActiveTab === 'inventory' && <InventoryListScreen />}
             {safeActiveTab === 'shelves' && <ShelfMapScreen />}
-            {safeActiveTab === 'sales' && <SalesRegisterScreen isOnline={isOnline} />}
+            {safeActiveTab === 'sales' && <SalesRegisterScreen isOnline={isOnline} onPendingChange={checkPendingSales} />}
             {safeActiveTab === 'layaways' && (
                <LayawayScreen
                   currentSellerName={user?.email || 'Vendedor'}

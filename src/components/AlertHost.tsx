@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Modal, Pressable, StyleSheet } from 'react-native';
-import { AlertCircle, CheckCircle2 } from 'lucide-react-native';
+import { View, Text, Modal, Pressable, StyleSheet, TextInput, Platform } from 'react-native';
+import { AlertCircle, CheckCircle2, Trash2 } from 'lucide-react-native';
 import { subscribeToAlerts, dismissCurrentAlert, AlertRequest } from '../utils/alert';
 import { MONO as T, display } from '../design';
 
@@ -8,16 +8,27 @@ const DANGER_PATTERN = /eliminar|borrar|anular|cerrar\s*sesi[oó]n|rechazar|desc
 
 export const AlertHost: React.FC = () => {
    const [req, setReq] = useState<AlertRequest | null>(null);
+   const [inputValue, setInputValue] = useState('');
 
    useEffect(() => {
       return subscribeToAlerts(setReq);
    }, []);
 
+   // Resetear el input cada vez que cambia la alerta
+   useEffect(() => {
+      setInputValue('');
+   }, [req?.id]);
+
    if (!req) return null;
 
    const isDanger = DANGER_PATTERN.test(req.title);
+   const requiresText = req.type === 'confirmWithText';
+   const expectedText = req.confirmText || '';
+   const matchesText = !requiresText || inputValue.trim() === expectedText;
+   const canConfirm = matchesText;
 
    const handleConfirm = () => {
+      if (!canConfirm) return;
       const cb = req.onConfirm;
       dismissCurrentAlert();
       if (cb) setTimeout(cb, 50);
@@ -34,7 +45,7 @@ export const AlertHost: React.FC = () => {
          <View style={styles.overlay}>
             <Pressable
                style={StyleSheet.absoluteFill}
-               onPress={req.type === 'confirm' ? handleCancel : handleConfirm}
+               onPress={req.type === 'alert' ? handleConfirm : handleCancel}
             />
             <View style={styles.card}>
                <View style={[styles.header, isDanger && styles.headerDanger]}>
@@ -54,8 +65,30 @@ export const AlertHost: React.FC = () => {
                   </View>
                )}
 
+               {requiresText && (
+                  <View style={styles.inputSection}>
+                     <Text style={styles.inputHint}>
+                        Escribe{' '}
+                        <Text style={styles.inputExpected}>{expectedText}</Text>{' '}
+                        para confirmar:
+                     </Text>
+                     <TextInput
+                        style={styles.input}
+                        value={inputValue}
+                        onChangeText={setInputValue}
+                        placeholder={req.inputPlaceholder}
+                        placeholderTextColor={T.inkMute}
+                        autoFocus
+                        autoCapitalize="characters"
+                        autoCorrect={false}
+                        spellCheck={false}
+                        {...(Platform.OS === 'web' ? { outlineStyle: 'none' as any } : {})}
+                     />
+                  </View>
+               )}
+
                <View style={styles.footer}>
-                  {req.type === 'confirm' && (
+                  {req.type !== 'alert' && (
                      <Pressable
                         style={({ pressed }) => [styles.btnCancel, pressed && styles.pressed]}
                         onPress={handleCancel}
@@ -67,12 +100,19 @@ export const AlertHost: React.FC = () => {
                      style={({ pressed }) => [
                         styles.btnPrimary,
                         isDanger && styles.btnPrimaryDanger,
-                        pressed && styles.pressed,
+                        !canConfirm && styles.btnPrimaryDisabled,
+                        pressed && canConfirm && styles.pressed,
                      ]}
                      onPress={handleConfirm}
+                     disabled={!canConfirm}
                   >
+                     {isDanger && canConfirm && <Trash2 size={14} color={T.onSolid} />}
                      <Text style={styles.btnPrimaryText}>
-                        {req.type === 'confirm' ? (isDanger ? 'Confirmar' : 'Aceptar') : 'OK'}
+                        {req.type === 'alert'
+                           ? 'OK'
+                           : isDanger
+                              ? 'Sí, Eliminar'
+                              : 'Confirmar'}
                      </Text>
                   </Pressable>
                </View>
@@ -92,7 +132,7 @@ const styles = StyleSheet.create({
    },
    card: {
       width: '100%',
-      maxWidth: 400,
+      maxWidth: 420,
       backgroundColor: T.bg,
       borderRadius: 16,
       overflow: 'hidden',
@@ -127,6 +167,37 @@ const styles = StyleSheet.create({
       lineHeight: 20,
       color: T.inkSoft,
    },
+   inputSection: {
+      paddingHorizontal: 18,
+      paddingTop: 14,
+      paddingBottom: 4,
+   },
+   inputHint: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: T.inkSoft,
+      marginBottom: 8,
+      lineHeight: 16,
+   },
+   inputExpected: {
+      fontWeight: '800',
+      color: '#DC2626',
+      fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+   },
+   input: {
+      borderWidth: 1.5,
+      borderColor: T.line,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 0,
+      height: 46,
+      fontSize: 15,
+      fontWeight: '700',
+      color: T.ink,
+      backgroundColor: T.bg,
+      textAlignVertical: 'center',
+      letterSpacing: 0.5,
+   },
    footer: {
       flexDirection: 'row',
       justifyContent: 'flex-end',
@@ -148,16 +219,21 @@ const styles = StyleSheet.create({
       color: T.ink,
    },
    btnPrimary: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
       height: 42,
       paddingHorizontal: 22,
       borderRadius: 10,
       backgroundColor: T.solid,
-      alignItems: 'center',
-      justifyContent: 'center',
-      minWidth: 88,
+      minWidth: 100,
    },
    btnPrimaryDanger: {
       backgroundColor: '#DC2626',
+   },
+   btnPrimaryDisabled: {
+      opacity: 0.35,
    },
    btnPrimaryText: {
       fontSize: 13,

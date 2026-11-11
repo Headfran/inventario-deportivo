@@ -1,10 +1,12 @@
-type AlertType = 'alert' | 'confirm';
+type AlertType = 'alert' | 'confirm' | 'confirmWithText';
 
 export interface AlertRequest {
   id: string;
   type: AlertType;
   title: string;
   message?: string;
+  confirmText?: string;
+  inputPlaceholder?: string;
   onConfirm?: () => void;
   onCancel?: () => void;
 }
@@ -62,6 +64,30 @@ export const showConfirm = (
     type: 'confirm',
     title,
     message,
+    onConfirm,
+    onCancel,
+  });
+};
+
+/**
+ * Confirmación reforzada: el usuario debe escribir un texto exacto para poder
+ * confirmar. Útil para acciones destructivas (eliminar productos, etc.).
+ */
+export const showConfirmWithText = (
+  title: string,
+  message: string,
+  confirmText: string,
+  onConfirm: () => void,
+  onCancel?: () => void,
+  inputPlaceholder?: string
+) => {
+  dispatch({
+    id: `confirmtext_${Date.now()}_${Math.random()}`,
+    type: 'confirmWithText',
+    title,
+    message,
+    confirmText,
+    inputPlaceholder: inputPlaceholder || `Escribe "${confirmText}" para confirmar`,
     onConfirm,
     onCancel,
   });

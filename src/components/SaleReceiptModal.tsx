@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Modal, StyleSheet, Pressable, ScrollView, TextInput } from 'react-native';
 import { CheckCircle2, Printer, MessageCircle, Crown, Coins } from 'lucide-react-native';
 import { Sale } from '../types/sale';
@@ -22,9 +22,23 @@ export const SaleReceiptModal: React.FC<Props> = ({
    onClose,
    storeName = 'JD Store',
 }) => {
+   // ⚠️ useState ANTES del early-return (Regla de Hooks de React)
+   const [overridePhone, setOverridePhone] = useState(sale?.customerPhone || '');
+
+   // Sincroniza el teléfono cuando se muestra una venta distinta
+   useEffect(() => {
+      if (sale) setOverridePhone(sale.customerPhone || '');
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [sale?.id]);
+
    if (!sale) return null;
 
-   const [overridePhone, setOverridePhone] = useState(sale.customerPhone || '');
+   // ──────────────────────────────────────────────────────────────
+   // Datos derivados
+   // ──────────────────────────────────────────────────────────────
+   const saleAny = sale as any;
+   const isFullBsPayment: boolean = !!saleAny.isFullBsPayment;
+   const totalCatalogUSD: number | undefined = saleAny.totalCatalogUSD;
 
    const dateStr = sale.createdAt?.toDate
       ? sale.createdAt.toDate().toLocaleString('es-ES')
@@ -34,6 +48,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
       pago_movil: 'Pago Móvil',
       efectivo: 'Efectivo',
       zelle: 'Zelle',
+      binance: 'Binance',
       tarjeta: 'Tarjeta / Punto',
       mixto: 'Mixto',
       transferencia: 'Transferencia',
@@ -50,13 +65,17 @@ export const SaleReceiptModal: React.FC<Props> = ({
             : [];
 
    const hasCombos = appliedCombosList.length > 0;
-   const hasComboAdjustment = hasCombos && !!sale.discount && sale.discount !== 0;
-   const isAdjustmentPositive = hasComboAdjustment && sale.discount! > 0;
+   const hasDiscount = !!sale.discount && Math.abs(sale.discount) >= 0.01;
+   // Compat: ventas viejas pueden tener discount negativo (bug previo)
+   const isLegacyPositiveAdjustment = hasDiscount && (sale.discount as number) < 0;
 
    const comboItemKeys = new Set<string>();
    appliedCombosList.forEach((c) => {
       (c.itemKeys || []).forEach((key) => comboItemKeys.add(key));
    });
+
+   const hasBsSplit =
+      sale.paymentSplits?.some((s) => s.currency === 'BS') ?? false;
 
    return (
       <Modal visible={visible} transparent animationType="fade">
@@ -80,8 +99,8 @@ export const SaleReceiptModal: React.FC<Props> = ({
                         </Text>
                      </View>
 
-                     {/* BADGES DESTACADOS (mayor + combos) */}
-                     {(sale.isWholesale || hasCombos) && (
+                     {/* BADGES DESTACADOS (mayor + combos + modo Bs) */}
+                     {(sale.isWholesale || hasCombos || isFullBsPayment) && (
                         <View style={styles.badgeRow}>
                            {sale.isWholesale && (
                               <View style={styles.mayorBadge}>
@@ -89,28 +108,18 @@ export const SaleReceiptModal: React.FC<Props> = ({
                                  <Text style={styles.mayorBadgeText}>PRECIO MAYOR</Text>
                               </View>
                            )}
-                           {appliedCombosList.map((c, i) => {
-                              const isAdjustment = hasComboAdjustment && sale.discount! < 0;
-                              return (
-                                 <View
-                                    key={c.comboId || `combo_${i}`}
-                                    style={[
-                                       styles.comboBadge,
-                                       isAdjustment && styles.comboBadgeWarn,
-                                    ]}
-                                 >
-                                    <Crown size={10} color={isAdjustment ? '#B45309' : '#7C3AED'} />
-                                    <Text
-                                       style={[
-                                          styles.comboBadgeText,
-                                          isAdjustment && { color: '#B45309' },
-                                       ]}
-                                    >
-                                       {c.comboName}
-                                    </Text>
-                                 </View>
-                              );
-                           })}
+                           {isFullBsPayment && (
+                              <View style={styles.bsBadge}>
+                                 <Coins size={10} color="#4338CA" />
+                                 <Text style={styles.bsBadgeText}>PAGO EN BS</Text>
+                              </View>
+                           )}
+                           {appliedCombosList.map((c, i) => (
+                              <View key={c.comboId || `combo_${i}`} style={styles.comboBadge}>
+                                 <Crown size={10} color="#7C3AED" />
+                                 <Text style={styles.comboBadgeText}>{c.comboName}</Text>
+                              </View>
+                           ))}
                         </View>
                      )}
 
@@ -121,22 +130,19 @@ export const SaleReceiptModal: React.FC<Props> = ({
                            <Text style={styles.ticketVal} numberOfLines={2}>{sale.customerName}</Text>
                         </View>
                      )}
-                     {!hasSplits && (
+                     {sale.customerPhone && (
                         <View style={styles.ticketRow}>
-                           <Text style={styles.ticketLabel}>Método de Pago:</Text>
-                           <Text style={styles.ticketVal}>
-                              {paymentLabels[sale.paymentMethod] || sale.paymentMethod}
-                           </Text>
+                           <Text style={styles.ticketLabel}>Teléfono:</Text>
+                           <Text style={styles.ticketVal}>{sale.customerPhone}</Text>
                         </View>
                      )}
-                     {hasSplits && (
-                        <View style={styles.ticketRow}>
-                           <Text style={styles.ticketLabel}>Pago:</Text>
-                           <Text style={styles.ticketVal}>
-                              {paymentLabels[sale.paymentMethod] || sale.paymentMethod} · {sale.paymentSplits!.length} registro(s)
-                           </Text>
-                        </View>
-                     )}
+                     <View style={styles.ticketRow}>
+                        <Text style={styles.ticketLabel}>Método de Pago:</Text>
+                        <Text style={styles.ticketVal}>
+                           {paymentLabels[sale.paymentMethod] || sale.paymentMethod}
+                           {hasSplits ? ` · ${sale.paymentSplits!.length} registro(s)` : ''}
+                        </Text>
+                     </View>
 
                      {/* NOTAS */}
                      {sale.notes && sale.notes.trim().length > 0 && (
@@ -153,6 +159,17 @@ export const SaleReceiptModal: React.FC<Props> = ({
                      {sale.items.map((item, idx) => {
                         const itemKey = `${item.productId}_${item.color}_${item.size}`;
                         const isComboItem = comboItemKeys.has(itemKey);
+
+                        // Precio efectivo según modo (fallback a catálogo para ventas viejas)
+                        const effUnit =
+                           (item as any).effectiveUnitPriceUSD ?? item.unitPrice;
+                        const effTotal =
+                           (item as any).effectiveTotalUSD ?? item.totalPrice;
+
+                        // Monto en Bs cobrado por este item (solo si tiene datos)
+                        const itemBs = (item as any).totalBSRef && sale.eurToBsRate
+                           ? (item as any).totalBSRef * sale.eurToBsRate
+                           : 0;
 
                         return (
                            <View key={idx} style={styles.itemRow}>
@@ -171,10 +188,15 @@ export const SaleReceiptModal: React.FC<Props> = ({
                                     {item.color} · Talla: {item.size}
                                  </Text>
                                  <Text style={styles.itemSpec}>
-                                    {item.quantity} × ${item.unitPrice.toFixed(2)}
+                                    {item.quantity} × ${effUnit.toFixed(2)}
                                  </Text>
+                                 {isFullBsPayment && itemBs > 0 && (
+                                    <Text style={styles.itemSpecBs}>
+                                       {itemBs.toFixed(2)} Bs
+                                    </Text>
+                                 )}
                               </View>
-                              <Text style={styles.itemSubtotal}>${item.totalPrice.toFixed(2)}</Text>
+                              <Text style={styles.itemSubtotal}>${effTotal.toFixed(2)}</Text>
                            </View>
                         );
                      })}
@@ -187,31 +209,67 @@ export const SaleReceiptModal: React.FC<Props> = ({
                         <Text style={styles.ticketVal}>${subtotalReal.toFixed(2)}</Text>
                      </View>
 
-                     {hasComboAdjustment && (
+                     {hasDiscount && (
                         <View style={styles.ticketRow}>
                            <Text
                               style={[
                                  styles.ticketLabel,
-                                 { color: isAdjustmentPositive ? '#7C3AED' : '#B45309', fontWeight: '800' },
+                                 {
+                                    color: isLegacyPositiveAdjustment ? '#B45309' : '#7C3AED',
+                                    fontWeight: '800',
+                                 },
                               ]}
                            >
-                              {isAdjustmentPositive ? 'Descuento Combos' : 'Ajuste Combos'} ({appliedCombosList.length}):
+                              {isLegacyPositiveAdjustment
+                                 ? 'Ajuste de tasa:'
+                                 : `Descuento${hasCombos ? ` (${appliedCombosList.length})` : ''}:`}
                            </Text>
                            <Text
                               style={[
                                  styles.ticketVal,
-                                 { color: isAdjustmentPositive ? '#7C3AED' : '#B45309' },
+                                 { color: isLegacyPositiveAdjustment ? '#B45309' : '#7C3AED' },
                               ]}
                            >
-                              {isAdjustmentPositive ? '-' : '+'}${Math.abs(sale.discount!).toFixed(2)}
+                              {isLegacyPositiveAdjustment ? '+' : '-'}$
+                              {Math.abs(sale.discount as number).toFixed(2)}
                            </Text>
                         </View>
                      )}
 
-                     <View style={styles.totalRow}>
-                        <Text style={styles.totalLabel}>TOTAL:</Text>
-                        <Text style={styles.totalValue}>${sale.total.toFixed(2)}</Text>
-                     </View>
+                     {/* TOTAL — modo-aware */}
+                     {isFullBsPayment && sale.totalBS && sale.totalBS > 0 ? (
+                        <View style={styles.totalRow}>
+                           <Text style={styles.totalLabel}>TOTAL:</Text>
+                           <View style={{ alignItems: 'flex-end' }}>
+                              <Text style={styles.totalValue}>
+                                 Bs {sale.totalBS.toFixed(2)}
+                              </Text>
+                              <Text style={styles.totalSub}>
+                                 ≈ ${sale.total.toFixed(2)} USD
+                                 {sale.usdToBsRate ? ` · Tasa ${sale.usdToBsRate}` : ''}
+                              </Text>
+                              {totalCatalogUSD !== undefined &&
+                                 Math.abs(totalCatalogUSD - sale.total) >= 0.01 && (
+                                    <Text style={styles.totalCatalog}>
+                                       Catálogo USD: ${totalCatalogUSD.toFixed(2)}
+                                    </Text>
+                                 )}
+                           </View>
+                        </View>
+                     ) : (
+                        <View style={styles.totalRow}>
+                           <Text style={styles.totalLabel}>TOTAL:</Text>
+                           <View style={{ alignItems: 'flex-end' }}>
+                              <Text style={styles.totalValue}>${sale.total.toFixed(2)}</Text>
+                              {sale.totalBS && sale.totalBS > 0 && (
+                                 <Text style={styles.totalSub}>
+                                    ≈ Bs {sale.totalBS.toFixed(2)}
+                                    {sale.eurToBsRate ? ` · Tasa € ${sale.eurToBsRate}` : ''}
+                                 </Text>
+                              )}
+                           </View>
+                        </View>
+                     )}
                   </View>
 
                   {/* ============ PAGOS ============ */}
@@ -226,7 +284,8 @@ export const SaleReceiptModal: React.FC<Props> = ({
                            <View key={split.id} style={styles.paymentRow}>
                               <View style={{ flex: 1, minWidth: 0 }}>
                                  <Text style={styles.paymentMethod} numberOfLines={1}>
-                                    {paymentLabels[split.method] || split.method.replace('_', ' ').toUpperCase()}
+                                    {paymentLabels[split.method] ||
+                                       split.method.replace('_', ' ').toUpperCase()}
                                  </Text>
                                  {split.reference && (
                                     <Text style={styles.paymentRef} numberOfLines={1}>
@@ -242,25 +301,34 @@ export const SaleReceiptModal: React.FC<Props> = ({
                            </View>
                         ))}
 
-                        {(sale.totalBS && sale.totalBS > 0) || sale.eurToBsRate || sale.usdToBsRate ? (
+                        {(sale.eurToBsRate || sale.usdToBsRate) && (
                            <View style={styles.paymentMeta}>
-                              {sale.totalBS && sale.totalBS > 0 && (
+                              {!hasBsSplit && sale.totalBS && sale.totalBS > 0 && (
                                  <Text style={styles.paymentMetaLine}>
-                                    Equivalente Bs: <Text style={styles.paymentMetaVal}>{sale.totalBS.toFixed(2)} Bs</Text>
+                                    Equivalente Bs:{' '}
+                                    <Text style={styles.paymentMetaVal}>
+                                       {sale.totalBS.toFixed(2)} Bs
+                                    </Text>
                                  </Text>
                               )}
                               {sale.eurToBsRate && (
                                  <Text style={styles.paymentMetaLine}>
-                                    Tasa EUR: <Text style={styles.paymentMetaVal}>{sale.eurToBsRate} Bs</Text>
+                                    Tasa EUR:{' '}
+                                    <Text style={styles.paymentMetaVal}>
+                                       {sale.eurToBsRate} Bs
+                                    </Text>
                                  </Text>
                               )}
                               {sale.usdToBsRate && (
                                  <Text style={styles.paymentMetaLine}>
-                                    Tasa USD: <Text style={styles.paymentMetaVal}>{sale.usdToBsRate} Bs</Text>
+                                    Tasa USD:{' '}
+                                    <Text style={styles.paymentMetaVal}>
+                                       {sale.usdToBsRate} Bs
+                                    </Text>
                                  </Text>
                               )}
                            </View>
-                        ) : null}
+                        )}
                      </View>
                   )}
 
@@ -278,7 +346,10 @@ export const SaleReceiptModal: React.FC<Props> = ({
 
                {/* ACCIONES */}
                <View style={styles.footer}>
-                  <P style={styles.whatsAppBtn} onPress={() => openWhatsAppReceipt(sale, overridePhone, storeName)}>
+                  <P
+                     style={styles.whatsAppBtn}
+                     onPress={() => openWhatsAppReceipt(sale, overridePhone, storeName)}
+                  >
                      <MessageCircle size={17} color={T.onSolid} />
                      <Text style={styles.whatsAppBtnText}>WhatsApp</Text>
                   </P>
@@ -339,7 +410,7 @@ const styles = StyleSheet.create({
    },
    ticketMeta: { fontSize: 11, color: T.inkMute, marginTop: 4 },
 
-   // Badges destacados (mayor + combos)
+   // Badges
    badgeRow: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
    mayorBadge: {
       flexDirection: 'row',
@@ -353,6 +424,18 @@ const styles = StyleSheet.create({
       borderRadius: 999,
    },
    mayorBadgeText: { fontSize: 9, fontWeight: '800', color: '#047857', letterSpacing: 0.5 },
+   bsBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      backgroundColor: '#EEF2FF',
+      borderWidth: 1,
+      borderColor: '#C7D2FE',
+      borderRadius: 999,
+   },
+   bsBadgeText: { fontSize: 9, fontWeight: '800', color: '#4338CA', letterSpacing: 0.5 },
    comboBadge: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -363,10 +446,6 @@ const styles = StyleSheet.create({
       borderWidth: 1,
       borderColor: '#DDD6FE',
       borderRadius: 999,
-   },
-   comboBadgeWarn: {
-      backgroundColor: '#FEF3C7',
-      borderColor: '#FDE68A',
    },
    comboBadgeText: { fontSize: 9, fontWeight: '800', color: '#7C3AED', letterSpacing: 0.5 },
 
@@ -387,23 +466,51 @@ const styles = StyleSheet.create({
       letterSpacing: 0.5,
       marginBottom: 4,
    },
-   notesText: {
-      fontSize: 12,
-      color: '#78350F',
-      lineHeight: 17,
-   },
+   notesText: { fontSize: 12, color: '#78350F', lineHeight: 17 },
 
-   ticketRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 12 },
+   ticketRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: 6,
+      gap: 12,
+   },
    ticketLabel: { fontSize: 13, color: T.inkSoft, flexShrink: 1 },
    ticketVal: { fontSize: 13, fontWeight: '700', color: T.ink, textAlign: 'right', flexShrink: 1 },
-   divider: { borderTopWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(0,0,0,0.3)', marginVertical: 12 },
-   itemsTitle: { fontSize: 11, fontWeight: '800', color: T.inkSoft, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+   divider: {
+      borderTopWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: 'rgba(0,0,0,0.3)',
+      marginVertical: 12,
+   },
+   itemsTitle: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: T.inkSoft,
+      marginBottom: 8,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+   },
 
-   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10, gap: 10 },
+   itemRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: 10,
+      gap: 10,
+   },
    itemName: { fontSize: 13, fontWeight: '700', color: T.ink, flexShrink: 1 },
    itemSpec: { fontSize: 11, color: T.inkMute, marginTop: 1 },
+   itemSpecBs: { fontSize: 10, color: '#4338CA', fontWeight: '700', marginTop: 1 },
    itemSubtotal: { fontSize: 14, fontWeight: '800', color: T.ink },
-   itemComboTag: { paddingHorizontal: 5, paddingVertical: 1, backgroundColor: '#F5F3FF', borderWidth: 1, borderColor: '#DDD6FE', borderRadius: 3 },
+   itemComboTag: {
+      paddingHorizontal: 5,
+      paddingVertical: 1,
+      backgroundColor: '#F5F3FF',
+      borderWidth: 1,
+      borderColor: '#DDD6FE',
+      borderRadius: 3,
+   },
    itemComboTagText: { fontSize: 8, fontWeight: '800', color: '#7C3AED' },
 
    totalRow: {
@@ -416,7 +523,9 @@ const styles = StyleSheet.create({
       borderTopColor: T.ink,
    },
    totalLabel: { fontSize: 13, fontWeight: '800', color: T.ink, paddingBottom: 6 },
-   totalValue: { ...display, fontSize: 44, lineHeight: 44, fontWeight: '800', color: T.ink },
+   totalValue: { ...display, fontSize: 36, lineHeight: 38, fontWeight: '800', color: T.ink, textAlign: 'right' },
+   totalSub: { fontSize: 11, color: T.inkMute, fontWeight: '600', marginTop: 2, textAlign: 'right' },
+   totalCatalog: { fontSize: 10, color: T.inkMute, fontStyle: 'italic', marginTop: 2, textAlign: 'right' },
 
    // ===== PAGOS =====
    paymentsBox: {
@@ -428,7 +537,13 @@ const styles = StyleSheet.create({
       borderColor: T.line,
    },
    paymentsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-   paymentsTitle: { fontSize: 11, fontWeight: '800', color: T.inkSoft, textTransform: 'uppercase', letterSpacing: 0.5 },
+   paymentsTitle: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: T.inkSoft,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+   },
    paymentRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -440,7 +555,13 @@ const styles = StyleSheet.create({
    },
    paymentMethod: { fontSize: 12, fontWeight: '700', color: T.ink },
    paymentRef: { fontSize: 10, color: T.inkMute, marginTop: 1 },
-   paymentAmount: { ...display, fontSize: 14, fontWeight: '800', color: T.ink, textAlign: 'right' },
+   paymentAmount: {
+      ...display,
+      fontSize: 14,
+      fontWeight: '800',
+      color: T.ink,
+      textAlign: 'right',
+   },
    paymentMeta: { marginTop: 10, gap: 3 },
    paymentMetaLine: { fontSize: 10, color: T.inkMute },
    paymentMetaVal: { fontWeight: '800', color: T.inkSoft },
@@ -464,8 +585,21 @@ const styles = StyleSheet.create({
    footer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 16, backgroundColor: T.surface },
    whatsAppBtn: { ...btn, flexGrow: 1, flexBasis: '46%', backgroundColor: T.solid },
    whatsAppBtnText: { fontSize: 13, fontWeight: '800', color: T.onSolid },
-   printBtn: { ...btn, flexGrow: 1, flexBasis: '46%', borderWidth: 1, borderColor: T.line, backgroundColor: T.bg },
+   printBtn: {
+      ...btn,
+      flexGrow: 1,
+      flexBasis: '46%',
+      borderWidth: 1,
+      borderColor: T.line,
+      backgroundColor: T.bg,
+   },
    printBtnText: { fontSize: 13, fontWeight: '700', color: T.ink },
-   closeBtn: { ...btn, flexBasis: '100%', borderWidth: 1, borderColor: T.ink, backgroundColor: T.bg },
+   closeBtn: {
+      ...btn,
+      flexBasis: '100%',
+      borderWidth: 1,
+      borderColor: T.ink,
+      backgroundColor: T.bg,
+   },
    closeBtnText: { fontSize: 13, fontWeight: '800', color: T.ink },
 });

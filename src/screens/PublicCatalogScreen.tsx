@@ -158,6 +158,14 @@ const ActiveChip = ({ onPress, children }: { onPress: () => void; children: Reac
    </Pressable>
 );
 
+const TOP_CATEGORIES = new Set(['Camisas', 'Franelillas', 'Shorts']);
+
+const getCategoryDisplayLabel = (cat: string): string => {
+   if (cat === 'all') return 'Todas';
+   if (TOP_CATEGORIES.has(cat)) return `${cat} Top`;
+   return cat;
+};
+
 const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item: Product; width: number; compact: boolean; onOpen: (p: Product) => void; onZoom: (uri: string, name: string) => void }) => {
    const stock = totalStock(item);
    const out = stock === 0;
@@ -470,7 +478,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    const categoryChips = categories.map((cat) => (
       <Chip
          key={cat}
-         label={cat === 'all' ? 'Todas' : cat}
+         label={getCategoryDisplayLabel(cat)}
          active={filters.category === cat}
          onPress={() => handleCategoryChange(cat)}
       />
