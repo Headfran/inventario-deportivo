@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions, ActivityIndicator } from 'react-native';
-import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn, RefreshCw } from 'lucide-react-native';
+import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { fetchAllProducts } from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
@@ -241,7 +241,6 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
 export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUri }) => {
    const [products, setProducts] = useState<Product[]>([]);
    const [isLoadingProducts, setIsLoadingProducts] = useState(true);
-   const [isRefreshing, setIsRefreshing] = useState(false);
    const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
    const [detailProduct, setDetailProduct] = useState<Product | null>(null);
    const [selectedImageIndex, setSelectedImageIndex] = useState(0);
@@ -275,20 +274,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       })();
       return () => { cancelled = true; };
    }, []);
-
-   // Refresco manual: fuerza getDocs desde servidor (N reads, uso explícito)
-   const handleRefresh = useCallback(async () => {
-      if (isRefreshing) return;
-      setIsRefreshing(true);
-      try {
-         const data = await fetchAllProducts({ fromServer: true });
-         setProducts(data);
-      } catch (e) {
-         console.warn('Error refrescando catálogo:', e);
-      } finally {
-         setIsRefreshing(false);
-      }
-   }, [isRefreshing]);
 
    const { categories, brands, colors, sizes } = useMemo(() => {
       const rawCategories: string[] = Array.from(
@@ -876,20 +861,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                </View>
 
                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  {/* BOTÓN DE REFRESCO MANUAL (opcional, para forzar getDocs) */}
-                  <Pressable
-                     style={({ pressed }) => [styles.refreshBarBtn, pressed && styles.pressed]}
-                     onPress={handleRefresh}
-                     disabled={isRefreshing}
-                     accessibilityLabel="Refrescar catálogo"
-                  >
-                     {isRefreshing ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                     ) : (
-                        <RefreshCw size={16} color="#FFFFFF" />
-                     )}
-                  </Pressable>
-
                   <Pressable
                      style={({ pressed }) => [styles.cartBarBtn, pressed && styles.pressed]}
                      onPress={() => setIsCartModalOpen(true)}

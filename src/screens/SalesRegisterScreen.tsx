@@ -8,6 +8,7 @@ import {
    ShoppingBag, Plus, Minus, CheckCircle2, CreditCard, Banknote, Smartphone,
    User, Phone, ChevronLeft, ChevronRight, X, QrCode, Pencil, Trash2, Crown,
    Coins, AlertCircle, Check, ChevronDown, ChevronUp, Settings,
+   Percent, DollarSign, Tag,
 } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { Sale, SaleItem, PaymentMethod, Seller, PaymentSplit, SaleCombo } from '../types/sale';
@@ -54,6 +55,8 @@ const getInitialRate = (which: 'eur' | 'usd'): number => {
    return DEFAULT_RATE;
 };
 
+type DiscountType = 'none' | 'percent' | 'fixed';
+
 interface Props {
    isOnline?: boolean;
    onPendingChange?: () => void | Promise<number>;
@@ -99,6 +102,13 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const [newSplitAmount, setNewSplitAmount] = useState('');
    const [newSplitRef, setNewSplitRef] = useState('');
 
+   // ==========================================
+   // DESCUENTO EXPLÍCITO
+   // ==========================================
+   const [discountType, setDiscountType] = useState<DiscountType>('none');
+   const [discountValue, setDiscountValue] = useState<string>('');
+   const [showDiscountModal, setShowDiscountModal] = useState(false);
+
    const [customerName, setCustomerName] = useState('');
    const [customerPhone, setCustomerPhone] = useState('');
    const [notes, setNotes] = useState('');
@@ -135,6 +145,14 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          window.localStorage.setItem(RATE_STORAGE_KEYS.usd, String(usdToBsRate));
       }
    }, [eurToBsRate, usdToBsRate]);
+
+   // Limpiar descuento si el carrito se vacía
+   useEffect(() => {
+      if (cart.length === 0 && discountType !== 'none') {
+         setDiscountType('none');
+         setDiscountValue('');
+      }
+   }, [cart.length, discountType]);
 
    const handleFilterChange = useCallback((newFilters: FilterOptions) => {
       setFilters(newFilters);
@@ -236,21 +254,54 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }, 0);
    }, [pricedCart, consumedByCombos]);
 
-   // Totales finales
-   const rawTotalUSD = itemsOutsideCombosUSD + comboInfo.totalCombosUSD;
-   const rawTotalBSRef = itemsOutsideCombosBSRef + comboInfo.totalCombosBSRef;
+   // Subtotal ANTES del descuento explícito (ya con combos aplicados)
+   const subtotalBeforeDiscountUSD = itemsOutsideCombosUSD + comboInfo.totalCombosUSD;
+   const subtotalBeforeDiscountBSRef = itemsOutsideCombosBSRef + comboInfo.totalCombosBSRef;
 
-   const totalUSD = rawTotalUSD;
-   const totalBSExpected = rawTotalBSRef * eurToBsRate;
-   const totalBSRef = rawTotalBSRef;
+   // ==========================================
+   // DESCUENTO EXPLÍCITO (mode-aware)
+   // ==========================================
+   const explicitDiscountUSD = useMemo(() => {
+      if (discountType === 'none') return 0;
+      const val = parseFloat(discountValue);
+      if (!Number.isFinite(val) || val <= 0) return 0;
+
+      if (discountType === 'percent') {
+         const pct = Math.min(100, val);
+         return (subtotalBeforeDiscountUSD * pct) / 100;
+      }
+      // fixed en USD
+      return Math.min(subtotalBeforeDiscountUSD, val);
+   }, [discountType, discountValue, subtotalBeforeDiscountUSD]);
+
+   const explicitDiscountBS = useMemo(() => {
+      if (discountType === 'none') return 0;
+      const val = parseFloat(discountValue);
+      if (!Number.isFinite(val) || val <= 0) return 0;
+
+      const subtotalBSBefore = subtotalBeforeDiscountBSRef * eurToBsRate;
+
+      if (discountType === 'percent') {
+         const pct = Math.min(100, val);
+         return (subtotalBSBefore * pct) / 100;
+      }
+      // fixed en USD → convertir a Bs
+      return Math.min(subtotalBSBefore, val * usdToBsRate);
+   }, [discountType, discountValue, subtotalBeforeDiscountBSRef, eurToBsRate, usdToBsRate]);
+
+   // Totales finales (después de combos Y descuento explícito)
+   const totalUSD = Math.max(0, subtotalBeforeDiscountUSD - explicitDiscountUSD);
+   const totalBSExpected = Math.max(
+      0,
+      subtotalBeforeDiscountBSRef * eurToBsRate - explicitDiscountBS
+   );
+   const totalBSRef = eurToBsRate > 0 ? totalBSExpected / eurToBsRate : 0;
 
    // Equivalente USD del monto Bs realmente cobrado
    const totalBSExpectedUSDEquiv = usdToBsRate > 0 ? totalBSExpected / usdToBsRate : 0;
 
    // ==========================================
    // SUBTOTAL "DE LISTA" SEGÚN EL MODO DE COBRO
-   // - Modo USD/mixto: suma de precios USD del catálogo
-   // - Modo Bs: suma de precios € convertidos a USD vía Bs (lo que el cliente paga)
    // ==========================================
    const subtotalAllItems = useMemo(() => {
       if (isFullBsPayment) {
@@ -263,10 +314,10 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       return pricedCart.reduce((s, i) => s + i.totalPrice, 0);
    }, [pricedCart, isFullBsPayment, eurToBsRate, usdToBsRate]);
 
-   // Total cobrado real expresado en USD
+   // Total cobrado real expresado en USD (incluye combos + descuento)
    const finalTotalUSD = isFullBsPayment ? totalBSExpectedUSDEquiv : totalUSD;
 
-   // Descuento real (solo combos o descuentos explícitos, NUNCA negativo)
+   // Descuento TOTAL (combos + explícito, nunca negativo)
    const discountAmount = Math.max(0, subtotalAllItems - finalTotalUSD);
 
    useEffect(() => {
@@ -399,9 +450,41 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       setPaymentSplits([]);
       setAppliedCombos([]);
       setIsFullBsPayment(false);
+      setDiscountType('none');
+      setDiscountValue('');
       setCustomerName('');
       setCustomerPhone('');
       setNotes('');
+   };
+
+   // ==========================================
+   // Descuento explícito — handlers
+   // ==========================================
+   const openDiscountModal = () => {
+      if (cart.length === 0) {
+         showAlert('Carrito vacío', 'Agrega al menos una prenda antes de aplicar un descuento.');
+         return;
+      }
+      setShowDiscountModal(true);
+   };
+
+   const clearDiscount = () => {
+      setDiscountType('none');
+      setDiscountValue('');
+   };
+
+   const applyDiscount = () => {
+      const val = parseFloat(discountValue);
+      if (!Number.isFinite(val) || val <= 0) {
+         showAlert('Atención', 'Ingresa un valor válido mayor a 0.');
+         return;
+      }
+      if (discountType === 'percent' && val > 100) {
+         setDiscountValue('100');
+         showAlert('Atención', 'El porcentaje máximo es 100%.');
+         return;
+      }
+      setShowDiscountModal(false);
    };
 
    // ==========================================
@@ -640,7 +723,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       const itemsPayload = pricedCart.map((item) => {
          const product = products.find((p) => (p.id || p.code) === item.productId);
 
-         // Precio efectivo cobrado por unidad en USD (mode-aware)
          const effectiveUnitUSD = isFullBsPayment && usdToBsRate > 0
             ? (item.bsRefUnit * eurToBsRate) / usdToBsRate
             : item.unitPrice;
@@ -653,13 +735,10 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             color: item.color,
             size: item.size,
             quantity: item.quantity,
-            // Precios de catálogo (histórico / auditoría)
             unitPrice: item.unitPrice,
             totalPrice: item.totalPrice,
-            // Precios efectivos cobrados (mode-aware)
             effectiveUnitPriceUSD: effectiveUnitUSD,
             effectiveTotalUSD: effectiveUnitUSD * item.quantity,
-            // Precios en Bs (siempre presentes para trazabilidad)
             unitPriceBSRef: item.bsRefUnit,
             totalBSRef: item.bsRefTotal,
             purchasePrice: (product as any)?.purchasePrice,
@@ -674,10 +753,10 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          sellerId: selectedSeller.id,
          sellerName: selectedSeller.name,
          items: itemsPayload,
-         subtotal: subtotalAllItems,       // mode-aware (precio de lista en el modo correcto)
-         discount: discountAmount,          // nunca negativo (solo combos / descuentos reales)
-         total: finalTotalUSD,              // monto efectivamente cobrado en USD
-         totalCatalogUSD: totalUSD,         // valor de catálogo en USD (auditoría)
+         subtotal: subtotalAllItems,
+         discount: discountAmount,          // total (combos + explícito)
+         total: finalTotalUSD,
+         totalCatalogUSD: subtotalBeforeDiscountUSD,
          paymentMethod: primaryMethod,
          paymentSplits,
          totalBS: totalBSExpected,
@@ -685,8 +764,15 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          eurToBsRate,
          usdToBsRate,
          isWholesale,
-         isFullBsPayment,                   // marca el modo para la factura
+         isFullBsPayment,
       };
+      // Descuento explícito (para la factura y auditoría)
+      if (discountType !== 'none' && explicitDiscountUSD > 0) {
+         saleDataToSave.explicitDiscountType = discountType;
+         saleDataToSave.explicitDiscountValue = parseFloat(discountValue) || 0;
+         saleDataToSave.explicitDiscountUSD = explicitDiscountUSD;
+         saleDataToSave.explicitDiscountBS = explicitDiscountBS;
+      }
       if (customerName.trim()) saleDataToSave.customerName = customerName.trim();
       if (customerPhone.trim()) saleDataToSave.customerPhone = customerPhone.trim();
       if (notes.trim()) saleDataToSave.notes = notes.trim();
@@ -718,9 +804,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       const buildCompletedSale = (id: string) =>
          ({ id, ...saleDataToSave, createdAt: { toDate: () => new Date() } } as Sale);
 
-      // ============================================================
-      // MODO OFFLINE EXPLÍCITO (isOnline === false)
-      // ============================================================
       if (isOffline) {
          try {
             await enqueuePendingSale(buildOfflineSale() as any);
@@ -736,9 +819,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          return;
       }
 
-      // ============================================================
-      // MODO ONLINE — intenta Firestore directo
-      // ============================================================
       try {
          const saleId = await createSale(saleDataToSave);
          setLastCompletedSale(buildCompletedSale(saleId));
@@ -748,7 +828,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          const code = error?.code || '';
          const msg = error?.message || String(error);
 
-         // 🔍 Distinguir error de RED de error de NEGOCIO
          const isNetworkError =
             code === 'unavailable' ||
             code === 'deadline-exceeded' ||
@@ -756,13 +835,11 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             /network|offline|connection|timeout|fetch/i.test(msg);
 
          if (!isNetworkError) {
-            // Stock, permisos, undefined, producto borrado, etc. → mostrar y NO encolar
             console.warn('❌ createSale FALLÓ (no-red):', error);
             showAlert('No se pudo registrar la venta', msg);
             return;
          }
 
-         // Es red real → encolar offline
          console.warn('📡 Fallo de red. Encolando venta offline:', error);
          try {
             await enqueuePendingSale(buildOfflineSale() as any);
@@ -820,6 +897,8 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          </P>
       );
    };
+
+   const discountActive = discountType !== 'none' && explicitDiscountUSD > 0;
 
    const checkout = (
       <View style={styles.checkoutSection}>
@@ -936,6 +1015,56 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                      </Text>
                   </View>
                )}
+            </View>
+         )}
+
+         {/* DESCUENTO EXPLÍCITO */}
+         <View style={[styles.sectionRow, { marginTop: 8 }]}>
+            <Text style={styles.sectionMiniLabel}>Descuento</Text>
+            <View style={{ flexDirection: 'row', gap: 4 }}>
+               {discountActive ? (
+                  <>
+                     <P style={styles.addSplitBtn} onPress={openDiscountModal}>
+                        <Pencil size={11} color={T.ink} />
+                        <Text style={styles.addSplitText}>Editar</Text>
+                     </P>
+                     <P
+                        style={styles.sellerMiniBtnDanger}
+                        onPress={clearDiscount}
+                        accessibilityLabel="Quitar descuento"
+                     >
+                        <Trash2 size={11} color="#DC2626" />
+                     </P>
+                  </>
+               ) : (
+                  <P style={styles.addSplitBtn} onPress={openDiscountModal}>
+                     <Plus size={11} color={T.ink} />
+                     <Text style={styles.addSplitText}>Aplicar</Text>
+                  </P>
+               )}
+            </View>
+         </View>
+
+         {discountActive && (
+            <View style={styles.discountActiveBox}>
+               <View style={styles.discountActiveIconBox}>
+                  {discountType === 'percent' ? (
+                     <Percent size={14} color="#B45309" />
+                  ) : (
+                     <DollarSign size={14} color="#B45309" />
+                  )}
+               </View>
+               <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.discountActiveTitle} numberOfLines={1}>
+                     {discountType === 'percent'
+                        ? `Descuento ${discountValue}%`
+                        : `Descuento $${discountValue}`}
+                  </Text>
+                  <Text style={styles.discountActiveAmount}>
+                     -${explicitDiscountUSD.toFixed(2)} USD
+                     {explicitDiscountBS > 0 ? ` · -${explicitDiscountBS.toFixed(2)} Bs` : ''}
+                  </Text>
+               </View>
             </View>
          )}
 
@@ -1245,6 +1374,14 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                               </Text>
                            </View>
                         )}
+                        {discountActive && (
+                           <View style={styles.cartHeaderDiscountBadge}>
+                              <Tag size={10} color="#B45309" />
+                              <Text style={styles.cartHeaderDiscountText}>
+                                 {discountType === 'percent' ? `-${discountValue}%` : `-$${discountValue}`}
+                              </Text>
+                           </View>
+                        )}
                      </View>
                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                         <P style={styles.headerActionBtn} onPress={() => setShowComboApply(true)}>
@@ -1508,6 +1645,128 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                         </P>
                         <P style={styles.sellerSaveBtn} onPress={handleAddSplit}>
                            <Text style={styles.sellerSaveText}>Agregar</Text>
+                        </P>
+                     </View>
+                  </ScrollView>
+               </View>
+            </View>
+         </Modal>
+
+         {/* MODAL DESCUENTO */}
+         <Modal visible={showDiscountModal} transparent animationType="fade">
+            <View style={styles.modalOverlayCenter}>
+               <View style={styles.sellerModalCard}>
+                  <View style={styles.sellerModalHeader}>
+                     <Text style={styles.sellerModalTitle}>Aplicar Descuento</Text>
+                     <P onPress={() => setShowDiscountModal(false)}>
+                        <X size={20} color={T.onBar} />
+                     </P>
+                  </View>
+                  <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled">
+                     {/* Tipo de descuento */}
+                     <Text style={styles.subLabel}>Tipo:</Text>
+                     <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16 }}>
+                        <P
+                           style={[styles.chip, discountType === 'percent' && styles.chipOn, { flex: 1, justifyContent: 'center' }]}
+                           onPress={() => { setDiscountType('percent'); setDiscountValue(''); }}
+                        >
+                           <Percent size={14} color={discountType === 'percent' ? T.onSolid : T.inkMute} />
+                           <Text style={[styles.chipText, discountType === 'percent' && styles.chipOnText]}>
+                              Porcentaje
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.chip, discountType === 'fixed' && styles.chipOn, { flex: 1, justifyContent: 'center' }]}
+                           onPress={() => { setDiscountType('fixed'); setDiscountValue(''); }}
+                        >
+                           <DollarSign size={14} color={discountType === 'fixed' ? T.onSolid : T.inkMute} />
+                           <Text style={[styles.chipText, discountType === 'fixed' && styles.chipOnText]}>
+                              Monto fijo
+                           </Text>
+                        </P>
+                     </View>
+
+                     {/* Presets */}
+                     {discountType === 'percent' && (
+                        <>
+                           <Text style={styles.subLabel}>Presets:</Text>
+                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                              {[5, 10, 15, 20, 25, 30].map((p) => (
+                                 <P
+                                    key={p}
+                                    style={[styles.chip, discountValue === String(p) && styles.chipOn]}
+                                    onPress={() => setDiscountValue(String(p))}
+                                 >
+                                    <Text style={[styles.chipText, discountValue === String(p) && styles.chipOnText]}>
+                                       {p}%
+                                    </Text>
+                                 </P>
+                              ))}
+                           </View>
+                        </>
+                     )}
+
+                     {discountType === 'fixed' && (
+                        <>
+                           <Text style={styles.subLabel}>Presets (USD):</Text>
+                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                              {[1, 2, 5, 10, 20, 50].map((d) => (
+                                 <P
+                                    key={d}
+                                    style={[styles.chip, discountValue === String(d) && styles.chipOn]}
+                                    onPress={() => setDiscountValue(String(d))}
+                                 >
+                                    <Text style={[styles.chipText, discountValue === String(d) && styles.chipOnText]}>
+                                       ${d}
+                                    </Text>
+                                 </P>
+                              ))}
+                           </View>
+                        </>
+                     )}
+
+                     {/* Valor custom */}
+                     <Text style={styles.subLabel}>
+                        {discountType === 'percent' ? 'Porcentaje (0-100):' : 'Monto en USD:'}
+                     </Text>
+                     <TextInput
+                        style={styles.sellerInput}
+                        value={discountValue}
+                        onChangeText={(v) => setDiscountValue(v.replace(/[^0-9.]/g, ''))}
+                        keyboardType="numeric"
+                        placeholder={discountType === 'percent' ? '10' : '5.00'}
+                        placeholderTextColor={T.inkMute}
+                        autoFocus
+                     />
+
+                     {/* Preview */}
+                     {explicitDiscountUSD > 0 && (
+                        <View style={[styles.splitConvertPreview, { marginTop: 12 }]}>
+                           <Text style={[styles.splitConvertText, { fontWeight: '800', color: '#B45309' }]}>
+                              Descuento: -${explicitDiscountUSD.toFixed(2)} USD
+                           </Text>
+                           {explicitDiscountBS > 0 && (
+                              <Text style={[styles.splitConvertText, { color: '#7C3AED', marginTop: 4 }]}>
+                                 ≈ -{explicitDiscountBS.toFixed(2)} Bs
+                              </Text>
+                           )}
+                        </View>
+                     )}
+
+                     {/* Acciones */}
+                     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+                        <P style={styles.sellerCancelBtn} onPress={() => setShowDiscountModal(false)}>
+                           <Text style={styles.sellerCancelText}>Cancelar</Text>
+                        </P>
+                        <P
+                           style={[
+                              styles.sellerSaveBtn,
+                              (!Number.isFinite(parseFloat(discountValue)) || parseFloat(discountValue) <= 0) && { opacity: 0.5 },
+                           ]}
+                           onPress={applyDiscount}
+                           disabled={!Number.isFinite(parseFloat(discountValue)) || parseFloat(discountValue) <= 0}
+                        >
+                           <Text style={styles.sellerSaveText}>Aplicar</Text>
                         </P>
                      </View>
                   </ScrollView>
@@ -2089,4 +2348,58 @@ const styles = StyleSheet.create({
    comboItemBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3, backgroundColor: '#F5F3FF', borderWidth: 1, borderColor: '#DDD6FE' },
    comboPartialBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3, backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FED7AA' },
    comboItemBadgeText: { fontSize: 8, fontWeight: '800', color: '#7C3AED' },
+
+   // ==========================================
+   // DESCUENTO EXPLÍCITO
+   // ==========================================
+   cartHeaderDiscountBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 3,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+      backgroundColor: '#FFFBEB',
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+   },
+   cartHeaderDiscountText: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: '#B45309',
+      textTransform: 'uppercase',
+   },
+   discountActiveBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      backgroundColor: '#FFFBEB',
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+      borderRadius: 8,
+      marginBottom: 8,
+   },
+   discountActiveIconBox: {
+      width: 28,
+      height: 28,
+      borderRadius: 6,
+      backgroundColor: '#FEF3C7',
+      borderWidth: 1,
+      borderColor: '#FDE68A',
+      alignItems: 'center',
+      justifyContent: 'center',
+   },
+   discountActiveTitle: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: '#78350F',
+   },
+   discountActiveAmount: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: '#B45309',
+      marginTop: 1,
+   },
 });
