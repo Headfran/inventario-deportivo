@@ -14,7 +14,15 @@ export interface SellerMetrics {
   activeLayaways: Layaway[];
 }
 
-export type TimePeriod = 'today' | 'week' | 'month' | 'all' | 'custom';
+export type TimePeriod =
+  | 'today'
+  | 'yesterday'
+  | 'week'
+  | 'lastWeek'
+  | 'month'
+  | 'lastMonth'
+  | 'all'
+  | 'custom';
 
 const parseDateSafely = (val: any): Date => {
   if (!val) return new Date(0);
@@ -26,7 +34,16 @@ const parseDateSafely = (val: any): Date => {
 };
 
 /**
- * Filtra registros según el periodo seleccionado
+ * Filtra registros según el periodo seleccionado.
+ *
+ * - today:      [00:00 hoy, ∞)
+ * - yesterday:  [00:00 ayer, 00:00 hoy)
+ * - week:       [lunes actual, lunes próximo)
+ * - lastWeek:   [lunes semana pasada, lunes actual)
+ * - month:      [día 1 mes actual, ∞)
+ * - lastMonth:  [día 1 mes pasado, día 1 mes actual)
+ * - all:        sin filtro
+ * - custom:     [start, end] del rango elegido
  */
 export const filterByPeriod = <T extends { createdAt: any }>(
   items: T[],
@@ -34,23 +51,59 @@ export const filterByPeriod = <T extends { createdAt: any }>(
   customRange?: { start: Date; end: Date } | null
 ): T[] => {
   const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+  // Lunes de la semana actual (ISO: lunes = inicio, domingo = fin)
+  const startOfThisWeek = new Date(startOfToday);
+  const dayOfWeek = startOfThisWeek.getDay();
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  startOfThisWeek.setDate(startOfThisWeek.getDate() + diffToMonday);
+
+  const startOfNextWeek = new Date(startOfThisWeek);
+  startOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
+
+  const startOfLastWeek = new Date(startOfThisWeek);
+  startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
+
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
   if (period === 'today') {
-    return items.filter((i) => parseDateSafely(i.createdAt) >= startOfDay);
+    return items.filter((i) => parseDateSafely(i.createdAt) >= startOfToday);
+  }
+
+  if (period === 'yesterday') {
+    return items.filter((i) => {
+      const d = parseDateSafely(i.createdAt);
+      return d >= startOfYesterday && d < startOfToday;
+    });
   }
 
   if (period === 'week') {
-    const startOfWeek = new Date(startOfDay);
-    const day = startOfWeek.getDay();
-    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
-    startOfWeek.setDate(diff);
-    return items.filter((i) => parseDateSafely(i.createdAt) >= startOfWeek);
+    return items.filter((i) => {
+      const d = parseDateSafely(i.createdAt);
+      return d >= startOfThisWeek && d < startOfNextWeek;
+    });
+  }
+
+  if (period === 'lastWeek') {
+    return items.filter((i) => {
+      const d = parseDateSafely(i.createdAt);
+      return d >= startOfLastWeek && d < startOfThisWeek;
+    });
   }
 
   if (period === 'month') {
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    return items.filter((i) => parseDateSafely(i.createdAt) >= startOfMonth);
+    return items.filter((i) => parseDateSafely(i.createdAt) >= startOfThisMonth);
+  }
+
+  if (period === 'lastMonth') {
+    return items.filter((i) => {
+      const d = parseDateSafely(i.createdAt);
+      return d >= startOfLastMonth && d < startOfThisMonth;
+    });
   }
 
   if (period === 'custom' && customRange) {

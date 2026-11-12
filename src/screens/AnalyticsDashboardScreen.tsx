@@ -3,12 +3,74 @@ import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, useWi
 import { DollarSign, ShoppingBag, TrendingUp, CreditCard, Award, PieChart, CalendarRange, Shirt, Coins } from 'lucide-react-native';
 import { Sale, subscribeToSales, calculateSaleProfit } from '../services/salesHistoryService';
 import { Product } from '../types/inventory';
-import { TimeRangeOption, filterSalesByTimeRange, calculateAnalytics } from '../services/analyticsService';
+import { calculateAnalytics } from '../services/analyticsService';
 import { DateRangePickerModal } from '../components/DateRangePickerModal';
 import { Cover } from '../components/Cover';
 import { MONO as T, display } from '../design';
 
 const MAX = 1180;
+
+// ==========================================
+// Filtrado de fechas (local, sin dependencia del servicio)
+// ==========================================
+type TimeRangeOption =
+   | 'today'
+   | 'yesterday'
+   | 'week'
+   | 'lastWeek'
+   | 'month'
+   | 'lastMonth'
+   | 'all'
+   | 'custom';
+
+const getSaleDate = (createdAt: any): Date => {
+   if (!createdAt) return new Date(0);
+   if (typeof createdAt.toDate === 'function') return createdAt.toDate();
+   if (createdAt.seconds) return new Date(createdAt.seconds * 1000);
+   return new Date(createdAt);
+};
+
+const filterSalesByTimeRange = (
+   sales: Sale[],
+   range: TimeRangeOption,
+   customRange: { start: Date; end: Date } | null
+): Sale[] => {
+   const today = new Date();
+   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+   const startOfYesterday = new Date(startOfToday);
+   startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+   // Lunes de la semana actual (ISO: lunes = inicio)
+   const startOfThisWeek = new Date(startOfToday);
+   const dayOfWeek = startOfThisWeek.getDay();
+   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+   startOfThisWeek.setDate(startOfThisWeek.getDate() + diffToMonday);
+
+   const startOfNextWeek = new Date(startOfThisWeek);
+   startOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
+
+   const startOfLastWeek = new Date(startOfThisWeek);
+   startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
+
+   const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+   const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+
+   return sales.filter((sale) => {
+      const d = getSaleDate(sale.createdAt);
+      if (range === 'all') return true;
+      if (range === 'today') return d >= startOfToday;
+      if (range === 'yesterday') return d >= startOfYesterday && d < startOfToday;
+      if (range === 'week') return d >= startOfThisWeek && d < startOfNextWeek;
+      if (range === 'lastWeek') return d >= startOfLastWeek && d < startOfThisWeek;
+      if (range === 'month') return d >= startOfThisMonth;
+      if (range === 'lastMonth') return d >= startOfLastMonth && d < startOfThisMonth;
+      if (range === 'custom' && customRange) {
+         return d >= customRange.start && d <= customRange.end;
+      }
+      return true;
+   });
+};
 
 const formatDateShort = (date: Date | null) => {
    if (!date) return '--/--/--';
@@ -25,7 +87,7 @@ interface AnalyticsDashboardScreenProps {
 
 export const AnalyticsDashboardScreen: React.FC<AnalyticsDashboardScreenProps> = ({ catalog }) => {
    const [allSales, setAllSales] = useState<Sale[]>([]);
-   const [timeRange, setTimeRange] = useState<TimeRangeOption>('30days');
+   const [timeRange, setTimeRange] = useState<TimeRangeOption>('month');
    const [loading, setLoading] = useState(true);
 
    const [showDateRangeModal, setShowDateRangeModal] = useState(false);
@@ -124,36 +186,79 @@ export const AnalyticsDashboardScreen: React.FC<AnalyticsDashboardScreenProps> =
                </View>
 
                <View style={styles.timeRangeWrap}>
-                  <View style={styles.timeRangeContainer}>
-                     {[
-                        { id: 'today', label: 'Hoy' },
-                        { id: '7days', label: '7D' },
-                        { id: '30days', label: '30D' },
-                        { id: 'all', label: 'Todo' },
-                     ].map((item) => {
-                        const isSelected = timeRange === item.id;
-                        return (
-                           <P
-                              key={item.id}
-                              style={[styles.rangeChip, isSelected && styles.rangeOn]}
-                              onPress={() => setTimeRange(item.id as TimeRangeOption)}
-                           >
-                              <Text style={[styles.rangeChipText, isSelected && styles.rangeOnText]}>
-                                 {item.label}
-                              </Text>
-                           </P>
-                        );
-                     })}
-                     <P
-                        style={[styles.rangeChip, styles.rangeChipCustom, timeRange === 'custom' && styles.rangeOn]}
-                        onPress={() => setShowDateRangeModal(true)}
-                     >
-                        <CalendarRange size={13} color={timeRange === 'custom' ? T.onSolid : T.inkSoft} />
-                        <Text style={[styles.rangeChipText, timeRange === 'custom' && styles.rangeOnText]}>
-                           {timeRange === 'custom' && customDateRange ? formatDateShort(customDateRange.start) : 'Rango'}
-                        </Text>
-                     </P>
-                  </View>
+                  <ScrollView
+                     horizontal
+                     showsHorizontalScrollIndicator={false}
+                     contentContainerStyle={{ gap: 4 }}
+                  >
+                     <View style={styles.timeRangeContainer}>
+                        <P
+                           style={[styles.rangeChip, timeRange === 'today' && styles.rangeOn]}
+                           onPress={() => setTimeRange('today')}
+                        >
+                           <Text style={[styles.rangeChipText, timeRange === 'today' && styles.rangeOnText]}>
+                              Hoy
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.rangeChip, timeRange === 'yesterday' && styles.rangeOn]}
+                           onPress={() => setTimeRange('yesterday')}
+                        >
+                           <Text style={[styles.rangeChipText, timeRange === 'yesterday' && styles.rangeOnText]}>
+                              Ayer
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.rangeChip, timeRange === 'week' && styles.rangeOn]}
+                           onPress={() => setTimeRange('week')}
+                        >
+                           <Text style={[styles.rangeChipText, timeRange === 'week' && styles.rangeOnText]}>
+                              Semana
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.rangeChip, timeRange === 'lastWeek' && styles.rangeOn]}
+                           onPress={() => setTimeRange('lastWeek')}
+                        >
+                           <Text style={[styles.rangeChipText, timeRange === 'lastWeek' && styles.rangeOnText]}>
+                              Sem. Pasada
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.rangeChip, timeRange === 'month' && styles.rangeOn]}
+                           onPress={() => setTimeRange('month')}
+                        >
+                           <Text style={[styles.rangeChipText, timeRange === 'month' && styles.rangeOnText]}>
+                              Mes
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.rangeChip, timeRange === 'lastMonth' && styles.rangeOn]}
+                           onPress={() => setTimeRange('lastMonth')}
+                        >
+                           <Text style={[styles.rangeChipText, timeRange === 'lastMonth' && styles.rangeOnText]}>
+                              Mes Pasado
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.rangeChip, timeRange === 'all' && styles.rangeOn]}
+                           onPress={() => setTimeRange('all')}
+                        >
+                           <Text style={[styles.rangeChipText, timeRange === 'all' && styles.rangeOnText]}>
+                              Todo
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.rangeChip, styles.rangeChipCustom, timeRange === 'custom' && styles.rangeOn]}
+                           onPress={() => setShowDateRangeModal(true)}
+                        >
+                           <CalendarRange size={13} color={timeRange === 'custom' ? T.onSolid : T.inkSoft} />
+                           <Text style={[styles.rangeChipText, timeRange === 'custom' && styles.rangeOnText]}>
+                              {timeRange === 'custom' && customDateRange ? formatDateShort(customDateRange.start) : 'Rango'}
+                           </Text>
+                        </P>
+                     </View>
+                  </ScrollView>
                </View>
             </View>
 
@@ -369,7 +474,7 @@ const styles = StyleSheet.create({
    pageTitleMobile: { fontSize: 34, lineHeight: 33 },
    pageSubtitle: { fontSize: 13, color: T.inkSoft, marginTop: 4 },
 
-   timeRangeWrap: { flexShrink: 0 },
+   timeRangeWrap: { flexShrink: 0, maxWidth: '100%' },
    timeRangeContainer: {
       flexDirection: 'row',
       backgroundColor: T.surface,

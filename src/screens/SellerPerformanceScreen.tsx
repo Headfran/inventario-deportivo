@@ -192,6 +192,14 @@ export const SellerPerformanceScreen: React.FC = () => {
                   </Text>
                </P>
                <P
+                  style={[styles.periodTab, selectedPeriod === 'yesterday' && styles.periodTabActive]}
+                  onPress={() => setSelectedPeriod('yesterday')}
+               >
+                  <Text style={[styles.periodTabText, selectedPeriod === 'yesterday' && styles.periodTabTextActive]}>
+                     Ayer
+                  </Text>
+               </P>
+               <P
                   style={[styles.periodTab, selectedPeriod === 'week' && styles.periodTabActive]}
                   onPress={() => setSelectedPeriod('week')}
                >
@@ -200,11 +208,27 @@ export const SellerPerformanceScreen: React.FC = () => {
                   </Text>
                </P>
                <P
+                  style={[styles.periodTab, selectedPeriod === 'lastWeek' && styles.periodTabActive]}
+                  onPress={() => setSelectedPeriod('lastWeek')}
+               >
+                  <Text style={[styles.periodTabText, selectedPeriod === 'lastWeek' && styles.periodTabTextActive]}>
+                     Sem. Pasada
+                  </Text>
+               </P>
+               <P
                   style={[styles.periodTab, selectedPeriod === 'month' && styles.periodTabActive]}
                   onPress={() => setSelectedPeriod('month')}
                >
                   <Text style={[styles.periodTabText, selectedPeriod === 'month' && styles.periodTabTextActive]}>
                      Mes
+                  </Text>
+               </P>
+               <P
+                  style={[styles.periodTab, selectedPeriod === 'lastMonth' && styles.periodTabActive]}
+                  onPress={() => setSelectedPeriod('lastMonth')}
+               >
+                  <Text style={[styles.periodTabText, selectedPeriod === 'lastMonth' && styles.periodTabTextActive]}>
+                     Mes Pasado
                   </Text>
                </P>
                <P

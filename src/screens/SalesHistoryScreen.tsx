@@ -56,6 +56,14 @@ const getSaleDate = (createdAt: any): Date => {
 const getStartOfDay = (date = new Date()) =>
    new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
+const getStartOfWeek = (date = new Date()): Date => {
+   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+   const day = d.getDay(); // 0=Dom, 1=Lun, ..., 6=Sáb
+   const diff = day === 0 ? -6 : 1 - day; // si es domingo, retroceder 6 días
+   d.setDate(d.getDate() + diff);
+   return d;
+};
+
 const formatDateShort = (date: Date | null) => {
    if (!date) return '--/--/----';
    return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1)
@@ -114,6 +122,17 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
    }, []);
 
    const filteredSales = useMemo(() => {
+      // ─── Precalcular fechas de referencia (una sola vez por filtro) ───
+      const today = getStartOfDay();
+      const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+
+      const startOfWeek = getStartOfWeek();
+      const startOfNextWeek = new Date(startOfWeek); startOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
+      const startOfLastWeek = new Date(startOfWeek); startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
+
+      const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const firstOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+
       return sales
          .filter((sale) => {
             const queryLower = searchQuery.toLowerCase().trim();
@@ -138,21 +157,19 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
             let matchesDate = true;
             if (selectedDateFilter !== 'all') {
                const saleDate = getSaleDate(sale.createdAt);
-               const today = getStartOfDay();
 
                if (selectedDateFilter === 'today') {
                   matchesDate = saleDate >= today;
                } else if (selectedDateFilter === 'yesterday') {
-                  const yesterday = new Date(today);
-                  yesterday.setDate(yesterday.getDate() - 1);
                   matchesDate = saleDate >= yesterday && saleDate < today;
                } else if (selectedDateFilter === 'week') {
-                  const lastWeek = new Date(today);
-                  lastWeek.setDate(lastWeek.getDate() - 7);
-                  matchesDate = saleDate >= lastWeek;
+                  matchesDate = saleDate >= startOfWeek && saleDate < startOfNextWeek;
+               } else if (selectedDateFilter === 'lastWeek') {
+                  matchesDate = saleDate >= startOfLastWeek && saleDate < startOfWeek;
                } else if (selectedDateFilter === 'month') {
-                  const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
                   matchesDate = saleDate >= firstOfMonth;
+               } else if (selectedDateFilter === 'lastMonth') {
+                  matchesDate = saleDate >= firstOfLastMonth && saleDate < firstOfMonth;
                } else if (selectedDateFilter === 'custom' && customDateRange) {
                   matchesDate = saleDate >= customDateRange.start && saleDate <= customDateRange.end;
                }
@@ -387,11 +404,41 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                   style={styles.chipsScroll}
                   contentContainerStyle={{ gap: 6 }}
                >
-                  <FilterChip label="Hoy" isActive={selectedDateFilter === 'today'} onPress={() => setSelectedDateFilter('today')} />
-                  <FilterChip label="Ayer" isActive={selectedDateFilter === 'yesterday'} onPress={() => setSelectedDateFilter('yesterday')} />
-                  <FilterChip label="7 Días" isActive={selectedDateFilter === 'week'} onPress={() => setSelectedDateFilter('week')} />
-                  <FilterChip label="Este Mes" isActive={selectedDateFilter === 'month'} onPress={() => setSelectedDateFilter('month')} />
-                  <FilterChip label="Todas" isActive={selectedDateFilter === 'all'} onPress={() => setSelectedDateFilter('all')} />
+                  <FilterChip
+                     label="Hoy"
+                     isActive={selectedDateFilter === 'today'}
+                     onPress={() => setSelectedDateFilter('today')}
+                  />
+                  <FilterChip
+                     label="Ayer"
+                     isActive={selectedDateFilter === 'yesterday'}
+                     onPress={() => setSelectedDateFilter('yesterday')}
+                  />
+                  <FilterChip
+                     label="Semana"
+                     isActive={selectedDateFilter === 'week'}
+                     onPress={() => setSelectedDateFilter('week')}
+                  />
+                  <FilterChip
+                     label="Sem. Pasada"
+                     isActive={selectedDateFilter === 'lastWeek'}
+                     onPress={() => setSelectedDateFilter('lastWeek')}
+                  />
+                  <FilterChip
+                     label="Mes"
+                     isActive={selectedDateFilter === 'month'}
+                     onPress={() => setSelectedDateFilter('month')}
+                  />
+                  <FilterChip
+                     label="Mes Pasado"
+                     isActive={selectedDateFilter === 'lastMonth'}
+                     onPress={() => setSelectedDateFilter('lastMonth')}
+                  />
+                  <FilterChip
+                     label="Todas"
+                     isActive={selectedDateFilter === 'all'}
+                     onPress={() => setSelectedDateFilter('all')}
+                  />
                   <P
                      style={[styles.chip, selectedDateFilter === 'custom' && styles.chipActive]}
                      onPress={() => setShowDateRangeModal(true)}
