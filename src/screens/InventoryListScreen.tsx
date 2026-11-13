@@ -414,6 +414,50 @@ export const InventoryListScreen: React.FC<InventoryListScreenProps> = ({ produc
       </View>
    );
 
+   // FOOTER DE PAGINACIÓN (al final de la lista)======================
+   const renderFooter = useCallback(() => {
+      if (totalPages <= 1) return null;
+      return (
+         <View style={styles.paginationBar}>
+            <View style={[styles.inner, styles.pageRow, { paddingHorizontal: padX }]}>
+               <Pressable
+                  style={[styles.pageNavBtn, currentPage === 1 && styles.pageNavDisabled]}
+                  disabled={currentPage === 1}
+                  onPress={() => {
+                     setCurrentPage((p) => Math.max(1, p - 1));
+                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                     }
+                  }}
+               >
+                  <ChevronLeft size={18} color={T.ink} />
+                  {!isCompact && <Text style={styles.pageNavText}>Anterior</Text>}
+               </Pressable>
+
+               <Text style={styles.pageIndicator}>
+                  <Text style={styles.pageNumber}>{currentPage}</Text>
+                  {' / '}
+                  {totalPages}
+               </Text>
+
+               <Pressable
+                  style={[styles.pageNavBtn, currentPage === totalPages && styles.pageNavDisabled]}
+                  disabled={currentPage === totalPages}
+                  onPress={() => {
+                     setCurrentPage((p) => Math.min(totalPages, p + 1));
+                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                     }
+                  }}
+               >
+                  {!isCompact && <Text style={styles.pageNavText}>Siguiente</Text>}
+                  <ChevronRight size={18} color={T.ink} />
+               </Pressable>
+            </View>
+         </View>
+      );
+   }, [totalPages, currentPage, padX, isCompact]);
+
    return (
       <View style={[styles.container, { paddingBottom: bottomPadding }]}>
          {bulkShareStatus && (
@@ -428,6 +472,7 @@ export const InventoryListScreen: React.FC<InventoryListScreenProps> = ({ produc
             data={paginatedProducts}
             keyExtractor={(item) => item.id || item.code}
             ListHeaderComponent={renderHeader()}
+            ListFooterComponent={renderFooter()}
             contentContainerStyle={[
                styles.listContent,
                { paddingHorizontal: padX },
@@ -458,36 +503,6 @@ export const InventoryListScreen: React.FC<InventoryListScreenProps> = ({ produc
                </View>
             }
          />
-
-         {totalPages > 1 && (
-            <View style={styles.paginationBar}>
-               <View style={[styles.inner, styles.pageRow, { paddingHorizontal: padX }]}>
-                  <Pressable
-                     style={[styles.pageNavBtn, currentPage === 1 && styles.pageNavDisabled]}
-                     disabled={currentPage === 1}
-                     onPress={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  >
-                     <ChevronLeft size={18} color={T.ink} />
-                     {!isCompact && <Text style={styles.pageNavText}>Anterior</Text>}
-                  </Pressable>
-
-                  <Text style={styles.pageIndicator}>
-                     <Text style={styles.pageNumber}>{currentPage}</Text>
-                     {' / '}
-                     {totalPages}
-                  </Text>
-
-                  <Pressable
-                     style={[styles.pageNavBtn, currentPage === totalPages && styles.pageNavDisabled]}
-                     disabled={currentPage === totalPages}
-                     onPress={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  >
-                     {!isCompact && <Text style={styles.pageNavText}>Siguiente</Text>}
-                     <ChevronRight size={18} color={T.ink} />
-                  </Pressable>
-               </View>
-            </View>
-         )}
 
          {/* VISOR DE IMÁGENES */}
          <Modal visible={!!previewImages} transparent animationType="fade">
@@ -603,7 +618,7 @@ const styles = StyleSheet.create({
    selectAllText: { fontSize: 12, color: T.inkSoft, fontWeight: '700', textTransform: 'uppercase' },
 
    list: { flex: 1 },
-   listContent: { width: '100%', maxWidth: MAX, alignSelf: 'center', paddingTop: 8, paddingBottom: 32, gap: 8, flexGrow: 1 },
+   listContent: { width: '100%', maxWidth: MAX, alignSelf: 'center', paddingTop: 8, paddingBottom: 16, gap: 8, flexGrow: 1 },
    emptyList: { justifyContent: 'center' },
 
    card: { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 12, paddingRight: 16, backgroundColor: T.surface, borderRadius: 12, borderWidth: 1, borderColor: 'transparent' },
@@ -675,7 +690,7 @@ const styles = StyleSheet.create({
       textAlign: 'right',
    },
 
-   paginationBar: { borderTopWidth: 1, borderTopColor: T.line, paddingVertical: 10, backgroundColor: T.bg },
+   paginationBar: { borderTopWidth: 1, borderTopColor: T.line, paddingVertical: 10, marginTop: 12, backgroundColor: T.bg },
    pageRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
    pageNavBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 8, paddingHorizontal: 8 },
    pageNavDisabled: { opacity: 0.3 },

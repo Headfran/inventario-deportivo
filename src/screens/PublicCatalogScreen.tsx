@@ -177,8 +177,11 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
    const wholesalePrice = Number(item.wholesalePrice) || retailPrice * 0.85;
 
    return (
-      <View style={{ width }}>
-         <Pressable style={({ pressed }) => [styles.photo, pressed && styles.pressedCard]} onPress={() => mainImgUri && onZoom(mainImgUri, item.name)}>
+      <Pressable 
+         style={({ pressed }) => [{ width }, styles.cardContainer, pressed && styles.pressedCard]} 
+         onPress={() => onOpen(item)}
+      >
+         <View style={styles.photo}>
             <Cover uri={mainImgUri} name={item.name} bg={GRAY[100]} fg={GRAY[300]} style={[styles.cardImg, out && { opacity: 0.45 }]} />
 
             {(out || low) && (
@@ -195,7 +198,18 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
                   {variants.length > 4 && <Text style={styles.dotsMore}>+{variants.length - 4}</Text>}
                </View>
             )}
-         </Pressable>
+
+            {/* Botón flotante de zoom rápido para la imagen */}
+            <Pressable 
+               style={styles.cardZoomBtn} 
+               onPress={(e) => {
+                  e.stopPropagation();
+                  if (mainImgUri) onZoom(mainImgUri, item.name);
+               }}
+            >
+               <ZoomIn size={14} color="#FFFFFF" />
+            </Pressable>
+         </View>
 
          <View style={styles.meta}>
             <Text style={[styles.cardBrand, compact && { fontSize: 11 }]} numberOfLines={1}>{item.brand}</Text>
@@ -226,15 +240,12 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
          </View>
 
          <View style={styles.actionRow}>
-            <Pressable
-               style={({ pressed }) => [styles.detailsBtn, pressed && styles.pressed]}
-               onPress={() => onOpen(item)}
-            >
+            <View style={styles.detailsBtn}>
                <Eye size={15} color="#FFFFFF" />
-               <Text style={[styles.detailsBtnText, compact && { fontSize: 12 }]}>Detalles</Text>
-            </Pressable>
+               <Text style={[styles.detailsBtnText, compact && { fontSize: 12 }]}>Ver Detalles</Text>
+            </View>
          </View>
-      </View>
+      </Pressable>
    );
 });
 
@@ -257,14 +268,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
 
-   // ============================================================
-   // CARGA CACHE-FIRST (0 reads si el cache está poblado)
-   // ============================================================
    useEffect(() => {
       let cancelled = false;
       (async () => {
          try {
-            const data = await fetchAllProducts(); // cache-first por defecto
+            const data = await fetchAllProducts();
             if (!cancelled) setProducts(data);
          } catch (e) {
             console.warn('No se pudo cargar el catálogo:', e);
@@ -1163,7 +1171,6 @@ const styles = StyleSheet.create({
    staffBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 999 },
    staffText: { fontSize: 13, fontWeight: '600', color: '#FFFFFF' },
 
-   refreshBarBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: GRAY[600] },
    cartBarBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: GRAY[800], justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: GRAY[600] },
    cartCountBadge: { position: 'absolute', top: -4, right: -4, backgroundColor: GRAY[600], minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
    cartCountBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },
@@ -1211,13 +1218,15 @@ const styles = StyleSheet.create({
    resetText: { fontSize: 13, color: GRAY[500], fontWeight: '700' },
    smallDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
 
-   photo: { borderRadius: 12, overflow: 'hidden', backgroundColor: GRAY[100] },
+   cardContainer: { backgroundColor: 'transparent' },
+   photo: { borderRadius: 12, overflow: 'hidden', backgroundColor: GRAY[100], position: 'relative' },
    cardImg: { width: '100%', aspectRatio: 4 / 5 },
    badge: { position: 'absolute', top: 10, left: 10, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6 },
    badgeText: { fontSize: 11, fontWeight: '800' },
    swatches: { position: 'absolute', left: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.85)', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999 },
    dot: { width: 11, height: 11, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(0,0,0,0.15)' },
    dotsMore: { fontSize: 10, color: GRAY[600], fontWeight: '700' },
+   cardZoomBtn: { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 14, width: 28, height: 28, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
    meta: { paddingTop: 10, gap: 3 },
    cardBrand: { fontSize: 11, fontWeight: '800', color: GRAY[500], textTransform: 'uppercase', letterSpacing: 0.5 },
    cardName: { fontSize: 13, fontWeight: '700', color: GRAY[900], minHeight: 32 },

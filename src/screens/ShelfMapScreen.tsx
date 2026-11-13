@@ -176,11 +176,9 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
       }
    }, [inspectedSpace]);
 
-   // Suscripción única a estantes (colección pequeña, cambia poco)
    useEffect(() => {
       const unsubShelves = subscribeToShelves((data) => {
          setShelves(data);
-         // Refrescar el estante activo si cambió en Firestore
          setActiveShelf((prev) => prev ? (data.find((s) => s.id === prev.id) || prev) : prev);
       });
       return () => unsubShelves();
@@ -196,7 +194,6 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
       }
       cellLayoutsRef.current = {};
       setTimeout(measureContainer, 50);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
    }, [activeShelf?.id, showVitrinaDetail]);
 
    const measureContainer = useCallback(() => {
@@ -1622,7 +1619,7 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
 
 const styles = StyleSheet.create({
    container: { flex: 1, backgroundColor: T.bg, position: 'relative' },
-   content: { padding: 16, paddingBottom: 100 },
+   content: { padding: 16, paddingBottom: 30 },
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
    sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 12 },
    sectionTitle: {

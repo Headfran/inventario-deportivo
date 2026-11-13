@@ -1270,26 +1270,38 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                      />
                   </View>
 
-                  <FlatList
-                     style={styles.productsScroll}
-                     data={paginatedProducts}
-                     keyExtractor={(item) => item.id || item.code || Math.random().toString()}
-                     renderItem={renderProductItem}
-                     contentContainerStyle={{ paddingBottom: 8 }}
-                     ListEmptyComponent={<Text style={styles.emptyCartText}>No se encontraron prendas.</Text>}
-                     showsVerticalScrollIndicator={false}
-                  />
+                  {/* CONTENEDOR CON SCROLL PROPIO PARA LA LISTA */}
+                  <View style={styles.catalogListWrapper}>
+                     <FlatList
+                        style={styles.productsScroll}
+                        data={paginatedProducts}
+                        keyExtractor={(item) => item.id || item.code || Math.random().toString()}
+                        renderItem={renderProductItem}
+                        contentContainerStyle={{ paddingBottom: 12, paddingRight: 4 }}
+                        ListEmptyComponent={<Text style={styles.emptyCartText}>No se encontraron prendas.</Text>}
+                        showsVerticalScrollIndicator={true}
+                     />
+                  </View>
 
+                  {/* PAGINACIÓN ESTÁTICA SIEMPRE VISIBLE ABAJO */}
                   {totalPages > 1 && (
                      <View style={styles.paginationBar}>
-                        <P style={[styles.pageNavBtn, currentPage === 1 && styles.pageNavDisabled]} disabled={currentPage === 1} onPress={() => setCurrentPage((p) => Math.max(1, p - 1))}>
+                        <P
+                           style={[styles.pageNavBtn, currentPage === 1 && styles.pageNavDisabled]}
+                           disabled={currentPage === 1}
+                           onPress={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        >
                            <ChevronLeft size={18} color={T.ink} />
                            <Text style={styles.pageNavText}>Anterior</Text>
                         </P>
                         <Text style={styles.pageIndicator}>
                            <Text style={{ color: T.ink }}>{currentPage}</Text> / {totalPages}
                         </Text>
-                        <P style={[styles.pageNavBtn, currentPage === totalPages && styles.pageNavDisabled]} disabled={currentPage === totalPages} onPress={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}>
+                        <P
+                           style={[styles.pageNavBtn, currentPage === totalPages && styles.pageNavDisabled]}
+                           disabled={currentPage === totalPages}
+                           onPress={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        >
                            <Text style={styles.pageNavText}>Siguiente</Text>
                            <ChevronRight size={18} color={T.ink} />
                         </P>
@@ -1929,8 +1941,8 @@ const styles = StyleSheet.create({
    tabBadge: { minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: T.solid, alignItems: 'center', justifyContent: 'center' },
    tabBadgeText: { fontSize: 11, fontWeight: '800', color: T.onSolid },
 
-   leftPanel: { flex: 1, padding: 16 },
-   leftSplit: { flex: 1.25, padding: 22, paddingRight: 18 },
+   leftPanel: { flex: 1, padding: 16, height: '100%', overflow: 'hidden' },
+   leftSplit: { flex: 1.25, padding: 22, paddingRight: 18, height: '100%', overflow: 'hidden' },
    rightPanel: { flex: 1, padding: 16 },
    rightSplit: {
       maxWidth: 470,
@@ -1940,6 +1952,7 @@ const styles = StyleSheet.create({
       borderLeftColor: T.line,
    },
 
+   catalogListWrapper: { flex: 1, minHeight: 0 },
    productsScroll: { flex: 1 },
    productCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, borderRadius: 12, marginBottom: 8, backgroundColor: T.surface, borderWidth: 2, borderColor: 'transparent' },
    productCardSelected: { borderColor: T.ink, backgroundColor: T.bg },
@@ -1955,7 +1968,7 @@ const styles = StyleSheet.create({
    wholesaleTag: { fontSize: 9, fontWeight: '800', color: '#059669', backgroundColor: '#ECFDF5', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3, overflow: 'hidden' },
    bsRefSmall: { fontSize: 10, color: '#7C3AED', fontWeight: '700' },
 
-   paginationBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: T.line, paddingVertical: 8, marginTop: 8 },
+   paginationBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: T.line, paddingVertical: 10, marginTop: 4, flexShrink: 0 },
    pageNavBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 8 },
    pageNavDisabled: { opacity: 0.3 },
    pageNavText: { fontSize: 13, fontWeight: '700', color: T.ink },

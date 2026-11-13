@@ -462,15 +462,6 @@ const MainApp = () => {
                      )}
                   </P>
                )}
-
-               <P style={styles.lockButton} onPress={goCatalog} accessibilityLabel="Volver al catálogo">
-                  <Lock size={16} color={T.onBar} />
-                  {!narrow && <Text style={styles.lockButtonText}>Ver Catálogo</Text>}
-               </P>
-
-               <P style={styles.iconBtn} onPress={confirmLogout} accessibilityLabel="Cerrar Sesión">
-                  <LogOut size={17} color={T.onBar} />
-               </P>
             </View>
          </View>
 

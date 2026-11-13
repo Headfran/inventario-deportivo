@@ -40,6 +40,7 @@ import { calculateSaleProfit } from '../services/salesHistoryService';
 import { MONO as T, display } from '../design';
 
 const STORE_NAME = 'JD Store';
+const MAX = 1180;
 
 const safeFixed = (val: any, decimals: number = 2): string => {
    const num = Number(val);
@@ -96,6 +97,9 @@ interface SalesHistoryScreenProps {
 export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner = false }) => {
    const { width } = useWindowDimensions();
    const mobile = width < 600;
+   const isTabletOrPC = width >= 600;
+   const isDesktop = width >= 1024;
+   const padX = isDesktop ? 32 : isTabletOrPC ? 24 : 16;
 
    const [sales, setSales] = useState<Sale[]>([]);
    const [searchQuery, setSearchQuery] = useState('');
@@ -122,7 +126,6 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
    }, []);
 
    const filteredSales = useMemo(() => {
-      // ─── Precalcular fechas de referencia (una sola vez por filtro) ───
       const today = getStartOfDay();
       const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
 
@@ -336,167 +339,178 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
       <View style={styles.container}>
          {/* HEADER */}
          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-               <View style={styles.headerIconBox}>
-                  <Receipt size={22} color={T.onBar} />
-               </View>
-               <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[styles.headerTitle, mobile && styles.headerTitleMobile]}>
-                     Historial de Ventas
-                  </Text>
-                  <Text style={styles.headerSubtitle}>Monitor de ingresos y recibos</Text>
-               </View>
-            </View>
-
-            <View style={styles.metricsContainer}>
-               <View style={styles.metricBox}>
-                  <Text style={styles.metricLabel}>Ingresos · {activeSalesCount}</Text>
-                  <Text style={styles.metricValue}>${safeFixed(totalRevenue)}</Text>
-               </View>
-               {isOwner && totalProfit.total !== 0 && (
-                  <View style={[styles.metricBox, styles.metricBoxProfit]}>
-                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                        <TrendingUp size={10} color="#A7F3D0" />
-                        <Text style={styles.metricLabel}>Ganancia</Text>
-                     </View>
-                     <Text style={[styles.metricValue, { color: '#A7F3D0' }]}>
-                        ${safeFixed(totalProfit.total)}
-                        {!totalProfit.allDetermined && <Text style={{ fontSize: 12 }}>*</Text>}
-                     </Text>
+            <View style={[styles.headerInner, { paddingHorizontal: padX }]}>
+               <View style={styles.headerLeft}>
+                  <View style={styles.headerIconBox}>
+                     <Receipt size={22} color={T.onBar} />
                   </View>
-               )}
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                     <Text style={[styles.headerTitle, mobile && styles.headerTitleMobile]}>
+                        Historial de Ventas
+                     </Text>
+                     <Text style={styles.headerSubtitle}>Monitor de ingresos y recibos</Text>
+                  </View>
+               </View>
+
+               <View style={styles.metricsContainer}>
+                  <View style={styles.metricBox}>
+                     <Text style={styles.metricLabel}>Ingresos · {activeSalesCount}</Text>
+                     <Text style={styles.metricValue}>${safeFixed(totalRevenue)}</Text>
+                  </View>
+                  {isOwner && totalProfit.total !== 0 && (
+                     <View style={[styles.metricBox, styles.metricBoxProfit]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                           <TrendingUp size={10} color="#A7F3D0" />
+                           <Text style={styles.metricLabel}>Ganancia</Text>
+                        </View>
+                        <Text style={[styles.metricValue, { color: '#A7F3D0' }]}>
+                           ${safeFixed(totalProfit.total)}
+                           {!totalProfit.allDetermined && <Text style={{ fontSize: 12 }}>*</Text>}
+                        </Text>
+                     </View>
+                  )}
+               </View>
             </View>
          </View>
 
          {/* FILTROS */}
          <View style={styles.filterSection}>
-            <View style={styles.searchRow}>
-               <View style={[styles.searchBar, isSearchFocused && styles.searchBarFocused]}>
-                  <Search size={18} color={isSearchFocused ? T.ink : T.inkMute} />
-                  <TextInput
-                     style={styles.searchInput}
-                     placeholder="Buscar recibo, cliente o ref..."
-                     placeholderTextColor={T.inkMute}
-                     value={searchQuery}
-                     onChangeText={setSearchQuery}
-                     onFocus={() => setIsSearchFocused(true)}
-                     onBlur={() => setIsSearchFocused(false)}
-                  />
-                  {searchQuery ? (
-                     <P onPress={() => setSearchQuery('')}>
-                        <X size={18} color={T.inkMute} />
-                     </P>
-                  ) : null}
-               </View>
-               <P
-                  style={[styles.filterToggleBtn, showAdvancedFilters && styles.filterToggleBtnActive]}
-                  onPress={() => setShowAdvancedFilters(!showAdvancedFilters)}
-               >
-                  <Filter size={18} color={showAdvancedFilters ? T.onSolid : T.ink} />
-               </P>
-            </View>
-
-            <View style={styles.dateFilterRow}>
-               <CalendarDays size={14} color={T.inkMute} style={{ marginRight: 8 }} />
-               <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.chipsScroll}
-                  contentContainerStyle={{ gap: 6 }}
-               >
-                  <FilterChip
-                     label="Hoy"
-                     isActive={selectedDateFilter === 'today'}
-                     onPress={() => setSelectedDateFilter('today')}
-                  />
-                  <FilterChip
-                     label="Ayer"
-                     isActive={selectedDateFilter === 'yesterday'}
-                     onPress={() => setSelectedDateFilter('yesterday')}
-                  />
-                  <FilterChip
-                     label="Semana"
-                     isActive={selectedDateFilter === 'week'}
-                     onPress={() => setSelectedDateFilter('week')}
-                  />
-                  <FilterChip
-                     label="Sem. Pasada"
-                     isActive={selectedDateFilter === 'lastWeek'}
-                     onPress={() => setSelectedDateFilter('lastWeek')}
-                  />
-                  <FilterChip
-                     label="Mes"
-                     isActive={selectedDateFilter === 'month'}
-                     onPress={() => setSelectedDateFilter('month')}
-                  />
-                  <FilterChip
-                     label="Mes Pasado"
-                     isActive={selectedDateFilter === 'lastMonth'}
-                     onPress={() => setSelectedDateFilter('lastMonth')}
-                  />
-                  <FilterChip
-                     label="Todas"
-                     isActive={selectedDateFilter === 'all'}
-                     onPress={() => setSelectedDateFilter('all')}
-                  />
+            <View style={[styles.filterInner, { paddingHorizontal: padX }]}>
+               <View style={styles.searchRow}>
+                  <View style={[styles.searchBar, isSearchFocused && styles.searchBarFocused]}>
+                     <Search size={18} color={isSearchFocused ? T.ink : T.inkMute} />
+                     <TextInput
+                        style={styles.searchInput}
+                        placeholder="Buscar recibo, cliente o ref..."
+                        placeholderTextColor={T.inkMute}
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                        onFocus={() => setIsSearchFocused(true)}
+                        onBlur={() => setIsSearchFocused(false)}
+                     />
+                     {searchQuery ? (
+                        <P onPress={() => setSearchQuery('')}>
+                           <X size={18} color={T.inkMute} />
+                        </P>
+                     ) : null}
+                  </View>
                   <P
-                     style={[styles.chip, selectedDateFilter === 'custom' && styles.chipActive]}
-                     onPress={() => setShowDateRangeModal(true)}
+                     style={[styles.filterToggleBtn, showAdvancedFilters && styles.filterToggleBtnActive]}
+                     onPress={() => setShowAdvancedFilters(!showAdvancedFilters)}
                   >
-                     <Text style={[styles.chipText, selectedDateFilter === 'custom' && styles.chipTextActive]}>
-                        Rango
-                        {selectedDateFilter === 'custom' && customDateRange
-                           ? ` (${formatDateShort(customDateRange.start)})`
-                           : ''}
-                     </Text>
+                     <Filter size={18} color={showAdvancedFilters ? T.onSolid : T.ink} />
                   </P>
-               </ScrollView>
-            </View>
-
-            {showAdvancedFilters && (
-               <View style={styles.advancedFiltersContainer}>
-                  <View style={styles.filterGroup}>
-                     <View style={styles.filterIconLabel}>
-                        <DollarSign size={14} color={T.inkSoft} />
-                        <Text style={styles.filterRowTitle}>Pago</Text>
-                     </View>
-                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-                        <FilterChip label="Todos" isActive={selectedPaymentMethod === 'all'} onPress={() => setSelectedPaymentMethod('all')} />
-                        <FilterChip label="Pago Móvil" isActive={selectedPaymentMethod === 'pago_movil'} onPress={() => setSelectedPaymentMethod('pago_movil')} />
-                        <FilterChip label="Binance" isActive={selectedPaymentMethod === 'binance'} onPress={() => setSelectedPaymentMethod('binance')} />
-                        <FilterChip label="Zelle" isActive={selectedPaymentMethod === 'zelle'} onPress={() => setSelectedPaymentMethod('zelle')} />
-                        <FilterChip label="Efectivo" isActive={selectedPaymentMethod === 'efectivo'} onPress={() => setSelectedPaymentMethod('efectivo')} />
-                        <FilterChip label="Transf." isActive={selectedPaymentMethod === 'transferencia'} onPress={() => setSelectedPaymentMethod('transferencia')} />
-                        <FilterChip label="Mixto" isActive={selectedPaymentMethod === 'mixto'} onPress={() => setSelectedPaymentMethod('mixto')} />
-                     </ScrollView>
-                  </View>
-
-                  <View style={styles.filterGroup}>
-                     <View style={styles.filterIconLabel}>
-                        <FileText size={14} color={T.inkSoft} />
-                        <Text style={styles.filterRowTitle}>Estado</Text>
-                     </View>
-                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-                        <FilterChip label="Completadas" isActive={selectedStatus === 'completed'} onPress={() => setSelectedStatus('completed')} />
-                        <FilterChip label="Anuladas" isActive={selectedStatus === 'voided'} onPress={() => setSelectedStatus('voided')} />
-                        <FilterChip label="Todas" isActive={selectedStatus === 'all'} onPress={() => setSelectedStatus('all')} />
-                     </ScrollView>
-                  </View>
                </View>
-            )}
+
+               <View style={styles.dateFilterRow}>
+                  <CalendarDays size={14} color={T.inkMute} style={{ marginRight: 8 }} />
+                  <ScrollView
+                     horizontal
+                     showsHorizontalScrollIndicator={false}
+                     style={styles.chipsScroll}
+                     contentContainerStyle={{ gap: 6 }}
+                  >
+                     <FilterChip
+                        label="Hoy"
+                        isActive={selectedDateFilter === 'today'}
+                        onPress={() => setSelectedDateFilter('today')}
+                     />
+                     <FilterChip
+                        label="Ayer"
+                        isActive={selectedDateFilter === 'yesterday'}
+                        onPress={() => setSelectedDateFilter('yesterday')}
+                     />
+                     <FilterChip
+                        label="Semana"
+                        isActive={selectedDateFilter === 'week'}
+                        onPress={() => setSelectedDateFilter('week')}
+                     />
+                     <FilterChip
+                        label="Sem. Pasada"
+                        isActive={selectedDateFilter === 'lastWeek'}
+                        onPress={() => setSelectedDateFilter('lastWeek')}
+                     />
+                     <FilterChip
+                        label="Mes"
+                        isActive={selectedDateFilter === 'month'}
+                        onPress={() => setSelectedDateFilter('month')}
+                     />
+                     <FilterChip
+                        label="Mes Pasado"
+                        isActive={selectedDateFilter === 'lastMonth'}
+                        onPress={() => setSelectedDateFilter('lastMonth')}
+                     />
+                     <FilterChip
+                        label="Todas"
+                        isActive={selectedDateFilter === 'all'}
+                        onPress={() => setSelectedDateFilter('all')}
+                     />
+                     <P
+                        style={[styles.chip, selectedDateFilter === 'custom' && styles.chipActive]}
+                        onPress={() => setShowDateRangeModal(true)}
+                     >
+                        <Text style={[styles.chipText, selectedDateFilter === 'custom' && styles.chipTextActive]}>
+                           Rango
+                           {selectedDateFilter === 'custom' && customDateRange
+                              ? ` (${formatDateShort(customDateRange.start)})`
+                              : ''}
+                        </Text>
+                     </P>
+                  </ScrollView>
+               </View>
+
+               {showAdvancedFilters && (
+                  <View style={styles.advancedFiltersContainer}>
+                     <View style={styles.filterGroup}>
+                        <View style={styles.filterIconLabel}>
+                           <DollarSign size={14} color={T.inkSoft} />
+                           <Text style={styles.filterRowTitle}>Pago</Text>
+                        </View>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                           <FilterChip label="Todos" isActive={selectedPaymentMethod === 'all'} onPress={() => setSelectedPaymentMethod('all')} />
+                           <FilterChip label="Pago Móvil" isActive={selectedPaymentMethod === 'pago_movil'} onPress={() => setSelectedPaymentMethod('pago_movil')} />
+                           <FilterChip label="Binance" isActive={selectedPaymentMethod === 'binance'} onPress={() => setSelectedPaymentMethod('binance')} />
+                           <FilterChip label="Zelle" isActive={selectedPaymentMethod === 'zelle'} onPress={() => setSelectedPaymentMethod('zelle')} />
+                           <FilterChip label="Efectivo" isActive={selectedPaymentMethod === 'efectivo'} onPress={() => setSelectedPaymentMethod('efectivo')} />
+                           <FilterChip label="Transf." isActive={selectedPaymentMethod === 'transferencia'} onPress={() => setSelectedPaymentMethod('transferencia')} />
+                           <FilterChip label="Mixto" isActive={selectedPaymentMethod === 'mixto'} onPress={() => setSelectedPaymentMethod('mixto')} />
+                        </ScrollView>
+                     </View>
+
+                     <View style={styles.filterGroup}>
+                        <View style={styles.filterIconLabel}>
+                           <FileText size={14} color={T.inkSoft} />
+                           <Text style={styles.filterRowTitle}>Estado</Text>
+                        </View>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                           <FilterChip label="Completadas" isActive={selectedStatus === 'completed'} onPress={() => setSelectedStatus('completed')} />
+                           <FilterChip label="Anuladas" isActive={selectedStatus === 'voided'} onPress={() => setSelectedStatus('voided')} />
+                           <FilterChip label="Todas" isActive={selectedStatus === 'all'} onPress={() => setSelectedStatus('all')} />
+                        </ScrollView>
+                     </View>
+                  </View>
+               )}
+            </View>
          </View>
 
-         {/* LISTA */}
+         {/* LISTA RESPONSIVE */}
          <FlatList
             data={filteredSales}
             keyExtractor={(item) => item.id || item.receiptNumber || String(Math.random())}
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={[
+               styles.listContent,
+               { paddingHorizontal: padX },
+               filteredSales.length === 0 && styles.emptyListContainer,
+            ]}
+            numColumns={isDesktop ? 2 : 1}
+            key={isDesktop ? 'grid-2' : 'list-1'}
+            columnWrapperStyle={isDesktop ? { gap: 12 } : undefined}
             renderItem={({ item }) => {
                const isVoided = item.status === 'voided';
                const hasNotes = !!(item.notes && item.notes.trim().length > 0);
                return (
                   <P
-                     style={[styles.saleCard, isVoided && styles.saleCardVoided]}
+                     style={[styles.saleCard, isDesktop && styles.saleCardDesktop, isVoided && styles.saleCardVoided]}
                      onPress={() => setSelectedSale(item)}
                   >
                      <View style={styles.saleHeader}>
@@ -597,7 +611,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
          <Modal visible={!!selectedSale && !isVoidModalOpen} transparent animationType="slide">
             {selectedSale && (
                <View style={styles.modalOverlay}>
-                  <View style={styles.modalCard}>
+                  <View style={[styles.modalCard, isTabletOrPC && { maxWidth: 540 }]}>
                      <View style={styles.modalHeader}>
                         <Text style={styles.modalTitle}>Detalle del Comprobante</Text>
                         <P onPress={() => setSelectedSale(null)}>
@@ -829,12 +843,17 @@ const styles = StyleSheet.create({
    pressed: { transform: [{ scale: 0.97 }], opacity: 0.85 },
 
    header: {
+      backgroundColor: T.bar,
+      width: '100%',
+   },
+   headerInner: {
+      width: '100%',
+      maxWidth: MAX,
+      alignSelf: 'center',
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      paddingHorizontal: 16,
       paddingVertical: 18,
-      backgroundColor: T.bar,
       gap: 12,
       flexWrap: 'wrap',
    },
@@ -887,13 +906,18 @@ const styles = StyleSheet.create({
    },
 
    filterSection: {
-      paddingHorizontal: 16,
-      paddingTop: 14,
-      paddingBottom: 10,
       backgroundColor: T.surface,
       borderBottomWidth: 1,
       borderBottomColor: T.line,
       zIndex: 10,
+      width: '100%',
+   },
+   filterInner: {
+      width: '100%',
+      maxWidth: MAX,
+      alignSelf: 'center',
+      paddingTop: 14,
+      paddingBottom: 10,
    },
    searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
    searchBar: {
@@ -966,14 +990,28 @@ const styles = StyleSheet.create({
    chipText: { fontSize: 12, color: T.inkSoft, fontWeight: '700' },
    chipTextActive: { color: T.onSolid, fontWeight: '800' },
 
-   listContent: { padding: 16, paddingBottom: 60 },
+   listContent: {
+      width: '100%',
+      maxWidth: MAX,
+      alignSelf: 'center',
+      paddingTop: 16,
+      paddingBottom: 60,
+      gap: 10,
+      flexGrow: 1,
+   },
+   emptyListContainer: { justifyContent: 'center' },
    saleCard: {
       backgroundColor: T.surface,
       borderRadius: 12,
       padding: 14,
-      marginBottom: 10,
       borderWidth: 1,
       borderColor: T.line,
+      flex: 1,
+      marginBottom: 0,
+   },
+   saleCardDesktop: {
+      width: '49%',
+      marginBottom: 12,
    },
    saleCardVoided: { backgroundColor: T.bg, opacity: 0.85 },
    saleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
@@ -1081,7 +1119,7 @@ const styles = StyleSheet.create({
    },
    paymentTagText: { fontSize: 10, fontWeight: '800', color: T.inkSoft, letterSpacing: 0.3 },
 
-   emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, paddingHorizontal: 20 },
+   emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, paddingHorizontal: 20, width: '100%' },
    emptyTitle: {
       ...display,
       fontSize: 22,
@@ -1291,7 +1329,7 @@ const styles = StyleSheet.create({
       color: T.onBar,
       textTransform: 'uppercase',
    },
-   voidModalSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 4 },
+   voidModalSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 2 },
    voidAlertRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
    voidModalText: { fontSize: 14, color: T.ink, lineHeight: 20, flex: 1 },
    inputLabel: {
