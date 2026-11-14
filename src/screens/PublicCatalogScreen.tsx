@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions, ActivityIndicator } from 'react-native';
 import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn } from 'lucide-react-native';
 import { Product } from '../types/inventory';
-import { fetchAllProducts } from '../services/productService';
+import { fetchAllProducts, getCatalogVersion, subscribeToCatalogVersion, fetchProductsDelta } from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { Cover } from '../components/Cover';
 import { LIGHT, Tone, display, ease, nd, reduced, useEnter, getColorHex } from '../design';
@@ -38,6 +38,10 @@ const REF_RATE_MULTIPLIER = 1.15;
 const T: Tone = LIGHT;
 const MAX = 1400;
 const ITEMS_PER_PAGE = 20;
+
+// Claves para el localStorage del catálogo público
+const LS_CATALOG_VERSION = 'jdstore.catalogVersion';
+const LS_CACHED_PRODUCTS = 'jdstore.cachedProducts';
 
 const BRAND_SLUGS: Record<string, string> = {
    nike: 'nike', adidas: 'adidas', puma: 'puma', underarmour: 'underarmour', ua: 'underarmour', reebok: 'reebok',
@@ -177,8 +181,8 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
    const wholesalePrice = Number(item.wholesalePrice) || retailPrice * 0.85;
 
    return (
-      <Pressable 
-         style={({ pressed }) => [{ width }, styles.cardContainer, pressed && styles.pressedCard]} 
+      <Pressable
+         style={({ pressed }) => [{ width }, styles.cardContainer, pressed && styles.pressedCard]}
          onPress={() => onOpen(item)}
       >
          <View style={styles.photo}>
@@ -199,9 +203,8 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
                </View>
             )}
 
-            {/* Botón flotante de zoom rápido para la imagen */}
-            <Pressable 
-               style={styles.cardZoomBtn} 
+            <Pressable
+               style={styles.cardZoomBtn}
                onPress={(e) => {
                   e.stopPropagation();
                   if (mainImgUri) onZoom(mainImgUri, item.name);
@@ -268,20 +271,94 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
 
+   // Lógica de fusión (Delta Sync)
+   const mergeProducts = useCallback((cached: Product[], updated: Product[], deletedIds: string[]) => {
+      const map = new Map(cached.map(p => [p.id, p]));
+      deletedIds.forEach(id => map.delete(id));
+      updated.forEach(p => map.set(p.id, p));
+
+      return Array.from(map.values()).sort((a, b) => {
+         const getTs = (val: any) => {
+            if (!val) return 0;
+            if (typeof val === 'object' && typeof val.toMillis === 'function') return val.toMillis();
+            if (typeof val === 'object' && typeof val.seconds === 'number') return val.seconds * 1000;
+            return Number(val) || 0;
+         };
+         return getTs(b.createdAt) - getTs(a.createdAt);
+      });
+   }, []);
+
+   // Efecto 1: Carga inicial inteligente
    useEffect(() => {
       let cancelled = false;
       (async () => {
          try {
-            const data = await fetchAllProducts();
-            if (!cancelled) setProducts(data);
+            const serverVersion = await getCatalogVersion(true);
+            const localVersion = Number(localStorage.getItem(LS_CATALOG_VERSION) || 0);
+            const cachedStr = localStorage.getItem(LS_CACHED_PRODUCTS);
+
+            if (serverVersion > localVersion && localVersion > 0 && cachedStr) {
+               // 🟢 TENEMOS CACHÉ Y HAY CAMBIOS: Usamos Delta Sync
+               const cachedProducts: Product[] = JSON.parse(cachedStr);
+               const { updated, deletedIds } = await fetchProductsDelta(localVersion);
+
+               const newProducts = mergeProducts(cachedProducts, updated, deletedIds);
+
+               if (!cancelled) {
+                  setProducts(newProducts);
+                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(newProducts));
+                  localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
+               }
+            } else if (serverVersion > localVersion || !cachedStr) {
+               // 🔴 CACHÉ VACÍA O DESACTUALIZADA: Carga completa (solo pasa 1 vez)
+               const data = await fetchAllProducts({ fromServer: true });
+               if (!cancelled) {
+                  setProducts(data);
+                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
+                  localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
+               }
+            } else if (!cancelled) {
+               // 🟡 TODO AL DÍA: Usar caché
+               setProducts(JSON.parse(cachedStr));
+            }
          } catch (e) {
-            console.warn('No se pudo cargar el catálogo:', e);
+            console.warn('Error en sync inicial, usando caché local', e);
+            const cached = localStorage.getItem(LS_CACHED_PRODUCTS);
+            if (cached && !cancelled) setProducts(JSON.parse(cached));
          } finally {
             if (!cancelled) setIsLoadingProducts(false);
          }
       })();
       return () => { cancelled = true; };
-   }, []);
+   }, [mergeProducts]);
+
+   // Efecto 2: Actualización en vivo (Delta)
+   useEffect(() => {
+      let lastKnownVersion = Number(localStorage.getItem(LS_CATALOG_VERSION) || 0);
+
+      const unsub = subscribeToCatalogVersion(async (newVersion) => {
+         if (newVersion > lastKnownVersion) {
+            lastKnownVersion = newVersion;
+            const cachedStr = localStorage.getItem(LS_CACHED_PRODUCTS);
+            const cachedProducts: Product[] = cachedStr ? JSON.parse(cachedStr) : [];
+
+            if (cachedProducts.length > 0) {
+               const { updated, deletedIds } = await fetchProductsDelta(newVersion - 1); // -1 por seguridad de ms
+               const newProducts = mergeProducts(cachedProducts, updated, deletedIds);
+
+               setProducts(newProducts);
+               localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(newProducts));
+               localStorage.setItem(LS_CATALOG_VERSION, String(newVersion));
+            } else {
+               const data = await fetchAllProducts({ fromServer: true });
+               setProducts(data);
+               localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
+               localStorage.setItem(LS_CATALOG_VERSION, String(newVersion));
+            }
+         }
+      });
+      return () => unsub();
+   }, [mergeProducts]);
 
    const { categories, brands, colors, sizes } = useMemo(() => {
       const rawCategories: string[] = Array.from(

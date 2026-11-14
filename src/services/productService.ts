@@ -7,11 +7,16 @@ import {
   onSnapshot,
   query,
   getDoc,
+  getDocFromServer,
   getDocs,
   getDocsFromCache,
+  getDocsFromServer,
+  setDoc,
+  serverTimestamp,
   limit,
   orderBy,
   startAfter,
+  where,
   runTransaction,
   DocumentData,
   QueryDocumentSnapshot,
@@ -22,15 +27,62 @@ import { deleteImageFromR2 } from './storage';
 import { getCachedImageUrl } from '../utils/imageUrl';
 
 const PRODUCTS_COLLECTION = 'products';
+const SETTINGS_COLLECTION = 'settings';
+const CATALOG_META_DOC = 'catalog_meta';
 
 export interface PaginatedResult {
   products: Product[];
   lastDoc: QueryDocumentSnapshot<DocumentData> | null;
   hasMore: boolean;
-  /** true si la respuesta vino de IndexedDB (0 lecturas facturables) */
   fromCache?: boolean;
 }
 
+// ─── 1. FUNCIONES DE VERSIÓN DEL CATÁLOGO ───
+export const bumpCatalogVersion = async () => {
+  const ref = doc(db, SETTINGS_COLLECTION, CATALOG_META_DOC);
+  await setDoc(ref, { lastUpdate: serverTimestamp() }, { merge: true });
+};
+
+export const getCatalogVersion = async (fromServer = false): Promise<number> => {
+  const ref = doc(db, SETTINGS_COLLECTION, CATALOG_META_DOC);
+  try {
+    const snap = fromServer ? await getDocFromServer(ref) : await getDoc(ref);
+    return snap.exists() ? snap.data().lastUpdate?.toMillis() || 0 : 0;
+  } catch {
+    return 0;
+  }
+};
+
+export const subscribeToCatalogVersion = (callback: (version: number) => void) => {
+  const ref = doc(db, SETTINGS_COLLECTION, CATALOG_META_DOC);
+  return onSnapshot(ref, (snap) => {
+    callback(snap.exists() ? snap.data().lastUpdate?.toMillis() || 0 : 0);
+  });
+};
+
+// ─── 2. FUNCIÓN DELTA (Solo descarga lo que cambió) ───
+export const fetchProductsDelta = async (lastSyncTime: number): Promise<{ updated: Product[], deletedIds: string[] }> => {
+  const col = collection(db, PRODUCTS_COLLECTION);
+  // ⚠️ Firestore pedirá crear un índice para esta consulta la primera vez.
+  const q = query(col, where('updatedAt', '>', lastSyncTime));
+  const snapshot = await getDocsFromServer(q); // Forzamos servidor para traer los cambios frescos
+
+  const updated: Product[] = [];
+  const deletedIds: string[] = [];
+
+  snapshot.docs.forEach(d => {
+    const data = d.data();
+    if (data.deleted) {
+      deletedIds.push(d.id); // Si está marcado como borrado, guardamos su ID
+    } else {
+      updated.push(normalizeProduct({ id: d.id, ...data } as Product));
+    }
+  });
+
+  return { updated, deletedIds };
+};
+
+// ─── 3. NORMALIZADOR Y LISTENERS (Filtrando borrados) ───
 const normalizeProduct = (product: Product): Product => ({
   ...product,
   images: (product.images || [])
@@ -38,13 +90,6 @@ const normalizeProduct = (product: Product): Product => ({
     .filter((u): u is string => Boolean(u)),
 });
 
-/**
- * Listener en tiempo real del catálogo.
- * Se usa UNA sola instancia global (en App.tsx) para evitar re-syncs por pantalla.
- *
- * `pageSize` opcional: si tu catálogo es pequeño (<500) no hace falta limitar.
- * Si es grande y quieres reducir lecturas, pasa `{ pageSize: 300 }`.
- */
 export const subscribeToProducts = (
   callback: (products: Product[]) => void,
   options?: { pageSize?: number }
@@ -55,19 +100,22 @@ export const subscribeToProducts = (
     : query(col, orderBy('createdAt', 'desc'));
 
   return onSnapshot(q, (snapshot) => {
-    const products: Product[] = snapshot.docs.map((d) =>
-      normalizeProduct({ id: d.id, ...d.data() } as Product)
-    );
+    const products: Product[] = snapshot.docs
+      .filter((d) => !d.data().deleted) // 👈 Ocultamos los marcados como borrados
+      .map((d) => normalizeProduct({ id: d.id, ...d.data() } as Product));
     callback(products);
   });
 };
 
+// ─── 4. CRUD CON SINCRONIZACIÓN (Soft Delete + Bump Version) ───
 export const createProduct = async (product: Omit<Product, 'id'>): Promise<string> => {
   const docRef = await addDoc(collection(db, PRODUCTS_COLLECTION), {
     ...product,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    deleted: false, // 👈 Aseguramos que nazca sin el flag de borrado
   });
+  await bumpCatalogVersion();
   return docRef.id;
 };
 
@@ -80,6 +128,7 @@ export const updateProduct = async (
     ...product,
     updatedAt: Date.now(),
   });
+  await bumpCatalogVersion();
 };
 
 export const deleteProduct = async (product: Product): Promise<void> => {
@@ -87,14 +136,15 @@ export const deleteProduct = async (product: Product): Promise<void> => {
     await Promise.allSettled(product.images.map((url) => deleteImageFromR2(url)));
   }
   if (product.id) {
-    await deleteDoc(doc(db, PRODUCTS_COLLECTION, product.id));
+    // 👈 SOFT DELETE: En lugar de deleteDoc, lo marcamos como borrado
+    await updateDoc(doc(db, PRODUCTS_COLLECTION, product.id), {
+      deleted: true,
+      updatedAt: Date.now(),
+    });
+    await bumpCatalogVersion();
   }
 };
 
-/**
- * Actualiza atómicamente el stock de una talla/color usando transacción.
- * Garantiza consistencia si dos personas ajustan al mismo tiempo.
- */
 export const updateVariantStock = async (
   productId: string,
   colorName: string,
@@ -125,8 +175,12 @@ export const updateVariantStock = async (
       updatedAt: Date.now(),
     });
   });
+
+  // 👈 También bumpeamos la versión al cambiar stock manualmente o por venta
+  await bumpCatalogVersion();
 };
 
+// ─── 5. PAGINACIÓN Y FETCH ALL (Filtrando borrados) ───
 const buildPageQuery = (
   pageSize: number,
   lastDoc: QueryDocumentSnapshot<DocumentData> | null
@@ -137,11 +191,6 @@ const buildPageQuery = (
     : query(col, orderBy('createdAt', 'desc'), limit(pageSize));
 };
 
-/**
- * Paginación con estrategia "caché primero".
- * - Si el bloque ya está cacheado en IndexedDB → 0 lecturas al servidor.
- * - Si no → cae al servidor (lecturas facturables).
- */
 export const fetchProductsPage = async (
   pageSize: number = 15,
   lastDoc: QueryDocumentSnapshot<DocumentData> | null = null,
@@ -149,32 +198,32 @@ export const fetchProductsPage = async (
 ): Promise<PaginatedResult> => {
   const q = buildPageQuery(pageSize, lastDoc);
 
-  // 1) Intento desde caché (0 reads)
+  const processDocs = (docs: QueryDocumentSnapshot<DocumentData>[]) => {
+    return docs
+      .filter((d) => !d.data().deleted) // 👈 Ignoramos los borrados
+      .map((d) => normalizeProduct({ id: d.id, ...d.data() } as Product));
+  };
+
   if (preferCache) {
     try {
       const cached = await getDocsFromCache(q);
       if (!cached.empty) {
         return {
-          products: cached.docs.map((d) =>
-            normalizeProduct({ id: d.id, ...d.data() } as Product)
-          ),
+          products: processDocs(cached.docs),
           lastDoc: cached.docs[cached.docs.length - 1] || null,
           hasMore: cached.docs.length === pageSize,
           fromCache: true,
         };
       }
     } catch {
-      /* cache miss → seguimos al servidor */
+      /* cache miss */
     }
   }
 
-  // 2) Fallback al servidor
   try {
     const snapshot = await getDocs(q);
     return {
-      products: snapshot.docs.map((d) =>
-        normalizeProduct({ id: d.id, ...d.data() } as Product)
-      ),
+      products: processDocs(snapshot.docs),
       lastDoc: snapshot.docs[snapshot.docs.length - 1] || null,
       hasMore: snapshot.docs.length === pageSize,
       fromCache: false,
