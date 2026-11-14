@@ -571,7 +571,10 @@ export default function App() {
          window.addEventListener('load', () => {
             navigator.serviceWorker
                .register('/firebase-messaging-sw.js')
-               .then((reg) => console.log('Service Worker registrado:', reg.scope))
+               .then((reg) => {
+                  console.log('Service Worker registrado:', reg.scope);
+                  reg.update();
+               })
                .catch((err) => console.warn('Error al registrar SW:', err));
          });
       }

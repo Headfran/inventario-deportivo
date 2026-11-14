@@ -12,7 +12,6 @@ import {
   getDocsFromCache,
   getDocsFromServer,
   setDoc,
-  serverTimestamp,
   limit,
   orderBy,
   startAfter,
@@ -40,14 +39,15 @@ export interface PaginatedResult {
 // ─── 1. FUNCIONES DE VERSIÓN DEL CATÁLOGO ───
 export const bumpCatalogVersion = async () => {
   const ref = doc(db, SETTINGS_COLLECTION, CATALOG_META_DOC);
-  await setDoc(ref, { lastUpdate: serverTimestamp() }, { merge: true });
+  // Usamos Date.now() para que coincida con el reloj del cliente y no haya desfases
+  await setDoc(ref, { lastUpdate: Date.now() }, { merge: true });
 };
 
 export const getCatalogVersion = async (fromServer = false): Promise<number> => {
   const ref = doc(db, SETTINGS_COLLECTION, CATALOG_META_DOC);
   try {
     const snap = fromServer ? await getDocFromServer(ref) : await getDoc(ref);
-    return snap.exists() ? snap.data().lastUpdate?.toMillis() || 0 : 0;
+    return snap.exists() ? Number(snap.data().lastUpdate) || 0 : 0;
   } catch {
     return 0;
   }
@@ -56,24 +56,23 @@ export const getCatalogVersion = async (fromServer = false): Promise<number> => 
 export const subscribeToCatalogVersion = (callback: (version: number) => void) => {
   const ref = doc(db, SETTINGS_COLLECTION, CATALOG_META_DOC);
   return onSnapshot(ref, (snap) => {
-    callback(snap.exists() ? snap.data().lastUpdate?.toMillis() || 0 : 0);
+    callback(snap.exists() ? Number(snap.data().lastUpdate) || 0 : 0);
   });
 };
 
-// ─── 2. FUNCIÓN DELTA (Solo descarga lo que cambió) ───
+// ─── 2. FUNCIÓN DELTA ───
 export const fetchProductsDelta = async (lastSyncTime: number): Promise<{ updated: Product[], deletedIds: string[] }> => {
   const col = collection(db, PRODUCTS_COLLECTION);
-  // ⚠️ Firestore pedirá crear un índice para esta consulta la primera vez.
   const q = query(col, where('updatedAt', '>', lastSyncTime));
-  const snapshot = await getDocsFromServer(q); // Forzamos servidor para traer los cambios frescos
+  const snapshot = await getDocsFromServer(q);
 
   const updated: Product[] = [];
   const deletedIds: string[] = [];
 
   snapshot.docs.forEach(d => {
     const data = d.data();
-    if (data.deleted) {
-      deletedIds.push(d.id); // Si está marcado como borrado, guardamos su ID
+    if (data.deleted === true) {
+      deletedIds.push(d.id);
     } else {
       updated.push(normalizeProduct({ id: d.id, ...data } as Product));
     }
@@ -82,7 +81,7 @@ export const fetchProductsDelta = async (lastSyncTime: number): Promise<{ update
   return { updated, deletedIds };
 };
 
-// ─── 3. NORMALIZADOR Y LISTENERS (Filtrando borrados) ───
+// ─── 3. NORMALIZADOR Y LISTENERS ───
 const normalizeProduct = (product: Product): Product => ({
   ...product,
   images: (product.images || [])
@@ -101,19 +100,19 @@ export const subscribeToProducts = (
 
   return onSnapshot(q, (snapshot) => {
     const products: Product[] = snapshot.docs
-      .filter((d) => !d.data().deleted) // 👈 Ocultamos los marcados como borrados
+      .filter((d) => !d.data().deleted)
       .map((d) => normalizeProduct({ id: d.id, ...d.data() } as Product));
     callback(products);
   });
 };
 
-// ─── 4. CRUD CON SINCRONIZACIÓN (Soft Delete + Bump Version) ───
+// ─── 4. CRUD ───
 export const createProduct = async (product: Omit<Product, 'id'>): Promise<string> => {
   const docRef = await addDoc(collection(db, PRODUCTS_COLLECTION), {
     ...product,
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    deleted: false, // 👈 Aseguramos que nazca sin el flag de borrado
+    deleted: false,
   });
   await bumpCatalogVersion();
   return docRef.id;
@@ -127,6 +126,7 @@ export const updateProduct = async (
   await updateDoc(productRef, {
     ...product,
     updatedAt: Date.now(),
+    deleted: product.deleted ?? false, // 👈 Forzamos a que tenga el campo
   });
   await bumpCatalogVersion();
 };
@@ -136,7 +136,6 @@ export const deleteProduct = async (product: Product): Promise<void> => {
     await Promise.allSettled(product.images.map((url) => deleteImageFromR2(url)));
   }
   if (product.id) {
-    // 👈 SOFT DELETE: En lugar de deleteDoc, lo marcamos como borrado
     await updateDoc(doc(db, PRODUCTS_COLLECTION, product.id), {
       deleted: true,
       updatedAt: Date.now(),
@@ -161,9 +160,7 @@ export const updateVariantStock = async (
     const updatedVariants = (product.variants || []).map((variant) => {
       if (variant.color.toLowerCase() === colorName.toLowerCase()) {
         const updatedSizes = (variant.sizes || []).map((sObj) =>
-          sObj.size === targetSize
-            ? { ...sObj, stock: Math.max(0, newStock) }
-            : sObj
+          sObj.size === targetSize ? { ...sObj, stock: Math.max(0, newStock) } : sObj
         );
         return { ...variant, sizes: updatedSizes };
       }
@@ -176,15 +173,11 @@ export const updateVariantStock = async (
     });
   });
 
-  // 👈 También bumpeamos la versión al cambiar stock manualmente o por venta
   await bumpCatalogVersion();
 };
 
-// ─── 5. PAGINACIÓN Y FETCH ALL (Filtrando borrados) ───
-const buildPageQuery = (
-  pageSize: number,
-  lastDoc: QueryDocumentSnapshot<DocumentData> | null
-) => {
+// ─── 5. PAGINACIÓN ───
+const buildPageQuery = (pageSize: number, lastDoc: QueryDocumentSnapshot<DocumentData> | null) => {
   const col = collection(db, PRODUCTS_COLLECTION);
   return lastDoc
     ? query(col, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(pageSize))
@@ -200,7 +193,7 @@ export const fetchProductsPage = async (
 
   const processDocs = (docs: QueryDocumentSnapshot<DocumentData>[]) => {
     return docs
-      .filter((d) => !d.data().deleted) // 👈 Ignoramos los borrados
+      .filter((d) => !d.data().deleted)
       .map((d) => normalizeProduct({ id: d.id, ...d.data() } as Product));
   };
 
@@ -215,9 +208,7 @@ export const fetchProductsPage = async (
           fromCache: true,
         };
       }
-    } catch {
-      /* cache miss */
-    }
+    } catch { }
   }
 
   try {

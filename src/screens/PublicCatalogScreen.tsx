@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions, ActivityIndicator } from 'react-native';
-import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn } from 'lucide-react-native';
+import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn, RefreshCw } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { fetchAllProducts, getCatalogVersion, subscribeToCatalogVersion, fetchProductsDelta } from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
@@ -271,7 +271,6 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
 
-   // Lógica de fusión (Delta Sync)
    const mergeProducts = useCallback((cached: Product[], updated: Product[], deletedIds: string[]) => {
       const map = new Map(cached.map(p => [p.id, p]));
       deletedIds.forEach(id => map.delete(id));
@@ -288,7 +287,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       });
    }, []);
 
-   // Efecto 1: Carga inicial inteligente
+   // Efecto 1: Carga inicial
    useEffect(() => {
       let cancelled = false;
       (async () => {
@@ -297,28 +296,28 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             const localVersion = Number(localStorage.getItem(LS_CATALOG_VERSION) || 0);
             const cachedStr = localStorage.getItem(LS_CACHED_PRODUCTS);
 
-            if (serverVersion > localVersion && localVersion > 0 && cachedStr) {
-               // 🟢 TENEMOS CACHÉ Y HAY CAMBIOS: Usamos Delta Sync
-               const cachedProducts: Product[] = JSON.parse(cachedStr);
-               const { updated, deletedIds } = await fetchProductsDelta(localVersion);
+            if (serverVersion > localVersion || !cachedStr) {
+               let finalProducts: Product[] = [];
 
-               const newProducts = mergeProducts(cachedProducts, updated, deletedIds);
-
-               if (!cancelled) {
-                  setProducts(newProducts);
-                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(newProducts));
-                  localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
+               if (localVersion > 0 && cachedStr) {
+                  try {
+                     const cachedProducts: Product[] = JSON.parse(cachedStr);
+                     const { updated, deletedIds } = await fetchProductsDelta(localVersion);
+                     finalProducts = mergeProducts(cachedProducts, updated, deletedIds);
+                  } catch (err) {
+                     console.warn('Delta falló, forzando recarga total:', err);
+                     finalProducts = await fetchAllProducts({ fromServer: true });
+                  }
+               } else {
+                  finalProducts = await fetchAllProducts({ fromServer: true });
                }
-            } else if (serverVersion > localVersion || !cachedStr) {
-               // 🔴 CACHÉ VACÍA O DESACTUALIZADA: Carga completa (solo pasa 1 vez)
-               const data = await fetchAllProducts({ fromServer: true });
+
                if (!cancelled) {
-                  setProducts(data);
-                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
+                  setProducts(finalProducts);
+                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(finalProducts));
                   localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
                }
             } else if (!cancelled) {
-               // 🟡 TODO AL DÍA: Usar caché
                setProducts(JSON.parse(cachedStr));
             }
          } catch (e) {
@@ -332,33 +331,82 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       return () => { cancelled = true; };
    }, [mergeProducts]);
 
-   // Efecto 2: Actualización en vivo (Delta)
+   // Efecto 2: Escucha en vivo
    useEffect(() => {
       let lastKnownVersion = Number(localStorage.getItem(LS_CATALOG_VERSION) || 0);
 
       const unsub = subscribeToCatalogVersion(async (newVersion) => {
          if (newVersion > lastKnownVersion) {
+            const localVersion = lastKnownVersion; // Guardamos la versión anterior real
             lastKnownVersion = newVersion;
+
             const cachedStr = localStorage.getItem(LS_CACHED_PRODUCTS);
             const cachedProducts: Product[] = cachedStr ? JSON.parse(cachedStr) : [];
 
             if (cachedProducts.length > 0) {
-               const { updated, deletedIds } = await fetchProductsDelta(newVersion - 1); // -1 por seguridad de ms
-               const newProducts = mergeProducts(cachedProducts, updated, deletedIds);
-
-               setProducts(newProducts);
-               localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(newProducts));
-               localStorage.setItem(LS_CATALOG_VERSION, String(newVersion));
-            } else {
-               const data = await fetchAllProducts({ fromServer: true });
-               setProducts(data);
-               localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
-               localStorage.setItem(LS_CATALOG_VERSION, String(newVersion));
+               try {
+                  const { updated, deletedIds } = await fetchProductsDelta(localVersion);
+                  const newProducts = mergeProducts(cachedProducts, updated, deletedIds);
+                  setProducts(newProducts);
+                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(newProducts));
+                  localStorage.setItem(LS_CATALOG_VERSION, String(newVersion));
+               } catch (err) {
+                  console.warn('Error en Delta Sync, forzando recarga completa', err);
+                  const data = await fetchAllProducts({ fromServer: true });
+                  setProducts(data);
+                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
+                  localStorage.setItem(LS_CATALOG_VERSION, String(newVersion));
+               }
             }
          }
       });
       return () => unsub();
    }, [mergeProducts]);
+
+   // Efecto 3: Red de seguridad (Polling cada 3 min o al volver a la pestaña)
+   useEffect(() => {
+      const checkVersionOnFocus = async () => {
+         if (document.visibilityState === 'visible') {
+            try {
+               const serverVersion = await getCatalogVersion(true);
+               const localVersion = Number(localStorage.getItem(LS_CATALOG_VERSION) || 0);
+
+               if (serverVersion > localVersion) {
+                  console.log('🔄 Actualización detectada al volver a la pestaña...');
+                  const data = await fetchAllProducts({ fromServer: true });
+                  setProducts(data);
+                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
+                  localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
+               }
+            } catch (e) {
+               console.warn('Error verificando versión:', e);
+            }
+         }
+      };
+
+      document.addEventListener('visibilitychange', checkVersionOnFocus);
+      const interval = setInterval(checkVersionOnFocus, 3 * 60 * 1000); // 3 minutos
+
+      return () => {
+         document.removeEventListener('visibilitychange', checkVersionOnFocus);
+         clearInterval(interval);
+      };
+   }, []);
+
+   const forceRefresh = async () => {
+      setIsLoadingProducts(true);
+      try {
+         const serverVersion = await getCatalogVersion(true);
+         const data = await fetchAllProducts({ fromServer: true });
+         setProducts(data);
+         localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
+         localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
+      } catch (e) {
+         console.error(e);
+      } finally {
+         setIsLoadingProducts(false);
+      }
+   };
 
    const { categories, brands, colors, sizes } = useMemo(() => {
       const rawCategories: string[] = Array.from(
@@ -946,6 +994,13 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                </View>
 
                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Pressable
+                     style={({ pressed }) => [styles.cartBarBtn, pressed && styles.pressed]}
+                     onPress={forceRefresh}
+                  >
+                     <RefreshCw size={18} color="#FFFFFF" />
+                  </Pressable>
+
                   <Pressable
                      style={({ pressed }) => [styles.cartBarBtn, pressed && styles.pressed]}
                      onPress={() => setIsCartModalOpen(true)}

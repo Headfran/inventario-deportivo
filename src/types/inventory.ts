@@ -41,6 +41,7 @@ export interface Product {
   brand: string;
   category: ProductCategory;
   price: number;
+  deleted: boolean;
   wholesalePrice?: number;
   bolivarPrice?: number;
   bolivarWholesalePrice?: number;
