@@ -80,10 +80,19 @@ export const createSale = async (
       prod.variants = variants;
     }
 
+    // 👇 ACTUALIZACIÓN DE STOCK CON FECHA
     productIds.forEach((id) => {
       const updatedProd = productMap[id];
-      transaction.update(doc(db, 'products', id), { variants: updatedProd.variants });
+      transaction.update(doc(db, 'products', id), {
+        variants: updatedProd.variants,
+        updatedAt: Date.now() // 👈 Vital para que el Delta Sync lo detecte
+      });
     });
+
+    // 👇 AVISO AL CATÁLOGO PÚBLICO
+    // Usamos el mismo ID de documento que en productService
+    const metaRef = doc(db, 'settings', 'catalog_meta');
+    transaction.set(metaRef, { lastUpdate: Date.now() }, { merge: true }); // 👈 Avisa que hay versión nueva
 
     const newSaleRef = doc(collection(db, 'sales'));
     const newSaleData = sanitizeForFirestore({
