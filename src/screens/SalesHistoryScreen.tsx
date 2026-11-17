@@ -9,6 +9,7 @@ import {
    Modal,
    FlatList,
    useWindowDimensions,
+   Platform,
 } from 'react-native';
 import {
    Search,
@@ -86,7 +87,7 @@ const FilterChip = ({
    onPress: () => void;
 }) => (
    <P style={[styles.chip, isActive && styles.chipActive]} onPress={onPress}>
-      <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{label}</Text>
+      <Text style={[styles.chipText, isActive && styles.chipTextActive]} numberOfLines={1}>{label}</Text>
    </P>
 );
 
@@ -345,25 +346,25 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                      <Receipt size={22} color={T.onBar} />
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
-                     <Text style={[styles.headerTitle, mobile && styles.headerTitleMobile]}>
+                     <Text style={[styles.headerTitle, mobile && styles.headerTitleMobile]} numberOfLines={1}>
                         Historial de Ventas
                      </Text>
-                     <Text style={styles.headerSubtitle}>Monitor de ingresos y recibos</Text>
+                     <Text style={styles.headerSubtitle} numberOfLines={1}>Monitor de ingresos y recibos</Text>
                   </View>
                </View>
 
                <View style={styles.metricsContainer}>
                   <View style={styles.metricBox}>
-                     <Text style={styles.metricLabel}>Ingresos · {activeSalesCount}</Text>
-                     <Text style={styles.metricValue}>${safeFixed(totalRevenue)}</Text>
+                     <Text style={styles.metricLabel} numberOfLines={1}>Ingresos · {activeSalesCount}</Text>
+                     <Text style={styles.metricValue} numberOfLines={1}>${safeFixed(totalRevenue)}</Text>
                   </View>
                   {isOwner && totalProfit.total !== 0 && (
                      <View style={[styles.metricBox, styles.metricBoxProfit]}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                            <TrendingUp size={10} color="#A7F3D0" />
-                           <Text style={styles.metricLabel}>Ganancia</Text>
+                           <Text style={styles.metricLabel} numberOfLines={1}>Ganancia</Text>
                         </View>
-                        <Text style={[styles.metricValue, { color: '#A7F3D0' }]}>
+                        <Text style={[styles.metricValue, { color: '#A7F3D0' }]} numberOfLines={1}>
                            ${safeFixed(totalProfit.total)}
                            {!totalProfit.allDetermined && <Text style={{ fontSize: 12 }}>*</Text>}
                         </Text>
@@ -449,7 +450,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                         style={[styles.chip, selectedDateFilter === 'custom' && styles.chipActive]}
                         onPress={() => setShowDateRangeModal(true)}
                      >
-                        <Text style={[styles.chipText, selectedDateFilter === 'custom' && styles.chipTextActive]}>
+                        <Text style={[styles.chipText, selectedDateFilter === 'custom' && styles.chipTextActive]} numberOfLines={1}>
                            Rango
                            {selectedDateFilter === 'custom' && customDateRange
                               ? ` (${formatDateShort(customDateRange.start)})`
@@ -464,7 +465,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                      <View style={styles.filterGroup}>
                         <View style={styles.filterIconLabel}>
                            <DollarSign size={14} color={T.inkSoft} />
-                           <Text style={styles.filterRowTitle}>Pago</Text>
+                           <Text style={styles.filterRowTitle} numberOfLines={1}>Pago</Text>
                         </View>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
                            <FilterChip label="Todos" isActive={selectedPaymentMethod === 'all'} onPress={() => setSelectedPaymentMethod('all')} />
@@ -480,7 +481,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                      <View style={styles.filterGroup}>
                         <View style={styles.filterIconLabel}>
                            <FileText size={14} color={T.inkSoft} />
-                           <Text style={styles.filterRowTitle}>Estado</Text>
+                           <Text style={styles.filterRowTitle} numberOfLines={1}>Estado</Text>
                         </View>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
                            <FilterChip label="Completadas" isActive={selectedStatus === 'completed'} onPress={() => setSelectedStatus('completed')} />
@@ -522,33 +523,33 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                               <Text style={[styles.receiptNum, isVoided && styles.textMuted]} numberOfLines={1}>
                                  #{item.receiptNumber}
                               </Text>
-                              <Text style={styles.metaText}>
+                              <Text style={styles.metaText} numberOfLines={1}>
                                  {formatDateTime(item.createdAt, 'short')}
                               </Text>
                            </View>
                         </View>
 
                         <View style={{ alignItems: 'flex-end' }}>
-                           <Text style={[styles.saleTotal, isVoided && styles.textMuted]}>
+                           <Text style={[styles.saleTotal, isVoided && styles.textMuted]} numberOfLines={1}>
                               ${safeFixed(item.total)}
                            </Text>
                            {isOwner && !isVoided && profitMap.get(item.id) && (
-                              <Text style={styles.saleProfitSmall}>
+                              <Text style={styles.saleProfitSmall} numberOfLines={1}>
                                  Ganancia: ${safeFixed(profitMap.get(item.id)!.profit)}
                                  {!profitMap.get(item.id)!.determined && '*'}
                               </Text>
                            )}
                            {isVoided ? (
                               <View style={styles.statusPillVoided}>
-                                 <Text style={styles.statusPillVoidedText}>ANULADA</Text>
+                                 <Text style={styles.statusPillVoidedText} numberOfLines={1}>ANULADA</Text>
                               </View>
                            ) : item.editHistory && item.editHistory.length > 0 ? (
                               <View style={styles.statusPillEdited}>
-                                 <Text style={styles.statusPillEditedText}>EDITADA</Text>
+                                 <Text style={styles.statusPillEditedText} numberOfLines={1}>EDITADA</Text>
                               </View>
                            ) : (
                               <View style={styles.statusPillCompleted}>
-                                 <Text style={styles.statusPillCompletedText}>COMPLETADA</Text>
+                                 <Text style={styles.statusPillCompletedText} numberOfLines={1}>COMPLETADA</Text>
                               </View>
                            )}
                         </View>
@@ -573,11 +574,11 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                         {hasNotes && (
                            <View style={styles.notesBadge}>
                               <FileText size={10} color="#B45309" />
-                              <Text style={styles.notesBadgeText}>NOTAS</Text>
+                              <Text style={styles.notesBadgeText} numberOfLines={1}>NOTAS</Text>
                            </View>
                         )}
                         <View style={styles.paymentTag}>
-                           <Text style={styles.paymentTagText}>
+                           <Text style={styles.paymentTagText} numberOfLines={1}>
                               {(item.paymentMethod || '').replace('_', ' ').toUpperCase()}
                            </Text>
                         </View>
@@ -613,7 +614,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                <View style={styles.modalOverlay}>
                   <View style={[styles.modalCard, isTabletOrPC && { maxWidth: 540 }]}>
                      <View style={styles.modalHeader}>
-                        <Text style={styles.modalTitle}>Detalle del Comprobante</Text>
+                        <Text style={styles.modalTitle} numberOfLines={1}>Detalle del Comprobante</Text>
                         <P onPress={() => setSelectedSale(null)}>
                            <X size={20} color={T.onBar} />
                         </P>
@@ -631,9 +632,9 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
 
                         <View style={styles.ticketBox}>
                            <View style={styles.ticketHeader}>
-                              <Text style={styles.ticketMainTitle}>{STORE_NAME.toUpperCase()}</Text>
-                              <Text style={styles.ticketNumber}>#{selectedSale.receiptNumber}</Text>
-                              <Text style={styles.ticketMeta}>
+                              <Text style={styles.ticketMainTitle} numberOfLines={1}>{STORE_NAME.toUpperCase()}</Text>
+                              <Text style={styles.ticketNumber} numberOfLines={1}>#{selectedSale.receiptNumber}</Text>
+                              <Text style={styles.ticketMeta} numberOfLines={1}>
                                  {formatDateTime(selectedSale.createdAt, 'long')}
                               </Text>
                            </View>
@@ -643,14 +644,14 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                                  <View style={styles.divider} />
                                  {selectedSale.sellerName && (
                                     <View style={styles.ticketRow}>
-                                       <Text style={styles.ticketLabel}>Vendedor:</Text>
-                                       <Text style={styles.ticketVal}>{selectedSale.sellerName}</Text>
+                                       <Text style={styles.ticketLabel} numberOfLines={1}>Vendedor:</Text>
+                                       <Text style={styles.ticketVal} numberOfLines={1}>{selectedSale.sellerName}</Text>
                                     </View>
                                  )}
                                  {selectedSale.customerName && (
                                     <View style={styles.ticketRow}>
-                                       <Text style={styles.ticketLabel}>Cliente:</Text>
-                                       <Text style={styles.ticketVal}>{selectedSale.customerName}</Text>
+                                       <Text style={styles.ticketLabel} numberOfLines={1}>Cliente:</Text>
+                                       <Text style={styles.ticketVal} numberOfLines={1}>{selectedSale.customerName}</Text>
                                     </View>
                                  )}
                               </>
@@ -665,27 +666,27 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
 
                            <View style={styles.divider} />
 
-                           <Text style={styles.itemsTitle}>
+                           <Text style={styles.itemsTitle} numberOfLines={1}>
                               Detalle de Artículos ({selectedSale.items.length}):
                            </Text>
 
                            {(selectedSale.items || []).map((item, idx) => (
                               <View key={idx} style={styles.itemRow}>
-                                 <View style={{ flex: 1 }}>
-                                    <Text style={styles.itemName}>
+                                 <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Text style={styles.itemName} numberOfLines={2}>
                                        {item.brand} - {item.name}
                                     </Text>
-                                    <Text style={styles.itemSpec}>
+                                    <Text style={styles.itemSpec} numberOfLines={1}>
                                        Ref: {item.productCode || item.productId}
                                     </Text>
-                                    <Text style={styles.itemSpec}>
+                                    <Text style={styles.itemSpec} numberOfLines={1}>
                                        {item.color} • Talla: {item.size}
                                     </Text>
-                                    <Text style={styles.itemSpec}>
+                                    <Text style={styles.itemSpec} numberOfLines={1}>
                                        {item.quantity} x ${safeFixed(item.unitPrice)}
                                     </Text>
                                  </View>
-                                 <Text style={styles.itemSubtotal}>
+                                 <Text style={styles.itemSubtotal} numberOfLines={1}>
                                     ${safeFixed(item.totalPrice)}
                                  </Text>
                               </View>
@@ -694,27 +695,27 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                            <View style={styles.divider} />
 
                            <View style={styles.ticketRow}>
-                              <Text style={styles.ticketLabel}>Subtotal:</Text>
-                              <Text style={styles.ticketVal}>${safeFixed(selectedSale.subtotal)}</Text>
+                              <Text style={styles.ticketLabel} numberOfLines={1}>Subtotal:</Text>
+                              <Text style={styles.ticketVal} numberOfLines={1}>${safeFixed(selectedSale.subtotal)}</Text>
                            </View>
                            {Number(selectedSale.discount) > 0 && (
                               <View style={styles.ticketRow}>
-                                 <Text style={styles.ticketLabel}>Descuento:</Text>
-                                 <Text style={[styles.ticketVal, { color: '#DC2626' }]}>
+                                 <Text style={styles.ticketLabel} numberOfLines={1}>Descuento:</Text>
+                                 <Text style={[styles.ticketVal, { color: '#DC2626' }]} numberOfLines={1}>
                                     -${safeFixed(selectedSale.discount)}
                                  </Text>
                               </View>
                            )}
                            <View style={styles.ticketRow}>
-                              <Text style={styles.ticketLabel}>Método de Pago:</Text>
-                              <Text style={styles.ticketVal}>
+                              <Text style={styles.ticketLabel} numberOfLines={1}>Método de Pago:</Text>
+                              <Text style={styles.ticketVal} numberOfLines={1}>
                                  {(selectedSale.paymentMethod || '').replace('_', ' ').toUpperCase()}
                               </Text>
                            </View>
 
                            <View style={styles.totalRow}>
-                              <Text style={styles.totalLabel}>TOTAL:</Text>
-                              <Text style={styles.totalValue}>
+                              <Text style={styles.totalLabel} numberOfLines={1}>TOTAL:</Text>
+                              <Text style={styles.totalValue} numberOfLines={1}>
                                  ${safeFixed(selectedSale.total)}
                               </Text>
                            </View>
@@ -722,20 +723,20 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
 
                         {selectedSale.editHistory && selectedSale.editHistory.length > 0 && (
                            <View style={styles.editHistoryBox}>
-                              <Text style={styles.editHistoryTitle}>Historial de Ediciones ({selectedSale.editHistory.length})</Text>
+                              <Text style={styles.editHistoryTitle} numberOfLines={1}>Historial de Ediciones ({selectedSale.editHistory.length})</Text>
                               {selectedSale.editHistory.map((entry, idx) => (
                                  <View key={idx} style={styles.editHistoryRow}>
                                     <View style={{ flex: 1, minWidth: 0 }}>
-                                       <Text style={styles.editHistoryReason}>{entry.reason || 'Sin motivo registrado'}</Text>
-                                       <Text style={styles.editHistoryMeta}>
+                                       <Text style={styles.editHistoryReason} numberOfLines={1}>{entry.reason || 'Sin motivo registrado'}</Text>
+                                       <Text style={styles.editHistoryMeta} numberOfLines={1}>
                                           {formatDateTime(entry.editedAt, 'short')} · ${entry.previousTotal.toFixed(2)} → ${entry.newTotal.toFixed(2)}
                                        </Text>
                                     </View>
                                     {isOwner && entry.refundAmount > 0 && (
-                                       <Text style={styles.editHistoryRefund}>-${entry.refundAmount.toFixed(2)}</Text>
+                                       <Text style={styles.editHistoryRefund} numberOfLines={1}>-${entry.refundAmount.toFixed(2)}</Text>
                                     )}
                                     {isOwner && entry.chargeAmount > 0 && (
-                                       <Text style={styles.editHistoryCharge}>+${entry.chargeAmount.toFixed(2)}</Text>
+                                       <Text style={styles.editHistoryCharge} numberOfLines={1}>+${entry.chargeAmount.toFixed(2)}</Text>
                                     )}
                                  </View>
                               ))}
@@ -746,21 +747,21 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                      <View style={styles.modalFooter}>
                         <P style={styles.actionBtnSecondary} onPress={() => handlePrintReceipt(selectedSale)}>
                            <Printer size={16} color={T.ink} />
-                           <Text style={styles.actionBtnSecondaryText}>Imprimir</Text>
+                           <Text style={styles.actionBtnSecondaryText} numberOfLines={1}>Imprimir</Text>
                         </P>
                         <P style={styles.actionBtnPrimary} onPress={() => handleShareWhatsApp(selectedSale)}>
                            <MessageCircle size={16} color={T.onSolid} />
-                           <Text style={styles.actionBtnPrimaryText}>WhatsApp</Text>
+                           <Text style={styles.actionBtnPrimaryText} numberOfLines={1}>WhatsApp</Text>
                         </P>
                         {selectedSale.status !== 'voided' && (
                            <>
                               <P style={styles.actionBtnEdit} onPress={() => setEditingSale(selectedSale)}>
                                  <Pencil size={16} color={T.ink} />
-                                 <Text style={styles.actionBtnEditText}>Editar</Text>
+                                 <Text style={styles.actionBtnEditText} numberOfLines={1}>Editar</Text>
                               </P>
                               <P style={styles.actionBtnDanger} onPress={() => setIsVoidModalOpen(true)}>
                                  <XCircle size={16} color="#DC2626" />
-                                 <Text style={styles.actionBtnDangerText}>Anular</Text>
+                                 <Text style={styles.actionBtnDangerText} numberOfLines={1}>Anular</Text>
                               </P>
                            </>
                         )}
@@ -782,9 +783,9 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
             <View style={styles.modalOverlay}>
                <View style={styles.voidModalCard}>
                   <View style={styles.voidModalHeader}>
-                     <View style={{ flex: 1 }}>
-                        <Text style={styles.voidModalTitle}>Confirmar Anulación</Text>
-                        <Text style={styles.voidModalSubtitle}>
+                     <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.voidModalTitle} numberOfLines={1}>Confirmar Anulación</Text>
+                        <Text style={styles.voidModalSubtitle} numberOfLines={1}>
                            Esta acción restaura el stock al inventario
                         </Text>
                      </View>
@@ -818,14 +819,14 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                            onPress={() => setIsVoidModalOpen(false)}
                            disabled={isProcessing}
                         >
-                           <Text style={styles.cancelVoidText}>Cancelar</Text>
+                           <Text style={styles.cancelVoidText} numberOfLines={1}>Cancelar</Text>
                         </P>
                         <P
                            style={[styles.confirmVoidBtn, isProcessing && { opacity: 0.7 }]}
                            onPress={handleConfirmVoid}
                            disabled={isProcessing}
                         >
-                           <Text style={styles.confirmVoidText}>
+                           <Text style={styles.confirmVoidText} numberOfLines={1}>
                               {isProcessing ? 'Anulando...' : 'Sí, Anular'}
                            </Text>
                         </P>
@@ -867,6 +868,7 @@ const styles = StyleSheet.create({
       backgroundColor: 'rgba(255,255,255,0.08)',
       alignItems: 'center',
       justifyContent: 'center',
+      flexShrink: 0,
    },
    headerTitle: {
       ...display,
@@ -942,6 +944,10 @@ const styles = StyleSheet.create({
       paddingHorizontal: 0,
       margin: 0,
       textAlignVertical: 'center',
+      borderWidth: 0,
+      borderColor: 'transparent',
+      backgroundColor: 'transparent',
+      ...(Platform.OS === 'web' ? { outlineStyle: 'none' as any } : {}),
    },
    filterToggleBtn: {
       width: 46,
@@ -952,6 +958,7 @@ const styles = StyleSheet.create({
       borderColor: T.line,
       justifyContent: 'center',
       alignItems: 'center',
+      flexShrink: 0,
    },
    filterToggleBtnActive: { backgroundColor: T.solid, borderColor: T.solid },
 
@@ -966,7 +973,7 @@ const styles = StyleSheet.create({
       gap: 10,
    },
    filterGroup: { flexDirection: 'row', alignItems: 'center' },
-   filterIconLabel: { width: 68, flexDirection: 'row', alignItems: 'center', gap: 4 },
+   filterIconLabel: { width: 68, flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
    filterRowTitle: {
       fontSize: 11,
       fontWeight: '800',
@@ -1253,41 +1260,48 @@ const styles = StyleSheet.create({
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
-      padding: 16,
+      padding: 12,
       backgroundColor: T.surface,
       borderTopWidth: 1,
       borderTopColor: T.line,
    },
    actionBtnSecondary: {
-      flex: 1,
+      flexGrow: 1,
+      flexBasis: '47%',
       flexDirection: 'row',
       justifyContent: 'center',
       alignItems: 'center',
       gap: 6,
-      height: 44,
+      height: 42,
       borderRadius: 10,
       borderWidth: 1,
       borderColor: T.line,
       backgroundColor: T.bg,
+      paddingHorizontal: 8,
    },
    actionBtnSecondaryText: { fontSize: 13, fontWeight: '700', color: T.ink },
    actionBtnPrimary: {
-      flex: 1,
+      flexGrow: 1,
+      flexBasis: '47%',
       flexDirection: 'row',
       justifyContent: 'center',
       alignItems: 'center',
       gap: 6,
-      height: 44,
+      height: 42,
       borderRadius: 10,
       backgroundColor: T.solid,
+      paddingHorizontal: 8,
    },
    actionBtnPrimaryText: { fontSize: 13, fontWeight: '800', color: T.onSolid },
    actionBtnDanger: {
+      flexGrow: 1,
+      flexBasis: '47%',
       flexDirection: 'row',
+      justifyContent: 'center',
       alignItems: 'center',
       gap: 6,
-      height: 44,
-      paddingHorizontal: 14,
+      height: 42,
+      paddingHorizontal: 8,
       borderRadius: 10,
       borderWidth: 1,
       borderColor: '#FCA5A5',
@@ -1295,11 +1309,14 @@ const styles = StyleSheet.create({
    },
    actionBtnDangerText: { fontSize: 13, fontWeight: '800', color: '#DC2626' },
    actionBtnEdit: {
+      flexGrow: 1,
+      flexBasis: '47%',
       flexDirection: 'row',
+      justifyContent: 'center',
       alignItems: 'center',
       gap: 6,
-      height: 44,
-      paddingHorizontal: 14,
+      height: 42,
+      paddingHorizontal: 8,
       borderRadius: 10,
       borderWidth: 1,
       borderColor: T.ink,
