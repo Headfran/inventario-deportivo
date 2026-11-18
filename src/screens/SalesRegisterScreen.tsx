@@ -102,9 +102,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const [newSplitAmount, setNewSplitAmount] = useState('');
    const [newSplitRef, setNewSplitRef] = useState('');
 
-   // ==========================================
-   // DESCUENTO EXPLÍCITO
-   // ==========================================
    const [discountType, setDiscountType] = useState<DiscountType>('none');
    const [discountValue, setDiscountValue] = useState<string>('');
    const [showDiscountModal, setShowDiscountModal] = useState(false);
@@ -138,7 +135,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }
    }, [sellers, selectedSeller]);
 
-   // Persistir tasas
    useEffect(() => {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
          window.localStorage.setItem(RATE_STORAGE_KEYS.eur, String(eurToBsRate));
@@ -146,7 +142,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }
    }, [eurToBsRate, usdToBsRate]);
 
-   // Limpiar descuento si el carrito se vacía
    useEffect(() => {
       if (cart.length === 0 && discountType !== 'none') {
          setDiscountType('none');
@@ -180,8 +175,21 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       [filteredProducts, startIndex]
    );
 
+   // 👈 CAMBIO 1: cartCount ahora es el número real de ítems (para los badges visuales)
    const cartCount = cart.reduce((n, i) => n + i.quantity, 0);
-   const isWholesale = cartCount >= WHOLESALE_THRESHOLD;
+
+   // 👈 CAMBIO 2: Calculamos las "piezas equivalentes" para el modo mayor
+   const wholesalePiecesCount = useMemo(() => {
+      return cart.reduce((acc, item) => {
+         const prod = products.find(p => (p.id || p.code) === item.productId);
+         // Si el producto es un conjunto, multiplicamos por 2
+         const multiplier = prod?.category === 'Conjuntos' ? 2 : 1;
+         return acc + (item.quantity * multiplier);
+      }, 0);
+   }, [cart, products]);
+
+   // 👈 CAMBIO 3: Evaluamos el umbral con las piezas equivalentes
+   const isWholesale = wholesalePiecesCount >= WHOLESALE_THRESHOLD;
 
    // ==========================================
    // PRECIOS CALCULADOS POR ITEM
@@ -231,9 +239,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       return checkMultiComboEligibility(cart, products, combos, appliedCombos);
    }, [appliedCombos, cart, products, combos]);
 
-   // ==========================================
-   // TOTALES: items fuera de combos + combos
-   // ==========================================
    const consumedByCombos = comboInfo.consumedQuantities || {};
 
    const itemsOutsideCombosUSD = useMemo(() => {
@@ -254,13 +259,9 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }, 0);
    }, [pricedCart, consumedByCombos]);
 
-   // Subtotal ANTES del descuento explícito (ya con combos aplicados)
    const subtotalBeforeDiscountUSD = itemsOutsideCombosUSD + comboInfo.totalCombosUSD;
    const subtotalBeforeDiscountBSRef = itemsOutsideCombosBSRef + comboInfo.totalCombosBSRef;
 
-   // ==========================================
-   // DESCUENTO EXPLÍCITO (mode-aware)
-   // ==========================================
    const explicitDiscountUSD = useMemo(() => {
       if (discountType === 'none') return 0;
       const val = parseFloat(discountValue);
@@ -270,7 +271,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          const pct = Math.min(100, val);
          return (subtotalBeforeDiscountUSD * pct) / 100;
       }
-      // fixed en USD
       return Math.min(subtotalBeforeDiscountUSD, val);
    }, [discountType, discountValue, subtotalBeforeDiscountUSD]);
 
@@ -285,24 +285,17 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          const pct = Math.min(100, val);
          return (subtotalBSBefore * pct) / 100;
       }
-      // fixed en USD → convertir a Bs
       return Math.min(subtotalBSBefore, val * usdToBsRate);
    }, [discountType, discountValue, subtotalBeforeDiscountBSRef, eurToBsRate, usdToBsRate]);
 
-   // Totales finales (después de combos Y descuento explícito)
    const totalUSD = Math.max(0, subtotalBeforeDiscountUSD - explicitDiscountUSD);
    const totalBSExpected = Math.max(
       0,
       subtotalBeforeDiscountBSRef * eurToBsRate - explicitDiscountBS
    );
    const totalBSRef = eurToBsRate > 0 ? totalBSExpected / eurToBsRate : 0;
-
-   // Equivalente USD del monto Bs realmente cobrado
    const totalBSExpectedUSDEquiv = usdToBsRate > 0 ? totalBSExpected / usdToBsRate : 0;
 
-   // ==========================================
-   // SUBTOTAL "DE LISTA" SEGÚN EL MODO DE COBRO
-   // ==========================================
    const subtotalAllItems = useMemo(() => {
       if (isFullBsPayment) {
          if (usdToBsRate <= 0) return 0;
@@ -314,10 +307,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       return pricedCart.reduce((s, i) => s + i.totalPrice, 0);
    }, [pricedCart, isFullBsPayment, eurToBsRate, usdToBsRate]);
 
-   // Total cobrado real expresado en USD (incluye combos + descuento)
    const finalTotalUSD = isFullBsPayment ? totalBSExpectedUSDEquiv : totalUSD;
-
-   // Descuento TOTAL (combos + explícito, nunca negativo)
    const discountAmount = Math.max(0, subtotalAllItems - finalTotalUSD);
 
    useEffect(() => {
@@ -326,7 +316,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       if (valid.length !== appliedCombos.length) setAppliedCombos(valid);
    }, [combos, appliedCombos]);
 
-   // Regenerar el split de Bs cuando el toggle está activo
    useEffect(() => {
       if (isFullBsPayment && cart.length === 0) {
          setIsFullBsPayment(false);
@@ -346,9 +335,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       // eslint-disable-next-line react-hooks/exhaustive-deps
    }, [isFullBsPayment, totalBSExpected, cart.length]);
 
-   // ==========================================
-   // PAGOS
-   // ==========================================
    const paidUSD = paymentSplits.filter((s) => s.currency === 'USD').reduce((s, p) => s + p.amount, 0);
    const paidBS = paymentSplits.filter((s) => s.currency === 'BS').reduce((s, p) => s + p.amount, 0);
    const paidInUSDEquiv = paidUSD + (usdToBsRate > 0 ? paidBS / usdToBsRate : 0);
@@ -362,9 +348,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const isCovered = isFullBsPayment ? bsShortfall <= 1 : remainingInUSDEquiv <= 0.01;
    const isFullyCovered = isCovered;
 
-   // ==========================================
-   // Handlers de producto y carrito
-   // ==========================================
    const handleSelectProduct = (product: Product) => {
       setSelectedProduct(product);
       setSelectedColorIndex(0);
@@ -457,9 +440,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       setNotes('');
    };
 
-   // ==========================================
-   // Descuento explícito — handlers
-   // ==========================================
    const openDiscountModal = () => {
       if (cart.length === 0) {
          showAlert('Carrito vacío', 'Agrega al menos una prenda antes de aplicar un descuento.');
@@ -487,9 +467,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       setShowDiscountModal(false);
    };
 
-   // ==========================================
-   // Tasas
-   // ==========================================
    const makeRateHandler = (
       setter: (n: number) => void,
       inputSetter: (s: string) => void,
@@ -503,9 +480,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const handleEurRateChange = makeRateHandler(setEurToBsRate, setEurRateInput);
    const handleUsdRateChange = makeRateHandler(setUsdToBsRate, setUsdRateInput);
 
-   // ==========================================
-   // Splits
-   // ==========================================
    const openSplitModal = () => {
       if (isFullBsPayment) {
          showAlert(
@@ -578,9 +552,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }
    };
 
-   // ==========================================
-   // Vendedores
-   // ==========================================
    const openCreateSellerModal = () => {
       setSellerModalMode('create');
       setEditingSeller(null);
@@ -645,9 +616,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       );
    };
 
-   // ==========================================
-   // Completar venta
-   // ==========================================
    const handleCompleteSale = async () => {
       if (cart.length === 0) {
          showAlert('Carrito vacío', 'Agrega al menos una prenda antes de registrar la venta.');
@@ -662,7 +630,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          return;
       }
 
-      // Modo Pago Total en Bs
       if (isFullBsPayment) {
          if (bsOverpay > 1) {
             showConfirm(
@@ -684,7 +651,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          return;
       }
 
-      // Modo normal / mixto
       if (overpaidUSD > 0.01) {
          showConfirm(
             'Cobro mayor al total',
@@ -717,9 +683,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             paymentSplits.length > 1 ? 'mixto' :
                'efectivo';
 
-      // ============================================================
-      // ITEMS: precios efectivos según modo de cobro
-      // ============================================================
       const itemsPayload = pricedCart.map((item) => {
          const product = products.find((p) => (p.id || p.code) === item.productId);
 
@@ -745,16 +708,13 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          };
       });
 
-      // ============================================================
-      // Payload: subtotal / discount / total respetan el modo de cobro
-      // ============================================================
       const saleDataToSave: any = {
          receiptNumber,
          sellerId: selectedSeller.id,
          sellerName: selectedSeller.name,
          items: itemsPayload,
          subtotal: subtotalAllItems,
-         discount: discountAmount,          // total (combos + explícito)
+         discount: discountAmount,
          total: finalTotalUSD,
          totalCatalogUSD: subtotalBeforeDiscountUSD,
          paymentMethod: primaryMethod,
@@ -766,7 +726,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          isWholesale,
          isFullBsPayment,
       };
-      // Descuento explícito (para la factura y auditoría)
       if (discountType !== 'none' && explicitDiscountUSD > 0) {
          saleDataToSave.explicitDiscountType = discountType;
          saleDataToSave.explicitDiscountValue = parseFloat(discountValue) || 0;
@@ -859,9 +818,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }
    };
 
-   // ==========================================
-   // Render
-   // ==========================================
    const renderProductItem = ({ item }: { item: Product }) => {
       const retail = Number(item.price || 0);
       const wholesale = Number((item as any).wholesalePrice || 0);
@@ -902,7 +858,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
 
    const checkout = (
       <View style={styles.checkoutSection}>
-         {/* VENDEDOR */}
          <View style={styles.sectionRow}>
             <Text style={styles.sectionMiniLabel}>Vendedor</Text>
             {selectedSeller && (
@@ -939,7 +894,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </P>
          </ScrollView>
 
-         {/* TASAS */}
          <P style={styles.ratesChip} onPress={() => setShowRatesModal(true)}>
             <Coins size={13} color="#4338CA" />
             <Text style={styles.ratesChipText}>
@@ -948,7 +902,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             <Settings size={12} color="#4338CA" />
          </P>
 
-         {/* TOGGLE PAGO TOTAL EN BS */}
          <P
             style={[styles.fullBsToggle, isFullBsPayment && styles.fullBsToggleActive]}
             onPress={toggleFullBs}
@@ -967,7 +920,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             {isFullBsPayment && <Check size={18} color={T.onSolid} />}
          </P>
 
-         {/* COMBOS APLICADOS */}
          {comboInfo.eligibleCount > 0 && (
             <View style={styles.comboSection}>
                <View style={styles.comboSectionHeader}>
@@ -1018,7 +970,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </View>
          )}
 
-         {/* DESCUENTO EXPLÍCITO */}
          <View style={[styles.sectionRow, { marginTop: 8 }]}>
             <Text style={styles.sectionMiniLabel}>Descuento</Text>
             <View style={{ flexDirection: 'row', gap: 4 }}>
@@ -1068,7 +1019,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </View>
          )}
 
-         {/* PAGOS */}
          <View style={[styles.sectionRow, { marginTop: 8 }]}>
             <Text style={styles.sectionMiniLabel}>Pagos ({paymentSplits.length})</Text>
             {!isFullBsPayment && (
@@ -1113,7 +1063,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </View>
          )}
 
-         {/* ESTADO COBERTURA */}
          {paymentSplits.length > 0 && (
             <View
                style={[
@@ -1172,7 +1121,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </View>
          )}
 
-         {/* CLIENTE Y NOTAS */}
          <P style={styles.accordionHeader} onPress={() => setShowClientSection(!showClientSection)}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                <User size={13} color={T.inkSoft} />
@@ -1270,7 +1218,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                      />
                   </View>
 
-                  {/* CONTENEDOR CON SCROLL PROPIO PARA LA LISTA */}
                   <View style={styles.catalogListWrapper}>
                      <FlatList
                         style={styles.productsScroll}
@@ -1283,7 +1230,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                      />
                   </View>
 
-                  {/* PAGINACIÓN ESTÁTICA SIEMPRE VISIBLE ABAJO */}
                   {totalPages > 1 && (
                      <View style={styles.paginationBar}>
                         <P
@@ -1368,7 +1314,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
 
             {showCart && (
                <View style={[styles.rightPanel, split && styles.rightSplit]}>
-                  {/* HEADER */}
                   <View style={styles.cartHeaderSticky}>
                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
                         <ShoppingBag size={20} color={T.ink} />
@@ -1428,7 +1373,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                      </View>
                   </View>
 
-                  {/* LISTA + CHECKOUT */}
                   <ScrollView
                      style={styles.cartScroll}
                      showsVerticalScrollIndicator={true}
@@ -1446,6 +1390,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                            const isFullyInCombo = consumed > 0 && consumed >= item.quantity;
                            const isPartiallyInCombo = consumed > 0 && consumed < item.quantity;
                            const remainingQty = Math.max(0, item.quantity - consumed);
+                           const isConjunto = products.find((p) => (p.id || p.code) === item.productId)?.category === 'Conjuntos';
 
                            return (
                               <View key={itemKey} style={styles.cartItemRow}>
@@ -1459,6 +1404,11 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                                        <Text style={styles.cartItemPrice}>${item.unitPrice.toFixed(2)} c/u</Text>
                                        {item.bsRefUnit > 0 && (
                                           <Text style={styles.cartItemPriceBS}>· €{item.bsRefUnit.toFixed(2)}</Text>
+                                       )}
+                                       {isConjunto && (
+                                          <View style={styles.wholesaleItemBadge}>
+                                             <Text style={styles.wholesaleItemBadgeText}>2 PZAS</Text>
+                                          </View>
                                        )}
                                        {item.isWholesalePrice && (
                                           <View style={styles.wholesaleItemBadge}>
@@ -1516,13 +1466,14 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                         })
                      )}
 
-                     {cartCount >= WHOLESALE_THRESHOLD && (
+                     {/* 👈 CAMBIO 4: Mostramos el conteo de piezas equivalentes en el banner */}
+                     {isWholesale && (
                         <View style={styles.wholesaleBanner}>
                            <Crown size={14} color="#047857" />
                            <View style={{ flex: 1 }}>
                               <Text style={styles.wholesaleBannerTitle}>Modo Mayor Activo</Text>
                               <Text style={styles.wholesaleBannerSub}>
-                                 {cartCount} unidades · precios mayor aplicados
+                                 {wholesalePiecesCount} piezas (equiv.) · precios mayor aplicados
                               </Text>
                            </View>
                         </View>
@@ -1531,7 +1482,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                      {checkout}
                   </ScrollView>
 
-                  {/* FOOTER */}
                   <View style={styles.cartFooterSticky}>
                      {!isFullBsPayment && totalBSRef > 0 && (
                         <View style={styles.cartFooterBSRow}>
@@ -1564,7 +1514,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             )}
          </View>
 
-         {/* LIGHTBOX IMAGEN */}
          <Modal visible={!!viewerImage} transparent animationType="fade">
             <View style={styles.viewerOverlay}>
                <Pressable style={styles.viewerClose} onPress={() => setViewerImage(null)}>
@@ -1576,7 +1525,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </View>
          </Modal>
 
-         {/* MODAL SPLIT */}
          <Modal visible={showSplitModal} transparent animationType="fade">
             <View style={styles.modalOverlayCenter}>
                <View style={styles.sellerModalCard}>
@@ -1664,7 +1612,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </View>
          </Modal>
 
-         {/* MODAL DESCUENTO */}
          <Modal visible={showDiscountModal} transparent animationType="fade">
             <View style={styles.modalOverlayCenter}>
                <View style={styles.sellerModalCard}>
@@ -1675,7 +1622,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                      </P>
                   </View>
                   <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled">
-                     {/* Tipo de descuento */}
                      <Text style={styles.subLabel}>Tipo:</Text>
                      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16 }}>
                         <P
@@ -1698,7 +1644,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                         </P>
                      </View>
 
-                     {/* Presets */}
                      {discountType === 'percent' && (
                         <>
                            <Text style={styles.subLabel}>Presets:</Text>
@@ -1737,7 +1682,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                         </>
                      )}
 
-                     {/* Valor custom */}
                      <Text style={styles.subLabel}>
                         {discountType === 'percent' ? 'Porcentaje (0-100):' : 'Monto en USD:'}
                      </Text>
@@ -1751,7 +1695,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                         autoFocus
                      />
 
-                     {/* Preview */}
                      {explicitDiscountUSD > 0 && (
                         <View style={[styles.splitConvertPreview, { marginTop: 12 }]}>
                            <Text style={[styles.splitConvertText, { fontWeight: '800', color: '#B45309' }]}>
@@ -1765,7 +1708,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                         </View>
                      )}
 
-                     {/* Acciones */}
                      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
                         <P style={styles.sellerCancelBtn} onPress={() => setShowDiscountModal(false)}>
                            <Text style={styles.sellerCancelText}>Cancelar</Text>
@@ -1786,7 +1728,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </View>
          </Modal>
 
-         {/* MODAL VENDEDOR */}
          <Modal visible={sellerModalOpen} transparent animationType="fade">
             <View style={styles.modalOverlayCenter}>
                <View style={styles.sellerModalCard}>
@@ -1828,7 +1769,6 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </View>
          </Modal>
 
-         {/* MODAL TASAS */}
          <Modal visible={showRatesModal} transparent animationType="fade">
             <View style={styles.modalOverlayCenter}>
                <View style={styles.sellerModalCard}>
@@ -2303,7 +2243,6 @@ const styles = StyleSheet.create({
    cartHeaderComboText: { fontSize: 9, fontWeight: '800', color: '#7C3AED', textTransform: 'uppercase' },
    headerActionBtn: { width: 30, height: 30, borderRadius: 8, borderWidth: 1, borderColor: T.line, backgroundColor: T.surface, alignItems: 'center', justifyContent: 'center' },
 
-   // Sección de combos
    comboSection: {
       backgroundColor: '#F5F3FF',
       borderWidth: 1,
@@ -2362,9 +2301,6 @@ const styles = StyleSheet.create({
    comboPartialBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3, backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FED7AA' },
    comboItemBadgeText: { fontSize: 8, fontWeight: '800', color: '#7C3AED' },
 
-   // ==========================================
-   // DESCUENTO EXPLÍCITO
-   // ==========================================
    cartHeaderDiscountBadge: {
       flexDirection: 'row',
       alignItems: 'center',
