@@ -46,7 +46,7 @@ const LS_CACHED_PRODUCTS = 'jdstore.cachedProducts';
 const BRAND_SLUGS: Record<string, string> = {
    nike: 'nike', adidas: 'adidas', puma: 'puma', underarmour: 'underarmour', ua: 'underarmour', reebok: 'reebok',
    jordan: 'airjordan', newbalance: 'newbalance', nb: 'newbalance', champion: 'champion', fila: 'fila', asics: 'asics',
-   converse: 'converse', vans: 'vans', uniqlo: 'uniqlo', uq: 'uniqlo', on: 'onrunning', onrunning: 'onrunning',
+   converse: 'converse', vans: 'vans', uniqlo: 'uniqlo', uq: 'uniqlo', on: 'oncloud', onrunning: 'onrunning',
    umbro: 'umbro', kappa: 'kappa', lotto: 'lotto', oakley: 'oakley', hummel: 'hummel',
 };
 
@@ -269,7 +269,8 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    const [selectedSize, setSelectedSize] = useState<string>('');
    const [quantity, setQuantity] = useState<number>(1);
 
-   const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
+   // 👈 CAMBIO 1: Categoría inicial en 'Camisas'
+   const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'Camisas', brand: '', color: '', size: '', status: 'all' });
 
    const mergeProducts = useCallback((cached: Product[], updated: Product[], deletedIds: string[]) => {
       const map = new Map(cached.map(p => [p.id, p]));
@@ -447,6 +448,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const activeFiltersCount = (filters.brand ? 1 : 0) + (filters.color ? 1 : 0) + (filters.size ? 1 : 0) + (filters.category !== 'all' ? 1 : 0);
    const handleResetFilters = () => {
+      // 👈 Al resetear, podrías dejarlo en 'Camisas' o en 'all'. Lo dejamos en 'all' para que vean todo.
       setFilters({ query: '', category: 'all', brand: '', color: '', size: '', status: 'all' });
       setCurrentPage(1);
    };
@@ -483,11 +485,20 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       setDetailZoomUri(uri);
    }, []);
 
+   // 👈 CAMBIO 2: Contador de cantidad visual
    const totalCartQuantity = useMemo(() => {
       return cart.reduce((sum, item) => sum + item.quantity, 0);
    }, [cart]);
 
-   const isGlobalWholesale = totalCartQuantity >= 6;
+   // 👈 CAMBIO 3: Contador de piezas para precio al mayor (Conjuntos = 2)
+   const wholesalePiecesCount = useMemo(() => {
+      return cart.reduce((acc, item) => {
+         const multiplier = item.product.category === 'Conjuntos' ? 2 : 1;
+         return acc + (item.quantity * multiplier);
+      }, 0);
+   }, [cart]);
+
+   const isGlobalWholesale = wholesalePiecesCount >= 6;
 
    const getMaxAddable = useCallback((product: Product, color: string, size: string): number => {
       const variant = product.variants?.find((v) => v.color === color);
@@ -576,7 +587,8 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          text += `   💵 $${lineUSD.toFixed(2)} USD\n`;
          text += `   💶 €${lineBS.toFixed(2)} (pago en Bs)\n\n`;
       });
-      text += `📦 Total: ${totalCartQuantity} ${totalCartQuantity === 1 ? 'pieza' : 'piezas'}\n`;
+      // 👈 Mostramos en el WhatsApp si se aplicó el mayor por conjuntos
+      text += `📦 Total: ${totalCartQuantity} ${totalCartQuantity === 1 ? 'artículo' : 'artículos'} ${isGlobalWholesale ? `(${wholesalePiecesCount} eq. mayor)` : ''}\n`;
       text += `💵 $${totalUSD.toFixed(2)} USD\n`;
       text += `💶 €${totalBS.toFixed(2)} (pago en Bs)\n\n`;
       text += `¡Gracias!`;
@@ -1193,7 +1205,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                   <View style={styles.modalHeader}>
                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                         <ShoppingCart size={22} color="#FFFFFF" />
-                        <Text style={styles.modalTitle}>Tu Carrito ({totalCartQuantity} {totalCartQuantity === 1 ? 'producto' : 'productos'})</Text>
+                        <Text style={styles.modalTitle}>Tu Carrito ({totalCartQuantity} {totalCartQuantity === 1 ? 'artículo' : 'artículos'})</Text>
                      </View>
                      <Pressable onPress={() => setIsCartModalOpen(false)}>
                         <X size={22} color="#FFFFFF" />
@@ -1220,6 +1232,7 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                               const sizeObj = variant?.sizes?.find((s) => s.size === item.size);
                               const stock = Number(sizeObj?.stock) || 0;
                               const canIncrease = item.quantity < stock;
+                              const isConjunto = item.product.category === 'Conjuntos';
 
                               return (
                                  <View key={item.cartId} style={styles.cartItemRow}>
@@ -1229,10 +1242,17 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                                        <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
                                        <Text style={styles.cartItemSpecs}>Color: {item.color} | Talla: {item.size}</Text>
 
-                                       <View style={[styles.cartBadgeTag, isGlobalWholesale ? styles.cartBadgeWholesale : styles.cartBadgeRetail]}>
-                                          <Text style={[styles.cartBadgeText, isGlobalWholesale && { color: '#047857' }]}>
-                                             {isGlobalWholesale ? 'PRECIO AL MAYOR' : 'PRECIO AL DETAL'}
-                                          </Text>
+                                       <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, marginBottom: 6 }}>
+                                          <View style={[styles.cartBadgeTag, { marginTop: 0, marginBottom: 0 }, isGlobalWholesale ? styles.cartBadgeWholesale : styles.cartBadgeRetail]}>
+                                             <Text style={[styles.cartBadgeText, isGlobalWholesale && { color: '#047857' }]}>
+                                                {isGlobalWholesale ? 'PRECIO AL MAYOR' : 'PRECIO AL DETAL'}
+                                             </Text>
+                                          </View>
+                                          {isConjunto && (
+                                             <View style={[styles.cartBadgeTag, { marginTop: 0, marginBottom: 0, backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE' }]}>
+                                                <Text style={[styles.cartBadgeText, { color: '#4338CA' }]}>2 PZAS</Text>
+                                             </View>
+                                          )}
                                        </View>
 
                                        <View style={styles.cartItemBottomRow}>
