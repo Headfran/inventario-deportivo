@@ -1,6 +1,7 @@
 export type PaymentMethod =
   | 'efectivo'
   | 'pago_movil'
+  | 'punto'
   | 'binance'
   | 'transferencia'
   | 'zelle'
@@ -33,6 +34,9 @@ export interface SaleItem {
   totalPrice: number;
   totalBSRef?: number;
   productImage?: string;
+  purchasePrice?: number;
+  effectiveUnitPriceUSD?: number;
+  effectiveTotalUSD?: number;
 }
 
 export interface SaleCombo {
@@ -66,4 +70,21 @@ export interface Sale {
   appliedCombos?: SaleCombo[];
   appliedCombo?: SaleCombo;
   notes?: string;
+  // Descuentos explícitos del POS (incluye descuento directo en €).
+  explicitDiscountType?: 'percent' | 'fixed' | 'eur';
+  explicitDiscountValue?: number;
+  explicitDiscountUSD?: number;
+  explicitDiscountBS?: number;
+  // Vuelto registrado cuando el pago recibido supera el total (M-02).
+  changeAmount?: number;
+  changeAmountBS?: number;
+  changeCurrency?: 'USD' | 'BS';
+  paidAmountUSD?: number;
+  paidAmountBS?: number;
+  totalCatalogUSD?: number;
+  isFullBsPayment?: boolean;
+  // Venta oficializada a partir de un apartado (M-14).
+  layawayId?: string;
+  layawayCode?: string;
+  isLayaway?: boolean;
 }

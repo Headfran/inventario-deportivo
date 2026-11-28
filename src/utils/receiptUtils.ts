@@ -1,19 +1,48 @@
 import { Linking, Platform } from 'react-native';
 import { Sale } from '../types/sale';
 import { showAlert } from './alert';
+import { formatDateTime } from './dateUtils';
+import { escapeHtml, openExternalLink, openPrintWindow } from './htmlUtils';
+import { roundMoney } from './pricingUtils';
+
+const paymentLabels: Record<string, string> = {
+  pago_movil: 'Pago Móvil',
+  efectivo: 'Efectivo',
+  binance: 'Binance',
+  zelle: 'Zelle',
+  mixto: 'Mixto',
+  transferencia: 'Transferencia',
+  punto: 'Tarjeta / Punto',
+  tarjeta: 'Tarjeta / Punto',
+  otro: 'Otro',
+};
+
+const getReceiptNumber = (sale: Sale): string =>
+  sale.receiptNumber || (sale.id ? sale.id.slice(-6).toUpperCase() : '');
+
+const getBsAmounts = (sale: Sale) => {
+  const eurRate = Number(sale.eurToBsRate) || 0;
+  const totalBS = roundMoney(
+    Number(sale.totalBS) ||
+    (sale.totalBSRef && eurRate > 0 ? Number(sale.totalBSRef) * eurRate : 0)
+  );
+  const totalBSRef = roundMoney(
+    Number(sale.totalBSRef) ||
+    (totalBS > 0 && eurRate > 0 ? totalBS / eurRate : 0)
+  );
+  return { eurRate, totalBS, totalBSRef };
+};
 
 /**
- * Genera el texto del comprobante para WhatsApp
+ * Genera el texto del comprobante para WhatsApp.
  */
 export const formatReceiptWhatsAppMessage = (
   sale: Sale,
   storeName: string = 'JD Store'
 ): string => {
-  const dateStr = sale.createdAt?.toDate
-    ? sale.createdAt.toDate().toLocaleString('es-ES')
-    : new Date().toLocaleString('es-ES');
-
-  const receiptNum = sale.receiptNumber || (sale.id ? sale.id.slice(-6).toUpperCase() : '');
+  const receiptNum = getReceiptNumber(sale);
+  const dateStr = formatDateTime(sale.createdAt, 'long');
+  const { totalBS } = getBsAmounts(sale);
 
   let msg = `🧾 *COMPROBANTE DE COMPRA*\n`;
   msg += `🏢 *${storeName.toUpperCase()}*\n`;
@@ -24,18 +53,8 @@ export const formatReceiptWhatsAppMessage = (
     msg += `👤 *Cliente:* ${sale.customerName}\n`;
   }
 
-  const paymentLabels: Record<string, string> = {
-    pago_movil: 'Pago Móvil',
-    efectivo: 'Efectivo',
-    zelle: 'Zelle',
-    tarjeta: 'Tarjeta / Punto',
-    otro: 'Otro',
-    mixto: 'Mixto',
-    transferencia: 'Transferencia',
-  };
   msg += `💳 *Método de Pago:* ${paymentLabels[sale.paymentMethod] || sale.paymentMethod}\n`;
 
-  // Notas del cliente / venta
   if (sale.notes && sale.notes.trim().length > 0) {
     msg += `📝 *Notas:* ${sale.notes.trim()}\n`;
   }
@@ -58,35 +77,45 @@ export const formatReceiptWhatsAppMessage = (
     msg += `🎁 *${label}:* ${sign}$${Math.abs(sale.discount).toFixed(2)}\n`;
   }
 
-  msg += `💰 *TOTAL PAGADO:* *$${sale.total.toFixed(2)}*\n\n`;
-  msg += `✨ _¡Gracias por tu compra! Conserva este comprobante para cualquier cambio o garantía._`;
+  msg += `💰 *TOTAL PAGADO:* *$${sale.total.toFixed(2)}*\n`;
+  if (totalBS > 0) {
+    msg += `💶 *Equivalente:* Bs ${totalBS.toFixed(2)}\n`;
+  }
+  if (Number((sale as any).changeAmountBS) > 0) {
+    msg += `🪙 *Vuelto:* Bs ${Number((sale as any).changeAmountBS).toFixed(2)}\n`;
+  } else if (Number((sale as any).changeAmount) > 0) {
+    msg += `🪙 *Vuelto:* $${Number((sale as any).changeAmount).toFixed(2)}\n`;
+  }
+  msg += `\n✨ _¡Gracias por tu compra! Conserva este comprobante para cualquier cambio o garantía._`;
 
   return msg;
 };
 
 /**
- * Abre WhatsApp con el mensaje del comprobante pre-cargado
+ * Abre WhatsApp con el mensaje del comprobante pre-cargado.
  */
-export const openWhatsAppReceipt = async (sale: Sale, phone: string, storeName: string = 'JD Store') => {
+export const openWhatsAppReceipt = async (
+  sale: Sale,
+  phone: string,
+  storeName: string = 'JD Store'
+) => {
   if (!phone || phone.trim() === '') {
     showAlert('Atención', 'Debes ingresar el número de WhatsApp del cliente.');
     return;
   }
 
   const cleanPhone = phone.replace(/\D/g, '');
-  const receiptNum = sale.receiptNumber || sale.id?.slice(-6) || '';
-
+  const receiptNum = getReceiptNumber(sale);
   const itemsText = sale.items
     .map(i => `▫️ ${i.quantity}x ${i.name} ($${i.unitPrice.toFixed(2)})`)
     .join('\n');
 
   let text = `¡Hola! Gracias por tu compra en *${storeName}*.\n\n` +
     `*Nº de Recibo:* #${receiptNum}\n` +
-    `*Método:* ${sale.paymentMethod}\n` +
+    `*Método:* ${paymentLabels[sale.paymentMethod] || sale.paymentMethod}\n` +
     `*Total Pagado:* $${sale.total.toFixed(2)}\n\n` +
     `*Detalle:*\n${itemsText}\n\n`;
 
-  // Notas del cliente / venta
   if (sale.notes && sale.notes.trim().length > 0) {
     text += `*Notas:* ${sale.notes.trim()}\n\n`;
   }
@@ -94,14 +123,13 @@ export const openWhatsAppReceipt = async (sale: Sale, phone: string, storeName: 
   text += `¡Esperamos verte pronto!`;
 
   const encodedText = encodeURIComponent(text);
-
   const url = Platform.OS === 'web'
     ? `https://wa.me/${cleanPhone}?text=${encodedText}`
     : `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`;
 
   try {
     if (Platform.OS === 'web') {
-      window.open(url, '_blank');
+      await openExternalLink(url);
     } else {
       const supported = await Linking.canOpenURL(url);
       if (supported) {
@@ -117,32 +145,75 @@ export const openWhatsAppReceipt = async (sale: Sale, phone: string, storeName: 
 };
 
 /**
- * Genera e imprime el ticket HTML formateado para impresoras de recibo o PDF
+ * Genera e imprime el ticket HTML formateado para impresoras de recibo o PDF.
+ * Todos los campos dinámicos se escapan para evitar XSS almacenado.
  */
-export const printReceiptHTML = (sale: Sale, storeName: string = 'JD Store') => {
-  const dateStr = sale.createdAt?.toDate
-    ? sale.createdAt.toDate().toLocaleString('es-ES')
-    : new Date().toLocaleString('es-ES');
+export const printReceiptHTML = async (
+  sale: Sale,
+  storeName: string = 'JD Store'
+): Promise<boolean> => {
+  const receiptNum = getReceiptNumber(sale) || 'VENTA';
+  const dateStr = formatDateTime(sale.createdAt, 'long');
+  const { eurRate, totalBS } = getBsAmounts(sale);
+  const changeAmount = roundMoney(Number((sale as any).changeAmount) || 0);
+  const changeAmountBS = roundMoney(Number((sale as any).changeAmountBS) || 0);
 
-  const paymentLabels: Record<string, string> = {
-    pago_movil: 'Pago Móvil',
-    efectivo: 'Efectivo',
-    binance: 'Binance',
-    zelle: 'Zelle',
-    mixto: 'Mixto',
-    transferencia: 'Transferencia',
-    tarjeta: 'Tarjeta / Punto',
-    otro: 'Otro',
-  };
+  const itemsHtml = sale.items.map((item) => {
+    const bsLine = item.totalBSRef && eurRate > 0
+      ? `<div>Ref: €${escapeHtml((Number(item.totalBSRef) * eurRate).toFixed(2))} Bs</div>`
+      : '';
+    return `
+        <tr>
+          <td>
+            <div class="bold">${escapeHtml(item.brand)} - ${escapeHtml(item.name)}</div>
+            <div>${escapeHtml(item.color)} | Talla: ${escapeHtml(item.size)}</div>
+            <div>${escapeHtml(String(item.quantity))} x $${escapeHtml(item.unitPrice.toFixed(2))}</div>
+            ${bsLine}
+          </td>
+          <td class="text-right bold">$${escapeHtml(item.totalPrice.toFixed(2))}</td>
+        </tr>
+      `;
+  }).join('');
 
-  const receiptNum = sale.receiptNumber || (sale.id ? sale.id.slice(-6).toUpperCase() : 'VENTA');
+  const notesHtml = sale.notes && sale.notes.trim().length > 0
+    ? `
+  <div class="notes-box">
+    <div class="notes-label">Notas</div>
+    <div class="notes-text">${escapeHtml(sale.notes.trim())}</div>
+  </div>
+  `
+    : '';
+
+  const discountHtml = sale.discount && sale.discount !== 0
+    ? `
+  <div class="discount-row">
+    <span>${sale.discount > 0 ? 'Descuento' : 'Ajuste Combo'}:</span>
+    <span>${sale.discount > 0 ? '-' : '+'}$${escapeHtml(Math.abs(sale.discount).toFixed(2))}</span>
+  </div>
+  `
+    : '';
+
+  const bsHtml = totalBS > 0
+    ? `<div class="info-row"><span>Equivalente Bs:</span><span class="bold">Bs ${escapeHtml(totalBS.toFixed(2))}</span></div>`
+    : '';
+
+  const rateHtml = eurRate > 0
+    ? `<div class="info-row"><span>Tasa EUR:</span><span class="bold">${escapeHtml(eurRate.toFixed(2))} Bs</span></div>`
+    : '';
+
+  const changeHtml = (changeAmount > 0 || changeAmountBS > 0)
+    ? `<div class="discount-row" style="color:#047857;">
+         <span>Vuelto:</span>
+         <span>${changeAmountBS > 0 ? `Bs ${escapeHtml(changeAmountBS.toFixed(2))}` : ''}${changeAmountBS > 0 && changeAmount > 0 ? ' · ' : ''}${changeAmount > 0 ? `$${escapeHtml(changeAmount.toFixed(2))}` : ''}</span>
+       </div>`
+    : '';
 
   const htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Comprobante #${receiptNum}</title>
+  <title>Comprobante #${escapeHtml(receiptNum)}</title>
   <style>
     @page { size: 80mm auto; margin: 4mm; }
     body { font-family: 'Courier New', Courier, monospace, sans-serif; width: 280px; margin: 0 auto; padding: 10px; color: #000; background: #fff; font-size: 12px; }
@@ -168,59 +239,43 @@ export const printReceiptHTML = (sale: Sale, storeName: string = 'JD Store') => 
 </head>
 <body>
   <div class="header text-center">
-    <div class="title">${storeName}</div>
+    <div class="title">${escapeHtml(storeName)}</div>
     <div class="subtitle">COMPROBANTE DIGITAL DE VENTA</div>
-    <div class="subtitle bold">Nº: #${receiptNum}</div>
+    <div class="subtitle bold">Nº: #${escapeHtml(receiptNum)}</div>
   </div>
-  <div class="info-row"><span>Fecha:</span><span class="bold">${dateStr}</span></div>
-  ${sale.customerName ? `<div class="info-row"><span>Cliente:</span><span class="bold">${sale.customerName}</span></div>` : ''}
-  <div class="info-row"><span>Pago:</span><span class="bold">${paymentLabels[sale.paymentMethod] || sale.paymentMethod}</span></div>
-  ${sale.notes && sale.notes.trim().length > 0 ? `
-  <div class="notes-box">
-    <div class="notes-label">Notas</div>
-    <div class="notes-text">${sale.notes.trim()}</div>
-  </div>
-  ` : ''}
+  <div class="info-row"><span>Fecha:</span><span class="bold">${escapeHtml(dateStr)}</span></div>
+  ${sale.customerName ? `<div class="info-row"><span>Cliente:</span><span class="bold">${escapeHtml(sale.customerName)}</span></div>` : ''}
+  <div class="info-row"><span>Pago:</span><span class="bold">${escapeHtml(paymentLabels[sale.paymentMethod] || sale.paymentMethod)}</span></div>
+  ${bsHtml}
+  ${rateHtml}
+  ${notesHtml}
   <div class="divider"></div>
   <table class="table">
     <thead>
       <tr><th>Cant / Desc.</th><th class="text-right">Total</th></tr>
     </thead>
     <tbody>
-      ${sale.items.map((item) => `
-        <tr>
-          <td>
-            <div class="bold">${item.brand} - ${item.name}</div>
-            <div>${item.color} | Talla: ${item.size}</div>
-            <div>${item.quantity} x $${item.unitPrice.toFixed(2)}</div>
-          </td>
-          <td class="text-right bold">$${item.totalPrice.toFixed(2)}</td>
-        </tr>
-      `).join('')}
+      ${itemsHtml}
     </tbody>
   </table>
   <div class="divider"></div>
-  ${sale.discount && sale.discount !== 0 ? `
-  <div class="discount-row">
-    <span>${sale.discount > 0 ? 'Descuento' : 'Ajuste Combo'}:</span>
-    <span>${sale.discount > 0 ? '-' : '+'}$${Math.abs(sale.discount).toFixed(2)}</span>
-  </div>
-  ` : ''}
-  <div class="total-box"><span>TOTAL:</span><span>$${sale.total.toFixed(2)}</span></div>
+  ${discountHtml}
+  ${changeHtml}
+  <div class="total-box"><span>TOTAL:</span><span>$${escapeHtml(sale.total.toFixed(2))}</span></div>
   <div class="footer">¡Gracias por tu preferencia!<br>Conserva este ticket para cualquier cambio.</div>
   <script>
-    window.onload = function() { setTimeout(function() { window.print(); }, 400); };
+    window.onload = function() { setTimeout(function() { try { window.print(); } catch (e) {} }, 400); };
   </script>
 </body>
 </html>
 `;
 
-  const printWindow = window.open('', '_blank');
-  if (printWindow) {
-    printWindow.document.open();
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-  } else {
-    alert('Habilita las ventanas emergentes para imprimir el comprobante.');
+  const opened = await openPrintWindow(htmlContent);
+  if (!opened) {
+    showAlert(
+      'No se pudo imprimir',
+      'Habilita las ventanas emergentes del navegador e inténtalo de nuevo.'
+    );
   }
+  return opened;
 };

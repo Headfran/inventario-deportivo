@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
    View,
    Text,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Plus, Minus, X, AlertTriangle, CheckCircle2, PackageX } from 'lucide-react-native';
 import { Product } from '../types/inventory';
-import { updateVariantStock } from '../services/productService';
+import { adjustVariantStock, updateVariantStock } from '../services/productService';
 import { showAlert } from '../utils/alert';
 
 interface StockAdjustModalProps {
@@ -40,7 +40,8 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
    onClose
 }) => {
    // ---- LÓGICA ORIGINAL (sin cambios) ----
-   const [updatingKey, setUpdatingKey] = useState<string | null>(null);
+   const [updatingKeys, setUpdatingKeys] = useState<string[]>([]);
+   const inFlightRef = useRef<Set<string>>(new Set());
    // Estado local para almacenar temporalmente los valores tipeados en la caja
    const [draftStocks, setDraftStocks] = useState<Record<string, string>>({});
 
@@ -59,31 +60,66 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
 
    if (!product) return null;
 
-   // Actualización en Firestore (por paso +1 / -1 o por número directo)
-   const commitStockChange = async (
-      colorName: string,
-      sizeName: string,
-      newStock: number
-   ) => {
+   // Actualización en Firestore.
+   // ±1 usa un DELTA atómico contra el stock leído en el servidor; la entrada
+   // directa fija un valor absoluto dentro de una transacción.
+   const commitStockDelta = async (colorName: string, sizeName: string, delta: number) => {
       if (!product.id) return;
-      const sanitizedStock = Math.max(0, newStock);
       const key = `${colorName}_${sizeName}`;
+      if (inFlightRef.current.has(key)) return;
+
+      inFlightRef.current.add(key);
+      setUpdatingKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
 
       try {
-         setUpdatingKey(key);
-         await updateVariantStock(product.id, colorName, sizeName, sanitizedStock);
-         setDraftStocks(prev => ({ ...prev, [key]: String(sanitizedStock) }));
+         const nextStock = await adjustVariantStock(product.id, colorName, sizeName, delta);
+         setDraftStocks((prev) => ({ ...prev, [key]: String(nextStock) }));
       } catch (error: any) {
          showAlert('Error', error.message || 'No se pudo actualizar el stock');
+         setDraftStocks((prev) => ({
+            ...prev,
+            [key]: String(
+               (product.variants || [])
+                  .find((variant) => variant.color === colorName)
+                  ?.sizes.find((size) => size.size === sizeName)?.stock ?? 0
+            ),
+         }));
       } finally {
-         setUpdatingKey(null);
+         inFlightRef.current.delete(key);
+         setUpdatingKeys((prev) => prev.filter((item) => item !== key));
+      }
+   };
+
+   const commitStockChange = async (colorName: string, sizeName: string, newStock: number) => {
+      if (!product.id) return;
+      const key = `${colorName}_${sizeName}`;
+      if (inFlightRef.current.has(key)) return;
+
+      inFlightRef.current.add(key);
+      setUpdatingKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
+
+      try {
+         const nextStock = await updateVariantStock(product.id, colorName, sizeName, newStock);
+         setDraftStocks((prev) => ({ ...prev, [key]: String(nextStock) }));
+      } catch (error: any) {
+         showAlert('Error', error.message || 'No se pudo actualizar el stock');
+         setDraftStocks((prev) => ({
+            ...prev,
+            [key]: String(
+               (product.variants || [])
+                  .find((variant) => variant.color === colorName)
+                  ?.sizes.find((size) => size.size === sizeName)?.stock ?? 0
+            ),
+         }));
+      } finally {
+         inFlightRef.current.delete(key);
+         setUpdatingKeys((prev) => prev.filter((item) => item !== key));
       }
    };
 
    const handleTextChange = (key: string, value: string) => {
-      // Permitir solo dígitos numéricos
       const cleanValue = value.replace(/[^0-9]/g, '');
-      setDraftStocks(prev => ({ ...prev, [key]: cleanValue }));
+      setDraftStocks((prev) => ({ ...prev, [key]: cleanValue }));
    };
 
    const handleInputBlur = (colorName: string, sizeName: string, currentStock: number) => {
@@ -92,8 +128,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
       const parsed = parseInt(rawValue, 10);
 
       if (isNaN(parsed)) {
-         // Si el campo quedó vacío, restaurar el valor previo
-         setDraftStocks(prev => ({ ...prev, [key]: String(currentStock) }));
+         setDraftStocks((prev) => ({ ...prev, [key]: String(currentStock) }));
          return;
       }
 
@@ -134,7 +169,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
                         <View style={styles.sizesContainer}>
                            {(variant.sizes || []).map((sObj) => {
                               const key = `${variant.color}_${sObj.size}`;
-                              const isUpdating = updatingKey === key;
+                              const isUpdating = updatingKeys.includes(key);
                               const isOut = sObj.stock === 0;
                               const isLow = sObj.stock > 0 && sObj.stock <= 2;
                               const currentDraft = draftStocks[key] ?? String(sObj.stock);
@@ -165,7 +200,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
                                     <View style={styles.controlsGroup}>
                                        <TouchableOpacity
                                           style={[styles.stepBtn, isOut && styles.stepBtnDisabled]}
-                                          onPress={() => commitStockChange(variant.color, sObj.size, sObj.stock - 1)}
+                                          onPress={() => commitStockDelta(variant.color, sObj.size, -1)}
                                           disabled={isUpdating || isOut}
                                        >
                                           <Minus size={16} color={isOut ? C.dim : C.light} />
@@ -188,7 +223,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
 
                                        <TouchableOpacity
                                           style={styles.stepBtn}
-                                          onPress={() => commitStockChange(variant.color, sObj.size, sObj.stock + 1)}
+                                          onPress={() => commitStockDelta(variant.color, sObj.size, 1)}
                                           disabled={isUpdating}
                                        >
                                           <Plus size={16} color={C.light} />

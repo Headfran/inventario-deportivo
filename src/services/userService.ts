@@ -8,7 +8,7 @@ import {
   query,
   orderBy,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import { AppUser, UserRole } from '../types/user';
 
 const USERS_COLLECTION = 'users';
@@ -73,6 +73,38 @@ export const subscribeToUser = (uid: string, callback: (u: AppUser | null) => vo
       callback(null);
     }
   );
+};
+
+/**
+ * Validación defensiva de rol. No confía en el `isOwner` de la UI.
+ * Lanza si el usuario autenticado no existe, está inactivo o no es dueño.
+ */
+export const assertOwner = async (): Promise<void> => {
+  const uid = auth?.currentUser?.uid;
+  if (!uid) {
+    throw new Error('No hay una sesión activa. Inicia sesión de nuevo.');
+  }
+
+  let snap;
+  try {
+    snap = await getDoc(doc(db, USERS_COLLECTION, uid));
+  } catch (error: any) {
+    throw new Error(
+      'No se pudo verificar tu rol. Revisa la conexión e inténtalo de nuevo.'
+    );
+  }
+
+  if (!snap.exists()) {
+    throw new Error('No se encontró tu perfil de usuario.');
+  }
+
+  const data = snap.data();
+  if (data.isActive === false) {
+    throw new Error('Tu usuario está desactivado.');
+  }
+  if (data.role !== 'owner') {
+    throw new Error('Solo el dueño puede editar o anular ventas.');
+  }
 };
 
 export const setUserRole = async (uid: string, role: UserRole): Promise<void> => {

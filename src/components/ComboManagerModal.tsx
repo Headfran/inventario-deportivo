@@ -20,6 +20,7 @@ const P = ({ style, ...rest }: any) => (
 );
 
 type Mode = 'list' | 'edit';
+type EditableRequirement = Omit<ComboRequirement, 'quantity'> & { quantity: number | '' };
 
 export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, availableCategories }) => {
    const [mode, setMode] = useState<Mode>('list');
@@ -27,7 +28,7 @@ export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, a
    const [name, setName] = useState('');
    const [price, setPrice] = useState('');
    const [bolivarPrice, setBolivarPrice] = useState('');
-   const [requirements, setRequirements] = useState<(ComboRequirement & { quantity: number | '' })[]>([]);
+   const [requirements, setRequirements] = useState<EditableRequirement[]>([]);
    const [saving, setSaving] = useState(false);
 
    useEffect(() => {
@@ -66,7 +67,7 @@ export const ComboManagerModal: React.FC<Props> = ({ visible, onClose, combos, a
       setRequirements((prev) => [...prev, { category: availableCategories[0] || 'OTROS', quantity: '' }]);
    };
 
-   const updateRequirement = (idx: number, patch: Partial<ComboRequirement & { quantity: number | '' }>) => {
+   const updateRequirement = (idx: number, patch: Partial<EditableRequirement>) => {
       setRequirements((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
    };
 

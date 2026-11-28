@@ -27,17 +27,20 @@ import {
    Banknote,
    Pencil,
    TrendingUp,
+   RefreshCw,
 } from 'lucide-react-native';
 import {
    Sale,
    subscribeToSales,
    voidSale,
    formatDateTime,
+   resyncSaleProfits,
 } from '../services/salesHistoryService';
 import { DateRangePickerModal } from '../components/DateRangePickerModal';
-import { showAlert } from '../utils/alert';
+import { showAlert, showConfirm } from '../utils/alert';
 import { EditSaleModal } from '../components/EditSaleModal';
 import { calculateSaleProfit } from '../services/salesHistoryService';
+import { escapeHtml, openExternalLink, openPrintWindow } from '../utils/htmlUtils';
 import { MONO as T, display } from '../design';
 
 const STORE_NAME = 'JD Store';
@@ -120,6 +123,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
    const [isProcessing, setIsProcessing] = useState(false);
 
    const [editingSale, setEditingSale] = useState<Sale | null>(null);
+   const [isResyncing, setIsResyncing] = useState(false);
 
    useEffect(() => {
       const unsub = subscribeToSales(setSales, { limit: 1000 });
@@ -211,23 +215,18 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
 
    const activeSalesCount = filteredSales.filter((s) => s.status !== 'voided').length;
 
-   const handlePrintReceipt = (sale: Sale) => {
-      if (typeof window === 'undefined') return;
-
-      const printWindow = window.open('', '_blank', 'width=400,height=600');
-      if (!printWindow) return;
-
+   const handlePrintReceipt = async (sale: Sale) => {
       const itemsHtml = (sale.items || [])
          .map(
             (item) => `
             <tr>
               <td style="padding: 6px 0; border-bottom: 1px dashed #ccc;">
-                 ${item.brand} - ${item.name}<br/>
-                 <small>Ref: ${item.productCode || item.productId} | ${item.color} | Talla ${item.size}</small><br/>
-                 <small>${item.quantity} x $${safeFixed(item.unitPrice)}</small>
+                 ${escapeHtml(item.brand)} - ${escapeHtml(item.name)}<br/>
+                 <small>Ref: ${escapeHtml(item.productCode || item.productId)} | ${escapeHtml(item.color)} | Talla ${escapeHtml(item.size)}</small><br/>
+                 <small>${escapeHtml(String(item.quantity))} x $${escapeHtml(safeFixed(item.unitPrice))}</small>
               </td>
               <td style="text-align: right; vertical-align: bottom; border-bottom: 1px dashed #ccc; padding-bottom: 6px;">
-                 $${safeFixed(item.totalPrice)}
+                 $${escapeHtml(safeFixed(item.totalPrice))}
               </td>
             </tr>
           `
@@ -235,20 +234,27 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
          .join('');
 
       const formattedDate = formatDateTime(sale.createdAt, 'long');
+      const receiptNumber = sale.receiptNumber || (sale.id ? sale.id.slice(-6) : 'S/N');
 
       const notesHtml = sale.notes && sale.notes.trim().length > 0
          ? `
             <div style="margin: 8px 0; padding: 8px; border: 1px solid #fde68a; background: #fffbeb; border-radius: 4px;">
               <div style="font-weight: bold; font-size: 10px; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px;">Notas:</div>
-              <div style="margin-top: 4px; font-size: 11px; color: #78350f; white-space: pre-wrap; word-wrap: break-word;">${sale.notes.trim()}</div>
+              <div style="margin-top: 4px; font-size: 11px; color: #78350f; white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(sale.notes.trim())}</div>
             </div>
           `
          : '';
 
-      printWindow.document.write(`
+      const totalBS = Number(sale.totalBS) || 0;
+      const bsHtml = totalBS > 0
+         ? `<tr><td>Equivalente Bs:</td><td class="right">Bs ${escapeHtml(safeFixed(totalBS))}</td></tr>`
+         : '';
+
+      const html = `
           <html>
             <head>
-              <title>Recibo #${sale.receiptNumber}</title>
+              <meta charset="UTF-8">
+              <title>Recibo #${escapeHtml(receiptNumber)}</title>
               <style>
                 body { font-family: 'Courier New', Courier, monospace; font-size: 12px; margin: 10px; width: 280px; }
                 .center { text-align: center; }
@@ -259,35 +265,44 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
               </style>
             </head>
             <body>
-              <div class="center bold" style="font-size: 14px;">${STORE_NAME.toUpperCase()}</div>
+              <div class="center bold" style="font-size: 14px;">${escapeHtml(STORE_NAME.toUpperCase())}</div>
               <div class="center">Comprobante de Venta</div>
-              <div class="center">#${sale.receiptNumber}</div>
+              <div class="center">#${escapeHtml(receiptNumber)}</div>
               <div class="divider"></div>
-              <div>Fecha: ${formattedDate}</div>
-              ${sale.sellerName ? `<div>Vendedor: ${sale.sellerName}</div>` : ''}
-              ${sale.customerName ? `<div>Cliente: ${sale.customerName}</div>` : ''}
+              <div>Fecha: ${escapeHtml(formattedDate)}</div>
+              ${sale.sellerName ? `<div>Vendedor: ${escapeHtml(sale.sellerName)}</div>` : ''}
+              ${sale.customerName ? `<div>Cliente: ${escapeHtml(sale.customerName)}</div>` : ''}
               ${notesHtml}
               <div class="divider"></div>
               <table>${itemsHtml}</table>
               <div class="divider"></div>
               <table>
-                <tr><td>Subtotal:</td><td class="right">$${safeFixed(sale.subtotal)}</td></tr>
+                <tr><td>Subtotal:</td><td class="right">$${escapeHtml(safeFixed(sale.subtotal))}</td></tr>
                 ${Number(sale.discount) > 0
-            ? `<tr><td>Descuento:</td><td class="right">-$${safeFixed(sale.discount)}</td></tr>`
-            : ''
-         }
-                <tr class="bold" style="font-size: 14px;"><td>TOTAL:</td><td class="right">$${safeFixed(sale.total)}</td></tr>
-                <tr><td>Método:</td><td class="right">${(sale.paymentMethod || '').replace('_', ' ').toUpperCase()}</td></tr>
+                  ? `<tr><td>Descuento:</td><td class="right">-$${escapeHtml(safeFixed(sale.discount))}</td></tr>`
+                  : ''
+                }
+                ${bsHtml}
+                <tr class="bold" style="font-size: 14px;"><td>TOTAL:</td><td class="right">$${escapeHtml(safeFixed(sale.total))}</td></tr>
+                <tr><td>Método:</td><td class="right">${escapeHtml((sale.paymentMethod || '').replace('_', ' ').toUpperCase())}</td></tr>
               </table>
               <div class="divider"></div>
               <div class="center bold">¡Gracias por su compra!</div>
               ${sale.status === 'voided' ? '<div class="center bold" style="margin-top:10px; color:red;">--- ANULADO ---</div>' : ''}
+              <script>
+                window.onload = function() { setTimeout(function() { try { window.print(); } catch (e) {} }, 250); };
+              </script>
             </body>
           </html>
-        `);
-      printWindow.document.close();
-      printWindow.focus();
-      setTimeout(() => printWindow.print(), 250);
+        `;
+
+      const opened = await openPrintWindow(html);
+      if (!opened) {
+         showAlert(
+            'No se pudo imprimir',
+            'Habilita las ventanas emergentes del navegador e inténtalo de nuevo.'
+         );
+      }
    };
 
    const handleShareWhatsApp = (sale: Sale) => {
@@ -317,11 +332,16 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
          ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
          : `https://wa.me/?text=${encodeURIComponent(message)}`;
 
-      if (typeof window !== 'undefined') window.open(url, '_blank');
+      void openExternalLink(url);
    };
 
    const handleConfirmVoid = async () => {
       if (!selectedSale) return;
+      if (!isOwner) {
+         showAlert('Permiso denegado', 'Solo el dueño puede anular ventas.');
+         setIsVoidModalOpen(false);
+         return;
+      }
       setIsProcessing(true);
       try {
          await voidSale(selectedSale, voidReason);
@@ -329,11 +349,55 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
          setSelectedSale(null);
          setVoidReason('');
          showAlert('Éxito', 'La venta ha sido anulada y el stock ha retornado al inventario.');
-      } catch {
-         showAlert('Error', 'No se pudo anular la venta. Inténtelo de nuevo.');
+      } catch (error: any) {
+         showAlert('Error', error?.message || 'No se pudo anular la venta. Inténtelo de nuevo.');
       } finally {
          setIsProcessing(false);
       }
+   };
+
+   const handleResyncProfits = () => {
+      if (!isOwner) {
+         showAlert('Permiso denegado', 'Solo el dueño puede resincronizar las ganancias.');
+         return;
+      }
+      if (isResyncing) return;
+
+      showConfirm(
+         'Resincronizar Ganancias',
+         'Se actualizará el costo de compra de cada línea usando el costo vigente en productos. ' +
+         'Las prendas que ya no existan o estén eliminadas se conservarán sin cambios y se reportarán al final. ' +
+         '¿Continuar?',
+         async () => {
+            setIsResyncing(true);
+            try {
+               const result = await resyncSaleProfits();
+               let message =
+                  `${result.updatedSales} venta(s) actualizada(s) de ${result.scannedSales} revisada(s).\n` +
+                  `${result.updatedItems} línea(s) de detalle con costo actualizado.`;
+
+               if (result.skippedProducts.length > 0) {
+                  const visible = result.skippedProducts.slice(0, 10);
+                  message +=
+                     '\n\n⚠️ Prendas omitidas (no existen o están eliminadas):\n' +
+                     visible
+                        .map((item) => `• [${item.code}] ${item.name}${item.occurrences > 1 ? ` (${item.occurrences}×)` : ''}`)
+                        .join('\n');
+                  if (result.skippedProducts.length > visible.length) {
+                     message += `\n… y ${result.skippedProducts.length - visible.length} prenda(s) más.`;
+                  }
+               } else {
+                  message += '\n\nTodas las prendas de las ventas siguen existiendo.';
+               }
+
+               showAlert('Resincronización completada', message);
+            } catch (error: any) {
+               showAlert('Error', error?.message || 'No se pudieron resincronizar las ganancias.');
+            } finally {
+               setIsResyncing(false);
+            }
+         }
+      );
    };
 
    return (
@@ -401,6 +465,18 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                   >
                      <Filter size={18} color={showAdvancedFilters ? T.onSolid : T.ink} />
                   </P>
+                  {isOwner && (
+                     <P
+                        style={[styles.resyncBtn, isResyncing && { opacity: 0.6 }]}
+                        onPress={handleResyncProfits}
+                        disabled={isResyncing}
+                     >
+                        <RefreshCw size={16} color={T.ink} />
+                        <Text style={styles.resyncBtnText} numberOfLines={1}>
+                           {isResyncing ? 'Sincronizando…' : mobile ? 'Ganancias' : 'Resincronizar Ganancias'}
+                        </Text>
+                     </P>
+                  )}
                </View>
 
                <View style={styles.dateFilterRow}>
@@ -497,7 +573,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
          {/* LISTA RESPONSIVE */}
          <FlatList
             data={filteredSales}
-            keyExtractor={(item) => item.id || item.receiptNumber || String(Math.random())}
+            keyExtractor={(item) => item.id || item.receiptNumber || 'sale'}
             contentContainerStyle={[
                styles.listContent,
                { paddingHorizontal: padX },
@@ -719,6 +795,38 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                                  ${safeFixed(selectedSale.total)}
                               </Text>
                            </View>
+
+                           {(selectedSale.eurToBsRate || selectedSale.usdToBsRate || selectedSale.totalBS) && (
+                              <View style={styles.ratesBox}>
+                                 <Text style={styles.ratesBoxTitle}>Tasas aplicadas</Text>
+                                 {Number(selectedSale.eurToBsRate) > 0 && (
+                                    <View style={styles.ratesRow}>
+                                       <Text style={styles.ratesLabel}>EUR → Bs:</Text>
+                                       <Text style={styles.ratesValue}>{safeFixed(selectedSale.eurToBsRate, 4)}</Text>
+                                    </View>
+                                 )}
+                                 {Number(selectedSale.usdToBsRate) > 0 && (
+                                    <View style={styles.ratesRow}>
+                                       <Text style={styles.ratesLabel}>USD → Bs:</Text>
+                                       <Text style={styles.ratesValue}>{safeFixed(selectedSale.usdToBsRate, 4)}</Text>
+                                    </View>
+                                 )}
+                                 {Number(selectedSale.totalBS) > 0 && (
+                                    <View style={styles.ratesRow}>
+                                       <Text style={styles.ratesLabel}>Total Bs:</Text>
+                                       <Text style={[styles.ratesValue, { color: '#7C3AED' }]}>
+                                          Bs {safeFixed(selectedSale.totalBS)}
+                                       </Text>
+                                    </View>
+                                 )}
+                                 {Number(selectedSale.totalBSRef) > 0 && (
+                                    <View style={styles.ratesRow}>
+                                       <Text style={styles.ratesLabel}>Ref. €:</Text>
+                                       <Text style={styles.ratesValue}>€{safeFixed(selectedSale.totalBSRef)}</Text>
+                                    </View>
+                                 )}
+                              </View>
+                           )}
                         </View>
 
                         {selectedSale.editHistory && selectedSale.editHistory.length > 0 && (
@@ -753,7 +861,7 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                            <MessageCircle size={16} color={T.onSolid} />
                            <Text style={styles.actionBtnPrimaryText} numberOfLines={1}>WhatsApp</Text>
                         </P>
-                        {selectedSale.status !== 'voided' && (
+                        {selectedSale.status !== 'voided' && isOwner && (
                            <>
                               <P style={styles.actionBtnEdit} onPress={() => setEditingSale(selectedSale)}>
                                  <Pencil size={16} color={T.ink} />
@@ -764,6 +872,13 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                                  <Text style={styles.actionBtnDangerText} numberOfLines={1}>Anular</Text>
                               </P>
                            </>
+                        )}
+                        {selectedSale.status !== 'voided' && !isOwner && (
+                           <View style={styles.ownerOnlyNote}>
+                              <Text style={styles.ownerOnlyNoteText}>
+                                 Solo el dueño puede editar o anular ventas.
+                              </Text>
+                           </View>
                         )}
                      </View>
                   </View>
@@ -961,6 +1076,20 @@ const styles = StyleSheet.create({
       flexShrink: 0,
    },
    filterToggleBtnActive: { backgroundColor: T.solid, borderColor: T.solid },
+   resyncBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      height: 46,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      backgroundColor: T.bg,
+      borderWidth: 1,
+      borderColor: T.line,
+      flexShrink: 0,
+   },
+   resyncBtnText: { fontSize: 12, fontWeight: '800', color: T.ink },
 
    dateFilterRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
    advancedFiltersContainer: {
@@ -1256,6 +1385,27 @@ const styles = StyleSheet.create({
       color: T.ink,
    },
 
+   ratesBox: {
+      marginTop: 10,
+      padding: 10,
+      borderRadius: 8,
+      backgroundColor: T.surface,
+      borderWidth: 1,
+      borderColor: T.line,
+      gap: 3,
+   },
+   ratesBoxTitle: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: T.inkMute,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: 3,
+   },
+   ratesRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+   ratesLabel: { fontSize: 11, color: T.inkSoft, fontWeight: '600' },
+   ratesValue: { fontSize: 12, color: T.ink, fontWeight: '800' },
+
    modalFooter: {
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -1264,6 +1414,19 @@ const styles = StyleSheet.create({
       backgroundColor: T.surface,
       borderTopWidth: 1,
       borderTopColor: T.line,
+   },
+   ownerOnlyNote: {
+      flexBasis: '100%',
+      paddingVertical: 6,
+      paddingHorizontal: 4,
+      alignItems: 'center',
+   },
+   ownerOnlyNoteText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: T.inkMute,
+      fontStyle: 'italic',
+      textAlign: 'center',
    },
    actionBtnSecondary: {
       flexGrow: 1,

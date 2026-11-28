@@ -2,10 +2,28 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Modal, FlatList, Animated, useWindowDimensions, ActivityIndicator } from 'react-native';
 import { Search, MessageCircle, Lock, X, ShoppingBag, SlidersHorizontal, RotateCcw, Check, Tag, ChevronLeft, ChevronRight, Eye, ShoppingCart, Trash2, Plus, Minus, ZoomIn, RefreshCw } from 'lucide-react-native';
 import { Product } from '../types/inventory';
-import { fetchAllProducts, getCatalogVersion, subscribeToCatalogVersion, fetchProductsDelta } from '../services/productService';
+import {
+   getCatalogVersion,
+   subscribeToCatalogVersion,
+   fetchProductsDelta,
+   fetchPublicProducts,
+   toPublicProducts,
+   readPublicCatalogCache,
+   writePublicCatalogCache,
+   readPublicCatalogVersion,
+   writePublicCatalogVersion,
+} from '../services/productService';
 import { filterProducts, FilterOptions } from '../utils/productFilters';
 import { Cover } from '../components/Cover';
 import { LIGHT, Tone, display, ease, nd, reduced, useEnter, getColorHex } from '../design';
+import {
+   WHOLESALE_THRESHOLD,
+   countWholesalePieces,
+   getPieceMultiplier,
+   isWholesaleQuantity,
+   resolveProductPrices,
+} from '../utils/pricingUtils';
+import { openExternalLink } from '../utils/htmlUtils';
 
 interface Props {
    onOpenStaffAccess: () => void;
@@ -32,16 +50,11 @@ const GRAY = {
    100: '#F4F4F5',
 };
 
-const DEFAULT_LOGO = '../logo.jpg';
-const REF_RATE_MULTIPLIER = 1.15;
+const DEFAULT_LOGO = require('../../assets/logo.jpg');
 
 const T: Tone = LIGHT;
 const MAX = 1400;
 const ITEMS_PER_PAGE = 20;
-
-// Claves para el localStorage del catálogo público
-const LS_CATALOG_VERSION = 'jdstore.catalogVersion';
-const LS_CACHED_PRODUCTS = 'jdstore.cachedProducts';
 
 const BRAND_SLUGS: Record<string, string> = {
    nike: 'nike', adidas: 'adidas', puma: 'puma', underarmour: 'underarmour', ua: 'underarmour', reebok: 'reebok',
@@ -136,18 +149,6 @@ const sizeRun = (p: Product): [string, boolean][] => {
    return Array.from(m.entries());
 };
 
-const getBolivarRetail = (p: Product): number => {
-   if (p.bolivarPrice && p.bolivarPrice > 0) return Number(p.bolivarPrice);
-   return Number(p.price || 0) * REF_RATE_MULTIPLIER;
-};
-
-const getBolivarWholesale = (p: Product): number => {
-   if (p.bolivarWholesalePrice && p.bolivarWholesalePrice > 0) return Number(p.bolivarWholesalePrice);
-   const wholesaleUSD = Number(p.wholesalePrice);
-   if (wholesaleUSD > 0) return wholesaleUSD * REF_RATE_MULTIPLIER;
-   return Number(p.price || 0) * REF_RATE_MULTIPLIER;
-};
-
 const Chip = ({ label, active, onPress, left }: { label: string; active: boolean; onPress: () => void; left?: React.ReactNode }) => (
    <Pressable onPress={onPress} style={({ pressed }) => [styles.chip, active && styles.chipActive, pressed && styles.pressed]}>
       {left}
@@ -178,7 +179,8 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
    const run = sizeRun(item).slice(0, 6);
    const mainImgUri = item.images?.[0];
    const retailPrice = Number(item.price || 0);
-   const wholesalePrice = Number(item.wholesalePrice) || retailPrice * 0.85;
+   // Si no hay precio mayor configurado se muestra/cobra el detal: nunca se inventa.
+   const wholesalePrice = resolveProductPrices(item, true).unitPriceUSD;
 
    return (
       <Pressable
@@ -255,6 +257,7 @@ const ProductCard = React.memo(({ item, width, compact, onOpen, onZoom }: { item
 export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUri }) => {
    const [products, setProducts] = useState<Product[]>([]);
    const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+   const [logoFailed, setLogoFailed] = useState(false);
    const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
    const [detailProduct, setDetailProduct] = useState<Product | null>(null);
    const [selectedImageIndex, setSelectedImageIndex] = useState(0);
@@ -273,9 +276,16 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    const [filters, setFilters] = useState<FilterOptions>({ query: '', category: 'Camisas', brand: '', color: '', size: '', status: 'all' });
 
    const mergeProducts = useCallback((cached: Product[], updated: Product[], deletedIds: string[]) => {
-      const map = new Map(cached.map(p => [p.id, p]));
+      const map = new Map<string, Product>();
+      // Caché y delta se proyectan SIEMPRE a campos públicos antes de tocar
+      // el estado o localStorage (sin costos ni ubicaciones de bodega).
+      toPublicProducts(cached).forEach((p) => {
+         if (p.id) map.set(p.id, p);
+      });
       deletedIds.forEach(id => map.delete(id));
-      updated.forEach(p => map.set(p.id, p));
+      toPublicProducts(updated).forEach((p) => {
+         if (p.id) map.set(p.id, p);
+      });
 
       return Array.from(map.values()).sort((a, b) => {
          const getTs = (val: any) => {
@@ -294,37 +304,43 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       (async () => {
          try {
             const serverVersion = await getCatalogVersion(true);
-            const localVersion = Number(localStorage.getItem(LS_CATALOG_VERSION) || 0);
-            const cachedStr = localStorage.getItem(LS_CACHED_PRODUCTS);
+            const localVersion = readPublicCatalogVersion();
+            const cachedProducts = readPublicCatalogCache();
 
-            if (serverVersion > localVersion || !cachedStr) {
+            if (serverVersion > localVersion || cachedProducts.length === 0) {
                let finalProducts: Product[] = [];
 
-               if (localVersion > 0 && cachedStr) {
+               if (localVersion > 0 && cachedProducts.length > 0) {
                   try {
-                     const cachedProducts: Product[] = JSON.parse(cachedStr);
                      const { updated, deletedIds } = await fetchProductsDelta(localVersion);
                      finalProducts = mergeProducts(cachedProducts, updated, deletedIds);
                   } catch (err) {
                      console.warn('Delta falló, forzando recarga total:', err);
-                     finalProducts = await fetchAllProducts({ fromServer: true });
+                     finalProducts = await fetchPublicProducts({ fromServer: true });
                   }
                } else {
-                  finalProducts = await fetchAllProducts({ fromServer: true });
+                  finalProducts = await fetchPublicProducts({ fromServer: true });
                }
 
                if (!cancelled) {
-                  setProducts(finalProducts);
-                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(finalProducts));
-                  localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
+                  const safeProducts = toPublicProducts(finalProducts);
+                  setProducts(safeProducts);
+                  writePublicCatalogCache(safeProducts);
+                  writePublicCatalogVersion(serverVersion);
                }
             } else if (!cancelled) {
-               setProducts(JSON.parse(cachedStr));
+               setProducts(cachedProducts);
+               // Reescribe la caché ya proyectada: limpia campos sensibles
+               // que hayan quedado de versiones anteriores.
+               writePublicCatalogCache(cachedProducts);
             }
          } catch (e) {
             console.warn('Error en sync inicial, usando caché local', e);
-            const cached = localStorage.getItem(LS_CACHED_PRODUCTS);
-            if (cached && !cancelled) setProducts(JSON.parse(cached));
+            const cached = readPublicCatalogCache();
+            if (cached.length > 0 && !cancelled) {
+               setProducts(cached);
+               writePublicCatalogCache(cached);
+            }
          } finally {
             if (!cancelled) setIsLoadingProducts(false);
          }
@@ -334,29 +350,28 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    // Efecto 2: Escucha en vivo
    useEffect(() => {
-      let lastKnownVersion = Number(localStorage.getItem(LS_CATALOG_VERSION) || 0);
+      let lastKnownVersion = readPublicCatalogVersion();
 
       const unsub = subscribeToCatalogVersion(async (newVersion) => {
          if (newVersion > lastKnownVersion) {
             const localVersion = lastKnownVersion; // Guardamos la versión anterior real
             lastKnownVersion = newVersion;
 
-            const cachedStr = localStorage.getItem(LS_CACHED_PRODUCTS);
-            const cachedProducts: Product[] = cachedStr ? JSON.parse(cachedStr) : [];
+            const cachedProducts = readPublicCatalogCache();
 
             if (cachedProducts.length > 0) {
                try {
                   const { updated, deletedIds } = await fetchProductsDelta(localVersion);
                   const newProducts = mergeProducts(cachedProducts, updated, deletedIds);
                   setProducts(newProducts);
-                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(newProducts));
-                  localStorage.setItem(LS_CATALOG_VERSION, String(newVersion));
+                  writePublicCatalogCache(newProducts);
+                  writePublicCatalogVersion(newVersion);
                } catch (err) {
                   console.warn('Error en Delta Sync, forzando recarga completa', err);
-                  const data = await fetchAllProducts({ fromServer: true });
+                  const data = await fetchPublicProducts({ fromServer: true });
                   setProducts(data);
-                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
-                  localStorage.setItem(LS_CATALOG_VERSION, String(newVersion));
+                  writePublicCatalogCache(data);
+                  writePublicCatalogVersion(newVersion);
                }
             }
          }
@@ -366,18 +381,20 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    // Efecto 3: Red de seguridad (Polling cada 3 min o al volver a la pestaña)
    useEffect(() => {
+      if (typeof document === 'undefined') return;
+
       const checkVersionOnFocus = async () => {
          if (document.visibilityState === 'visible') {
             try {
                const serverVersion = await getCatalogVersion(true);
-               const localVersion = Number(localStorage.getItem(LS_CATALOG_VERSION) || 0);
+               const localVersion = readPublicCatalogVersion();
 
                if (serverVersion > localVersion) {
                   console.log('🔄 Actualización detectada al volver a la pestaña...');
-                  const data = await fetchAllProducts({ fromServer: true });
+                  const data = await fetchPublicProducts({ fromServer: true });
                   setProducts(data);
-                  localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
-                  localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
+                  writePublicCatalogCache(data);
+                  writePublicCatalogVersion(serverVersion);
                }
             } catch (e) {
                console.warn('Error verificando versión:', e);
@@ -398,10 +415,10 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       setIsLoadingProducts(true);
       try {
          const serverVersion = await getCatalogVersion(true);
-         const data = await fetchAllProducts({ fromServer: true });
+         const data = await fetchPublicProducts({ fromServer: true });
          setProducts(data);
-         localStorage.setItem(LS_CACHED_PRODUCTS, JSON.stringify(data));
-         localStorage.setItem(LS_CATALOG_VERSION, String(serverVersion));
+         writePublicCatalogCache(data);
+         writePublicCatalogVersion(serverVersion);
       } catch (e) {
          console.error(e);
       } finally {
@@ -491,14 +508,15 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    }, [cart]);
 
    // 👈 CAMBIO 3: Contador de piezas para precio al mayor (Conjuntos = 2)
-   const wholesalePiecesCount = useMemo(() => {
-      return cart.reduce((acc, item) => {
-         const multiplier = item.product.category === 'Conjuntos' ? 2 : 1;
-         return acc + (item.quantity * multiplier);
-      }, 0);
-   }, [cart]);
+   const wholesalePiecesCount = useMemo(
+      () =>
+         countWholesalePieces(
+            cart.map((item) => ({ product: item.product, quantity: item.quantity }))
+         ),
+      [cart]
+   );
 
-   const isGlobalWholesale = wholesalePiecesCount >= 6;
+   const isGlobalWholesale = isWholesaleQuantity(wholesalePiecesCount);
 
    const getMaxAddable = useCallback((product: Product, color: string, size: string): number => {
       const variant = product.variants?.find((v) => v.color === color);
@@ -562,15 +580,11 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
    const sendWhatsAppCheckout = () => {
       if (cart.length === 0) return;
 
-      const calcUnitUSD = (product: Product) => {
-         const retail = Number(product.price || 0);
-         const wholesale = Number(product.wholesalePrice) || retail * 0.85;
-         return isGlobalWholesale ? wholesale : retail;
-      };
+      const calcUnitUSD = (product: Product) =>
+         resolveProductPrices(product, isGlobalWholesale).unitPriceUSD;
 
-      const calcUnitBS = (product: Product) => {
-         return isGlobalWholesale ? getBolivarWholesale(product) : getBolivarRetail(product);
-      };
+      const calcUnitBS = (product: Product) =>
+         resolveProductPrices(product, isGlobalWholesale).unitPriceBS;
 
       const totalUSD = cart.reduce((sum, item) => sum + calcUnitUSD(item.product) * item.quantity, 0);
       const totalBS = cart.reduce((sum, item) => sum + calcUnitBS(item.product) * item.quantity, 0);
@@ -585,19 +599,22 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
          text += `${index + 1}. *${item.product.brand} ${item.product.name}*\n`;
          text += `   SKU: ${item.product.code} · ${item.color} · ${item.size} · x${item.quantity}\n`;
          text += `   💵 $${lineUSD.toFixed(2)} USD\n`;
-         text += `   💶 €${lineBS.toFixed(2)} (pago en Bs)\n\n`;
+         if (lineBS > 0) {
+            text += `   💶 €${lineBS.toFixed(2)} (pago en Bs)\n`;
+         }
+         text += `\n`;
       });
       // 👈 Mostramos en el WhatsApp si se aplicó el mayor por conjuntos
       text += `📦 Total: ${totalCartQuantity} ${totalCartQuantity === 1 ? 'artículo' : 'artículos'} ${isGlobalWholesale ? `(${wholesalePiecesCount} eq. mayor)` : ''}\n`;
       text += `💵 $${totalUSD.toFixed(2)} USD\n`;
-      text += `💶 €${totalBS.toFixed(2)} (pago en Bs)\n\n`;
-      text += `¡Gracias!`;
+      if (totalBS > 0) {
+         text += `💶 €${totalBS.toFixed(2)} (pago en Bs)\n`;
+      }
+      text += `\n¡Gracias!`;
 
       const encoded = encodeURIComponent(text);
       const url = `https://wa.me/?text=${encoded}`;
-      if (typeof window !== 'undefined') {
-         window.open(url, '_blank');
-      }
+      void openExternalLink(url);
    };
 
    const { width } = useWindowDimensions();
@@ -751,10 +768,12 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
 
    const renderDetail = (p: Product) => {
       const currentImageUri = p.images?.[selectedImageIndex];
-      const retailPrice = Number(p.price || 0);
-      const wholesalePrice = Number(p.wholesalePrice) || retailPrice * 0.85;
-      const bolivarRetail = getBolivarRetail(p);
-      const bolivarWholesale = getBolivarWholesale(p);
+      const retailPrices = resolveProductPrices(p, false);
+      const wholesalePrices = resolveProductPrices(p, true);
+      const retailPrice = retailPrices.retailUSD;
+      const wholesalePrice = wholesalePrices.unitPriceUSD;
+      const bolivarRetail = retailPrices.unitPriceBS;
+      const bolivarWholesale = wholesalePrices.unitPriceBS;
 
       const activeVariant = p.variants?.find((v) => v.color === selectedColor) || p.variants?.[0];
       const selectedSizeObj = activeVariant?.sizes?.find((s) => s.size === selectedSize);
@@ -765,9 +784,13 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
       const canAdd = !!selectedColor && !!selectedSize && !isOutOfStock && !isAtMax;
       const displayQty = Math.max(1, Math.min(quantity, Math.max(1, maxAddable)));
 
-      const isWholesale = displayQty >= 6;
-      const activeUnitPrice = isWholesale ? wholesalePrice : retailPrice;
-      const activeRefUnitPrice = isWholesale ? bolivarWholesale : bolivarRetail;
+      // El umbral es global: carrito + esta selección, con Conjuntos = 2 piezas.
+      const projectedPieces =
+         wholesalePiecesCount + displayQty * getPieceMultiplier(p);
+      const isWholesale = isWholesaleQuantity(projectedPieces);
+      const activePrices = resolveProductPrices(p, isWholesale);
+      const activeUnitPrice = activePrices.unitPriceUSD;
+      const activeRefUnitPrice = activePrices.unitPriceBS;
 
       const handleQtyDelta = (delta: number) => {
          setQuantity((q) => {
@@ -901,17 +924,27 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                   <Plus size={16} color={GRAY[800]} />
                </Pressable>
                <Pressable
-                  style={[styles.qtyQuickBtnWholesale, maxAddable < 6 && { opacity: 0.4 }]}
-                  onPress={() => handleQuickSet(6)}
-                  disabled={maxAddable < 6}
+                  style={[styles.qtyQuickBtnWholesale, maxAddable < WHOLESALE_THRESHOLD && { opacity: 0.4 }]}
+                  onPress={() => handleQuickSet(WHOLESALE_THRESHOLD)}
+                  disabled={maxAddable < WHOLESALE_THRESHOLD}
                >
-                  <Text style={styles.qtyQuickTextWholesale}>6 (Al Mayor)</Text>
+                  <Text style={styles.qtyQuickTextWholesale}>{WHOLESALE_THRESHOLD} (Al Mayor)</Text>
                </Pressable>
             </View>
 
             {maxAddable > 0 && (
                <Text style={styles.stockLimitHint}>
                   Máx. agregable: {maxAddable} {maxAddable === 1 ? 'unidad' : 'unidades'}
+               </Text>
+            )}
+
+            {!isWholesale && wholesalePiecesCount + displayQty * getPieceMultiplier(p) > 0 && (
+               <Text style={styles.wholesaleHint}>
+                  {Math.max(
+                     0,
+                     WHOLESALE_THRESHOLD - (wholesalePiecesCount + displayQty * getPieceMultiplier(p))
+                  )}{' '}
+                  pieza(s) más para precio al mayor (Conjuntos cuentan x2)
                </Text>
             )}
 
@@ -926,26 +959,40 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                      <Text style={styles.columnLabel}>Mayor:</Text>
                      <Text style={styles.columnValWholesale}>${wholesalePrice.toFixed(2)}</Text>
                   </View>
+                  {!wholesalePrices.hasWholesalePrice && (
+                     <Text style={styles.priceNotConfigured}>Sin precio mayor: detal</Text>
+                  )}
                </View>
 
                <View style={styles.cleanVerticalDivider} />
 
                <View style={styles.priceColumnClean}>
-                  <Text style={styles.columnHeaderTitleBlack}>BOLIVARES (TASA €)</Text>
+                  <Text style={styles.columnHeaderTitleBlack}>BOLIVARES (REF €)</Text>
                   <View style={styles.columnPriceRow}>
                      <Text style={styles.columnLabelRef}>Detal:</Text>
-                     <Text style={styles.columnValRef}>{bolivarRetail.toFixed(2)}€</Text>
+                     {bolivarRetail > 0 ? (
+                        <Text style={styles.columnValRef}>{bolivarRetail.toFixed(2)}€</Text>
+                     ) : (
+                        <Text style={styles.priceNotConfigured}>No configurado</Text>
+                     )}
                   </View>
                   <View style={styles.columnPriceRow}>
                      <Text style={styles.columnLabelRef}>Mayor:</Text>
-                     <Text style={styles.columnValRefWholesale}>{bolivarWholesale.toFixed(2)}€</Text>
+                     {bolivarWholesale > 0 ? (
+                        <Text style={styles.columnValRefWholesale}>{bolivarWholesale.toFixed(2)}€</Text>
+                     ) : (
+                        <Text style={styles.priceNotConfigured}>No configurado</Text>
+                     )}
                   </View>
                </View>
             </View>
 
             <View style={styles.totalPreviewRow}>
                <Text style={styles.totalPreviewLabel}>Total estimado:</Text>
-               <Text style={styles.totalPreviewValue}>${(activeUnitPrice * displayQty).toFixed(2)}  ({activeRefUnitPrice.toFixed(2)}€)</Text>
+               <Text style={styles.totalPreviewValue}>
+                  ${(activeUnitPrice * displayQty).toFixed(2)}
+                  {activeRefUnitPrice > 0 ? `  (${activeRefUnitPrice.toFixed(2)}€)` : ''}
+               </Text>
             </View>
          </View>
       );
@@ -994,8 +1041,13 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
             <View style={[styles.inner, styles.barRow, { paddingHorizontal: PAD }]}>
                <View style={styles.brandGroup}>
                   <View style={styles.logoContainerLarge}>
-                     {(logoUri || DEFAULT_LOGO) ? (
-                        <Image source={{ uri: logoUri || DEFAULT_LOGO }} style={styles.barLogoImg} resizeMode="cover" />
+                     {(logoUri || !logoFailed) ? (
+                        <Image
+                           source={logoUri ? { uri: logoUri } : DEFAULT_LOGO}
+                           style={styles.barLogoImg}
+                           resizeMode="cover"
+                           onError={() => setLogoFailed(true)}
+                        />
                      ) : (
                         <View style={styles.logoPlaceholder}>
                            <ShoppingBag size={28} color="#FFFFFF" />
@@ -1222,24 +1274,24 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                      ) : (
                         <View style={{ gap: 12 }}>
                            {cart.map((item) => {
-                              const retailPrice = Number(item.product.price || 0);
-                              const wholesalePrice = Number(item.product.wholesalePrice) || retailPrice * 0.85;
-                              const itemUnitPrice = isGlobalWholesale ? wholesalePrice : retailPrice;
-                              const itemBolivarUnit = isGlobalWholesale
-                                 ? getBolivarWholesale(item.product)
-                                 : getBolivarRetail(item.product);
+                              const linePrices = resolveProductPrices(item.product, isGlobalWholesale);
+                              const itemUnitPrice = linePrices.unitPriceUSD;
+                              const itemBolivarUnit = linePrices.unitPriceBS;
                               const variant = item.product.variants?.find((v) => v.color === item.color);
                               const sizeObj = variant?.sizes?.find((s) => s.size === item.size);
                               const stock = Number(sizeObj?.stock) || 0;
                               const canIncrease = item.quantity < stock;
-                              const isConjunto = item.product.category === 'Conjuntos';
+                              const isConjunto = getPieceMultiplier(item.product) === 2;
 
                               return (
                                  <View key={item.cartId} style={styles.cartItemRow}>
                                     <Image source={{ uri: item.product.images?.[0] }} style={styles.cartItemImg} />
                                     <View style={{ flex: 1, marginLeft: 12 }}>
                                        <Text style={styles.cartItemBrand}>{item.product.brand}</Text>
-                                       <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
+                                       <Text style={styles.cartItemName} numberOfLines={2}>
+                                          <Text style={styles.cartItemCode}>[{item.product.code}] </Text>
+                                          {item.product.name}
+                                       </Text>
                                        <Text style={styles.cartItemSpecs}>Color: {item.color} | Talla: {item.size}</Text>
 
                                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, marginBottom: 6 }}>
@@ -1270,7 +1322,10 @@ export const PublicCatalogScreen: React.FC<Props> = ({ onOpenStaffAccess, logoUr
                                              </Pressable>
                                           </View>
                                           <Text style={styles.cartItemPrice}>
-                                             ${(itemUnitPrice * item.quantity).toFixed(2)} ({(itemBolivarUnit * item.quantity).toFixed(2)}€)
+                                             ${(itemUnitPrice * item.quantity).toFixed(2)}
+                                             {itemBolivarUnit > 0
+                                                ? ` (${(itemBolivarUnit * item.quantity).toFixed(2)}€)`
+                                                : ''}
                                           </Text>
                                        </View>
                                     </View>
@@ -1490,6 +1545,8 @@ const styles = StyleSheet.create({
    totalPreviewValue: { fontSize: 15, fontWeight: '800', color: GRAY[900] },
 
    stockLimitHint: { fontSize: 11, fontWeight: '700', color: '#B45309', marginTop: 6, fontStyle: 'italic' },
+   wholesaleHint: { fontSize: 10, fontWeight: '600', color: '#047857', marginTop: 4, fontStyle: 'italic' },
+   priceNotConfigured: { fontSize: 9, fontWeight: '600', color: GRAY[400], fontStyle: 'italic', marginTop: 1 },
 
    detailHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
    detailBrand: { fontSize: 13, fontWeight: '800', color: GRAY[500], letterSpacing: 1, textTransform: 'uppercase' },
@@ -1571,6 +1628,7 @@ const styles = StyleSheet.create({
    cartItemImg: { width: 56, height: 56, borderRadius: 6, backgroundColor: '#FFFFFF' },
    cartItemBrand: { fontSize: 11, fontWeight: '800', color: GRAY[500], textTransform: 'uppercase' },
    cartItemName: { fontSize: 14, fontWeight: '700', color: GRAY[900] },
+   cartItemCode: { fontSize: 12, fontWeight: '800', color: '#4338CA' },
    cartItemSpecs: { fontSize: 12, color: GRAY[600], marginTop: 2 },
    cartBadgeTag: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, marginTop: 4, marginBottom: 6 },
    cartBadgeRetail: { backgroundColor: GRAY[200] },

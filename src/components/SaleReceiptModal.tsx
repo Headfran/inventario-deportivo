@@ -3,6 +3,8 @@ import { View, Text, Modal, StyleSheet, Pressable, ScrollView, TextInput } from 
 import { CheckCircle2, Printer, MessageCircle, Crown, Coins } from 'lucide-react-native';
 import { Sale } from '../types/sale';
 import { openWhatsAppReceipt, printReceiptHTML } from '../utils/receiptUtils';
+import { formatDateTime } from '../utils/dateUtils';
+import { roundMoney } from '../utils/pricingUtils';
 import { MONO as T, display } from '../design';
 
 interface Props {
@@ -40,9 +42,9 @@ export const SaleReceiptModal: React.FC<Props> = ({
    const isFullBsPayment: boolean = !!saleAny.isFullBsPayment;
    const totalCatalogUSD: number | undefined = saleAny.totalCatalogUSD;
 
-   const dateStr = sale.createdAt?.toDate
-      ? sale.createdAt.toDate().toLocaleString('es-ES')
-      : new Date().toLocaleString('es-ES');
+   const dateStr = formatDateTime(sale.createdAt, 'long');
+   // M-03: el comprobante usa SIEMPRE el número de recibo, nunca el ID.
+   const receiptNumber = sale.receiptNumber || 'S/N';
 
    const paymentLabels: Record<string, string> = {
       pago_movil: 'Pago Móvil',
@@ -50,12 +52,29 @@ export const SaleReceiptModal: React.FC<Props> = ({
       zelle: 'Zelle',
       binance: 'Binance',
       tarjeta: 'Tarjeta / Punto',
+      punto: 'Tarjeta / Punto',
       mixto: 'Mixto',
       transferencia: 'Transferencia',
    };
 
    const hasSplits = sale.paymentSplits && sale.paymentSplits.length > 0;
    const subtotalReal = sale.subtotal ?? sale.total;
+
+   const eurRate = Number(sale.eurToBsRate) || 0;
+   const totalBS = roundMoney(
+      Number(sale.totalBS) ||
+      (sale.totalBSRef && eurRate > 0 ? Number(sale.totalBSRef) * eurRate : 0)
+   );
+   const totalBSRef = roundMoney(
+      Number(sale.totalBSRef) ||
+      (totalBS > 0 && eurRate > 0 ? totalBS / eurRate : 0)
+   );
+   const changeAmount = roundMoney(Number(saleAny.changeAmount) || 0);
+   const changeAmountBS = roundMoney(Number(saleAny.changeAmountBS) || 0);
+
+   const handlePrint = async () => {
+      await printReceiptHTML(sale, storeName);
+   };
 
    const appliedCombosList =
       sale.appliedCombos && sale.appliedCombos.length > 0
@@ -95,7 +114,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
                      <View style={styles.ticketHeader}>
                         <Text style={styles.storeTitle}>{storeName}</Text>
                         <Text style={styles.ticketMeta}>
-                           Nº #{sale.id ? sale.id.slice(-6).toUpperCase() : 'NUEVO'} · {dateStr}
+                           Nº #{receiptNumber} · {dateStr}
                         </Text>
                      </View>
 
@@ -236,18 +255,23 @@ export const SaleReceiptModal: React.FC<Props> = ({
                         </View>
                      )}
 
-                     {/* TOTAL — modo-aware */}
-                     {isFullBsPayment && sale.totalBS && sale.totalBS > 0 ? (
+                     {/* TOTAL — siempre muestra USD y su equivalente Bs/€ */}
+                     {isFullBsPayment && totalBS > 0 ? (
                         <View style={styles.totalRow}>
                            <Text style={styles.totalLabel}>TOTAL:</Text>
                            <View style={{ alignItems: 'flex-end' }}>
                               <Text style={styles.totalValue}>
-                                 Bs {sale.totalBS.toFixed(2)}
+                                 Bs {totalBS.toFixed(2)}
                               </Text>
                               <Text style={styles.totalSub}>
                                  ≈ ${sale.total.toFixed(2)} USD
-                                 {sale.usdToBsRate ? ` · Tasa ${sale.usdToBsRate}` : ''}
+                                 {sale.usdToBsRate ? ` · Tasa USD ${sale.usdToBsRate}` : ''}
                               </Text>
+                              {totalBSRef > 0 && sale.eurToBsRate ? (
+                                 <Text style={styles.totalCatalog}>
+                                    €{totalBSRef.toFixed(2)} ref · Tasa EUR {sale.eurToBsRate}
+                                 </Text>
+                              ) : null}
                               {totalCatalogUSD !== undefined &&
                                  Math.abs(totalCatalogUSD - sale.total) >= 0.01 && (
                                     <Text style={styles.totalCatalog}>
@@ -261,13 +285,30 @@ export const SaleReceiptModal: React.FC<Props> = ({
                            <Text style={styles.totalLabel}>TOTAL:</Text>
                            <View style={{ alignItems: 'flex-end' }}>
                               <Text style={styles.totalValue}>${sale.total.toFixed(2)}</Text>
-                              {sale.totalBS && sale.totalBS > 0 && (
+                              {totalBS > 0 && (
                                  <Text style={styles.totalSub}>
-                                    ≈ Bs {sale.totalBS.toFixed(2)}
+                                    ≈ Bs {totalBS.toFixed(2)}
+                                    {sale.eurToBsRate ? ` · Tasa € ${sale.eurToBsRate}` : ''}
+                                 </Text>
+                              )}
+                              {totalBSRef > 0 && totalBS <= 0 && (
+                                 <Text style={styles.totalSub}>
+                                    ≈ €{totalBSRef.toFixed(2)} ref
                                     {sale.eurToBsRate ? ` · Tasa € ${sale.eurToBsRate}` : ''}
                                  </Text>
                               )}
                            </View>
+                        </View>
+                     )}
+
+                     {(changeAmount > 0.005 || changeAmountBS > 0.005) && (
+                        <View style={styles.changeRow}>
+                           <Text style={styles.changeLabel}>Vuelto registrado:</Text>
+                           <Text style={styles.changeValue}>
+                              {changeAmountBS > 0.005 ? `Bs ${changeAmountBS.toFixed(2)}` : ''}
+                              {changeAmountBS > 0.005 && changeAmount > 0.005 ? ' · ' : ''}
+                              {changeAmount > 0.005 ? `$${changeAmount.toFixed(2)}` : ''}
+                           </Text>
                         </View>
                      )}
                   </View>
@@ -354,7 +395,7 @@ export const SaleReceiptModal: React.FC<Props> = ({
                      <Text style={styles.whatsAppBtnText}>WhatsApp</Text>
                   </P>
 
-                  <P style={styles.printBtn} onPress={() => printReceiptHTML(sale, storeName)}>
+                  <P style={styles.printBtn} onPress={handlePrint}>
                      <Printer size={17} color={T.ink} />
                      <Text style={styles.printBtnText}>Imprimir</Text>
                   </P>
@@ -526,6 +567,18 @@ const styles = StyleSheet.create({
    totalValue: { ...display, fontSize: 36, lineHeight: 38, fontWeight: '800', color: T.ink, textAlign: 'right' },
    totalSub: { fontSize: 11, color: T.inkMute, fontWeight: '600', marginTop: 2, textAlign: 'right' },
    totalCatalog: { fontSize: 10, color: T.inkMute, fontStyle: 'italic', marginTop: 2, textAlign: 'right' },
+   changeRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 8,
+      paddingTop: 8,
+      borderTopWidth: 1,
+      borderStyle: 'dashed',
+      borderTopColor: T.line,
+   },
+   changeLabel: { fontSize: 12, fontWeight: '700', color: T.inkSoft },
+   changeValue: { fontSize: 13, fontWeight: '800', color: '#047857' },
 
    // ===== PAGOS =====
    paymentsBox: {

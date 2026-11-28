@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { X, Save, DollarSign, Layers } from 'lucide-react-native';
 import { Product } from '../types/inventory';
-import { updateProduct } from '../services/productService';
+import { adjustVariantStock, updateProduct } from '../services/productService';
 import { showAlert } from '../utils/alert';
 import { C, caps, box, label, btn, btnText, overlay, modalCard } from '../theme';
 
@@ -27,80 +27,93 @@ export const BulkUpdateModal: React.FC<Props> = ({ selectedProducts, visible, on
    const [variantSize, setVariantSize] = useState('');
    const [variantStock, setVariantStock] = useState('');
 
+   const parsePositivePrice = (value: string, label: string): number => {
+      const parsed = parseFloat(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+         throw new Error(`${label} debe ser un número mayor a 0.`);
+      }
+      return parsed;
+   };
+
    const handleApply = async () => {
-      if (mode === 'price') {
-         const hasAny =
-            newPrice.trim() ||
-            newWholesalePrice.trim() ||
-            newBolivarPrice.trim() ||
-            newBolivarWholesalePrice.trim() ||
-            newPurchasePrice.trim();
+      let pricePayload: Record<string, number> | null = null;
+      let stockValue = 0;
 
-         if (!hasAny) {
-            return showAlert('Error', 'Rellena al menos un precio para actualizar.');
-         }
-      }
-
-      if (mode === 'stock' && (!variantColor || !variantSize || !variantStock)) {
-         return showAlert('Error', 'Completa color, talla y cantidad');
-      }
-
-      setLoading(true);
       try {
+         if (mode === 'price') {
+            pricePayload = {};
+            if (newPrice.trim()) pricePayload.price = parsePositivePrice(newPrice, 'Precio detal');
+            if (newWholesalePrice.trim()) pricePayload.wholesalePrice = parsePositivePrice(newWholesalePrice, 'Precio mayor');
+            if (newBolivarPrice.trim()) pricePayload.bolivarPrice = parsePositivePrice(newBolivarPrice, 'Precio Bs detal');
+            if (newBolivarWholesalePrice.trim()) pricePayload.bolivarWholesalePrice = parsePositivePrice(newBolivarWholesalePrice, 'Precio Bs mayor');
+            if (newPurchasePrice.trim()) pricePayload.purchasePrice = parsePositivePrice(newPurchasePrice, 'Precio compra');
+
+            if (Object.keys(pricePayload).length === 0) {
+               showAlert('Error', 'Rellena al menos un precio para actualizar.');
+               return;
+            }
+         } else {
+            if (!variantColor.trim() || !variantSize.trim() || !variantStock.trim()) {
+               showAlert('Error', 'Completa color, talla y cantidad');
+               return;
+            }
+
+            const parsedStock = Number(variantStock);
+            if (!Number.isInteger(parsedStock) || parsedStock < 0) {
+               showAlert('Error', 'El stock debe ser un número entero mayor o igual a 0.');
+               return;
+            }
+            stockValue = parsedStock;
+         }
+
+         setLoading(true);
+         const colorName = variantColor.trim();
+         const sizeName = variantSize.trim().toUpperCase();
+
          const updates = selectedProducts.map(async (p) => {
             if (!p.id) return;
-            const updated = JSON.parse(JSON.stringify(p)) as Product;
 
-            if (mode === 'price') {
-               if (newPrice.trim()) {
-                  const v = parseFloat(newPrice);
-                  if (!isNaN(v) && v > 0) updated.price = v;
-               }
-               if (newWholesalePrice.trim()) {
-                  const v = parseFloat(newWholesalePrice);
-                  if (!isNaN(v) && v > 0) updated.wholesalePrice = v;
-               }
-               if (newBolivarPrice.trim()) {
-                  const v = parseFloat(newBolivarPrice);
-                  if (!isNaN(v) && v > 0) updated.bolivarPrice = v;
-               }
-               if (newBolivarWholesalePrice.trim()) {
-                  const v = parseFloat(newBolivarWholesalePrice);
-                  if (!isNaN(v) && v > 0) updated.bolivarWholesalePrice = v;
-               }
-               if (newPurchasePrice.trim()) {
-                  const v = parseFloat(newPurchasePrice);
-                  if (!isNaN(v) && v > 0) updated.purchasePrice = v;
-               }
-            } else if (mode === 'stock') {
-               const colorName = variantColor.trim();
-               const sizeName = variantSize.trim().toUpperCase();
-               const stockVal = parseInt(variantStock, 10);
-               const vIndex = updated.variants.findIndex(
-                  (v) => v.color.toLowerCase() === colorName.toLowerCase()
-               );
-               if (vIndex >= 0) {
-                  const sIndex = updated.variants[vIndex].sizes.findIndex((s) => s.size === sizeName);
-                  if (sIndex >= 0) updated.variants[vIndex].sizes[sIndex].stock = stockVal;
-                  else updated.variants[vIndex].sizes.push({ size: sizeName, stock: stockVal });
-               } else {
-                  updated.variants.push({
-                     id: `var_${Date.now()}`,
-                     color: colorName,
-                     colorHex: '#cbd5e1',
-                     sizes: [{ size: sizeName, stock: stockVal }],
-                     locations: [],
-                     exhibition: { isOnDisplay: false },
-                  });
-               }
+            if (mode === 'price' && pricePayload) {
+               await updateProduct(p.id, pricePayload as any);
+               return;
             }
-            await updateProduct(p.id, updated);
+
+            const existingVariant = (p.variants || []).find(
+               (variant) => variant.color.toLowerCase().trim() === colorName.toLowerCase()
+            );
+            const existingSize = existingVariant?.sizes.find(
+               (size) => size.size.trim() === sizeName
+            );
+            const currentStock = Number(existingSize?.stock) || 0;
+            const delta = stockValue - currentStock;
+
+            await adjustVariantStock(p.id, colorName, sizeName, delta, {
+               createIfMissing: true,
+               colorHex: existingVariant?.colorHex || '#cbd5e1',
+               variantId: existingVariant?.id,
+            });
          });
-         await Promise.all(updates);
+
+         const results = await Promise.allSettled(updates);
+         const failures = results.filter(
+            (result): result is PromiseRejectedResult => result.status === 'rejected'
+         );
+
+         if (failures.length > 0) {
+            const firstReason = failures[0].reason;
+            const message = firstReason instanceof Error ? firstReason.message : String(firstReason);
+            showAlert(
+               'Actualización parcial',
+               `${results.length - failures.length} prendas actualizadas, ${failures.length} fallaron. ` +
+               `Primer error: ${message}`
+            );
+            return;
+         }
+
          showAlert('Éxito', `Se actualizaron ${selectedProducts.length} prendas correctamente.`);
          onComplete();
       } catch (error: any) {
-         showAlert('Error', error.message);
+         showAlert('Error', error?.message || 'No se pudo completar la actualización.');
       } finally {
          setLoading(false);
       }

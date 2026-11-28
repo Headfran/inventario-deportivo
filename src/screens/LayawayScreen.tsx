@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
    View,
    Text,
@@ -8,7 +8,6 @@ import {
    TextInput,
    Modal,
    FlatList,
-   Alert,
 } from 'react-native';
 import {
    Clock,
@@ -21,6 +20,7 @@ import {
    Tag,
    ShieldCheck,
    XCircle,
+   Receipt,
 } from 'lucide-react-native';
 import {
    Layaway,
@@ -28,9 +28,16 @@ import {
    addLayawayPayment,
    cancelLayaway,
    createLayaway,
+   officializeLayawaySale,
 } from '../services/layawayService';
+import { getSaleById } from '../services/salesHistoryService';
 import { Product } from '../types/inventory';
+import { Sale } from '../types/sale';
 import { subscribeToProducts } from '../services/productService';
+import { SaleReceiptModal } from '../components/SaleReceiptModal';
+import { openExternalLink } from '../utils/htmlUtils';
+import { roundMoney } from '../utils/pricingUtils';
+import { showAlert, showConfirm } from '../utils/alert';
 
 const safeFixed = (val: any, decimals: number = 2): string => {
    const num = Number(val);
@@ -55,6 +62,8 @@ export const LayawayScreen: React.FC<Props> = ({
    const [selectedLayaway, setSelectedLayaway] = useState<Layaway | null>(null);
    const [isNewModalOpen, setIsNewModalOpen] = useState(false);
    const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+   const [receiptSale, setReceiptSale] = useState<Sale | null>(null);
+   const [productSearch, setProductSearch] = useState('');
 
    // Formulario Nuevo Apartado
    const [customerName, setCustomerName] = useState('');
@@ -94,8 +103,63 @@ export const LayawayScreen: React.FC<Props> = ({
       return matchesQ && matchesStatus;
    });
 
+   const totalProductStock = (product: Product): number =>
+      (product.variants || []).reduce(
+         (total, variant) =>
+            total +
+            (variant.sizes || []).reduce(
+               (sum, size) => sum + Math.max(0, Number(size.stock) || 0),
+               0
+            ),
+         0
+      );
+
+   // Buscador real de productos con stock (reemplaza products.slice(0, 10)).
+   const availableProducts = useMemo(() => {
+      const q = productSearch.trim().toLowerCase();
+      return products
+         .filter((product) => totalProductStock(product) > 0)
+         .filter((product) => {
+            if (!q) return true;
+            return (
+               String(product.name || '').toLowerCase().includes(q) ||
+               String(product.brand || '').toLowerCase().includes(q) ||
+               String(product.code || '').toLowerCase().includes(q) ||
+               String(product.category || '').toLowerCase().includes(q)
+            );
+         })
+         .slice(0, 100);
+   }, [products, productSearch]);
+
+   const cartQuantityFor = (productId: string, color: string, size: string): number =>
+      cartItems
+         .filter(
+            (item) =>
+               item.productId === productId &&
+               item.color === color &&
+               item.size === size
+         )
+         .reduce((total, item) => total + (Number(item.quantity) || 0), 0);
+
    const handleAddToCart = (product: Product, color: string, size: string) => {
       const pId = product.id || product.code;
+      const variant = (product.variants || []).find((v) => v.color === color);
+      const sizeObj = (variant?.sizes || []).find((s) => s.size === size);
+      const availableStock = Math.max(0, Number(sizeObj?.stock) || 0);
+      const inCart = cartQuantityFor(pId, color, size);
+
+      if (availableStock <= 0) {
+         showAlert('Agotado', 'Esta talla no tiene unidades disponibles.');
+         return;
+      }
+      if (inCart + 1 > availableStock) {
+         showAlert(
+            'Stock insuficiente',
+            `Solo hay ${availableStock} unidad(es) disponibles de esta talla.`
+         );
+         return;
+      }
+
       const existing = cartItems.find(
          (i) => i.productId === pId && i.color === color && i.size === size
       );
@@ -104,7 +168,11 @@ export const LayawayScreen: React.FC<Props> = ({
          setCartItems((prev) =>
             prev.map((i) =>
                i.productId === pId && i.color === color && i.size === size
-                  ? { ...i, quantity: i.quantity + 1, totalPrice: (i.quantity + 1) * i.unitPrice }
+                  ? {
+                       ...i,
+                       quantity: i.quantity + 1,
+                       totalPrice: roundMoney((i.quantity + 1) * i.unitPrice),
+                    }
                   : i
             )
          );
@@ -118,8 +186,8 @@ export const LayawayScreen: React.FC<Props> = ({
                color: color || '',
                size: size || '',
                quantity: 1,
-               unitPrice: Number(product.price) || 0,
-               totalPrice: Number(product.price) || 0,
+               unitPrice: roundMoney(Number(product.price) || 0),
+               totalPrice: roundMoney(Number(product.price) || 0),
             },
          ]);
       }
@@ -127,11 +195,11 @@ export const LayawayScreen: React.FC<Props> = ({
 
    const handleSaveLayaway = async () => {
       if (!customerName.trim() || !customerPhone.trim()) {
-         Alert.alert('Datos Incompletos', 'Ingresa el nombre y teléfono del cliente.');
+         showAlert('Datos Incompletos', 'Ingresa el nombre y teléfono del cliente.');
          return;
       }
       if (cartItems.length === 0) {
-         Alert.alert('Carrito Vacío', 'Agrega al menos una prenda al apartado.');
+         showAlert('Carrito Vacío', 'Agrega al menos una prenda al apartado.');
          return;
       }
 
@@ -140,7 +208,7 @@ export const LayawayScreen: React.FC<Props> = ({
          const dueDate = new Date();
          dueDate.setDate(dueDate.getDate() + (Number(daysToDue) || 15));
 
-         await createLayaway({
+         const result = await createLayaway({
             customerName: customerName.trim(),
             customerPhone: customerPhone.trim(),
             sellerId: currentSellerId,
@@ -150,16 +218,25 @@ export const LayawayScreen: React.FC<Props> = ({
             paymentMethod,
             dueDate,
          });
+         if (result.sale) setReceiptSale(result.sale);
 
          setIsNewModalOpen(false);
          setCartItems([]);
+         setProductSearch('');
          setCustomerName('');
          setCustomerPhone('');
          setInitialPayment('');
-         Alert.alert('¡Éxito!', 'El apartado se ha guardado y el stock ha sido reservado.');
+         if (result.sale) {
+            showAlert(
+               'Apartado Completado',
+               'El pago inicial cubrió el total. La venta oficial ya fue generada y el stock quedó reservado.'
+            );
+         } else {
+            showAlert('¡Éxito!', 'El apartado se ha guardado y el stock ha sido reservado.');
+         }
       } catch (error: any) {
          console.error('Error al guardar apartado:', error);
-         Alert.alert('Error al guardar', error?.message || 'No se pudo crear el apartado.');
+         showAlert('Error al guardar', error?.message || 'No se pudo crear el apartado.');
       } finally {
          setIsProcessing(false);
       }
@@ -169,12 +246,12 @@ export const LayawayScreen: React.FC<Props> = ({
       if (!selectedLayaway) return;
       const amount = Number(abonoAmount);
       if (!amount || amount <= 0) {
-         Alert.alert('Monto Inválido', 'Ingresa un monto de abono válido.');
+         showAlert('Monto Inválido', 'Ingresa un monto de abono válido.');
          return;
       }
 
       if (amount > selectedLayaway.balanceRemaining) {
-         Alert.alert(
+         showAlert(
             'Monto Excedido',
             `El abono no puede superar el saldo pendiente ($${safeFixed(selectedLayaway.balanceRemaining)}).`
          );
@@ -183,7 +260,7 @@ export const LayawayScreen: React.FC<Props> = ({
 
       setIsProcessing(true);
       try {
-         await addLayawayPayment(
+         const result = await addLayawayPayment(
             selectedLayaway.id,
             amount,
             abonoMethod,
@@ -194,34 +271,66 @@ export const LayawayScreen: React.FC<Props> = ({
          setSelectedLayaway(null);
          setAbonoAmount('');
          setAbonoNotes('');
-         Alert.alert('Abono Registrado', 'El abono fue procesado con éxito.');
+
+         if (result.completed) {
+            let completedSale = result.sale || null;
+            if (!completedSale && result.saleId) {
+               completedSale = await getSaleById(result.saleId);
+            }
+            if (completedSale) setReceiptSale(completedSale);
+            showAlert(
+               'Apartado Completado',
+               'El saldo llegó a 0. La venta oficial ya fue generada y está disponible en el Historial.'
+            );
+         } else {
+            showAlert('Abono Registrado', 'El abono fue procesado con éxito.');
+         }
       } catch (error: any) {
-         Alert.alert('Error', error?.message || 'No se pudo registrar el abono.');
+         showAlert('Error', error?.message || 'No se pudo registrar el abono.');
+      } finally {
+         setIsProcessing(false);
+      }
+   };
+
+   const handleViewOrOfficializeSale = async (layaway: Layaway) => {
+      if (!layaway?.id || isProcessing) return;
+      setIsProcessing(true);
+      try {
+         // Es idempotente: si ya existe la venta oficial, la devuelve.
+         const sale = await officializeLayawaySale(layaway.id);
+         setSelectedLayaway((current) =>
+            current && current.id === layaway.id
+               ? {
+                    ...current,
+                    saleId: sale.id,
+                    saleReceiptNumber: sale.receiptNumber,
+                 }
+               : current
+         );
+         setReceiptSale(sale);
+      } catch (error: any) {
+         showAlert(
+            'No se pudo abrir la venta',
+            error?.message || 'Verifica que el apartado esté pagado por completo.'
+         );
       } finally {
          setIsProcessing(false);
       }
    };
 
    const handleCancelLayaway = async (layaway: Layaway) => {
-      Alert.alert(
+      showConfirm(
          'Anular Apartado',
          `¿Deseas cancelar el apartado ${layaway.code}? El stock reservado retornará al inventario activo.`,
-         [
-            { text: 'No', style: 'cancel' },
-            {
-               text: 'Sí, Cancelar y Devolver Stock',
-               style: 'destructive',
-               onPress: async () => {
-                  try {
-                     await cancelLayaway(layaway, 'Anulado por el cliente');
-                     setSelectedLayaway(null);
-                     Alert.alert('Apartado Cancelado', 'El stock fue reintegrado al inventario.');
-                  } catch (error: any) {
-                     Alert.alert('Error', error?.message || 'No se pudo cancelar el apartado.');
-                  }
-               },
-            },
-         ]
+         async () => {
+            try {
+               await cancelLayaway(layaway, 'Anulado por el cliente');
+               setSelectedLayaway(null);
+               showAlert('Apartado Cancelado', 'El stock fue reintegrado al inventario.');
+            } catch (error: any) {
+               showAlert('Error', error?.message || 'No se pudo cancelar el apartado.');
+            }
+         }
       );
    };
 
@@ -236,7 +345,7 @@ export const LayawayScreen: React.FC<Props> = ({
 
       const cleanPhone = (layaway.customerPhone || '').replace(/[^0-9]/g, '');
       const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
-      if (typeof window !== 'undefined') window.open(url, '_blank');
+      void openExternalLink(url);
    };
 
    return (
@@ -252,7 +361,10 @@ export const LayawayScreen: React.FC<Props> = ({
 
             <TouchableOpacity
                style={styles.newLayawayBtn}
-               onPress={() => setIsNewModalOpen(true)}
+               onPress={() => {
+                  setProductSearch('');
+                  setIsNewModalOpen(true);
+               }}
             >
                <Plus size={16} color="#ffffff" style={{ marginRight: 4 }} />
                <Text style={styles.newLayawayBtnText}>Nuevo Apartado</Text>
@@ -317,7 +429,7 @@ export const LayawayScreen: React.FC<Props> = ({
 
          <FlatList
             data={filteredLayaways}
-            keyExtractor={(item) => item.id || Math.random().toString()}
+            keyExtractor={(item) => item.id || item.code || 'layaway'}
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => {
                const isCompleted = item.status === 'completed';
@@ -444,6 +556,11 @@ export const LayawayScreen: React.FC<Props> = ({
                               Vence el:{' '}
                               {new Date(selectedLayaway.dueDate).toLocaleDateString('es-ES')}
                            </Text>
+                           {selectedLayaway.saleReceiptNumber ? (
+                              <Text style={styles.boxVal}>
+                                 Venta oficial: {selectedLayaway.saleReceiptNumber}
+                              </Text>
+                           ) : null}
                         </View>
 
                         <Text style={styles.sectionLabel}>Prendas Reservadas:</Text>
@@ -509,6 +626,23 @@ export const LayawayScreen: React.FC<Props> = ({
                            >
                               <XCircle size={16} color="#ef4444" style={{ marginRight: 4 }} />
                               <Text style={styles.cancelBtnText}>Anular</Text>
+                           </TouchableOpacity>
+                        )}
+
+                        {selectedLayaway.status === 'completed' && (
+                           <TouchableOpacity
+                              style={[styles.receiptBtn, isProcessing && { opacity: 0.6 }]}
+                              onPress={() => handleViewOrOfficializeSale(selectedLayaway)}
+                              disabled={isProcessing}
+                           >
+                              <Receipt size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                              <Text style={styles.receiptBtnText}>
+                                 {isProcessing
+                                    ? 'Procesando…'
+                                    : selectedLayaway.saleId
+                                       ? 'Ver Recibo'
+                                       : 'Oficializar Venta'}
+                              </Text>
                            </TouchableOpacity>
                         )}
                      </View>
@@ -604,31 +738,56 @@ export const LayawayScreen: React.FC<Props> = ({
                      />
 
                      <Text style={styles.sectionLabel}>Seleccionar Prendas del Stock:</Text>
+                     <View style={styles.pickerSearchBar}>
+                        <Search size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+                        <TextInput
+                           style={styles.pickerSearchInput}
+                           placeholder="Buscar por nombre, marca o código..."
+                           placeholderTextColor="#94a3b8"
+                           value={productSearch}
+                           onChangeText={setProductSearch}
+                        />
+                        {productSearch ? (
+                           <TouchableOpacity onPress={() => setProductSearch('')}>
+                              <X size={14} color="#94a3b8" />
+                           </TouchableOpacity>
+                        ) : null}
+                     </View>
+
                      <View style={styles.productPickerBox}>
-                        {products.slice(0, 10).map((prod) => (
-                           <View key={prod.id || prod.code} style={styles.pickerProductRow}>
-                              <Text style={styles.pickerProdName}>
-                                 {prod.brand || 'Marca'} - {prod.name} (${Number(prod.price || 0).toFixed(2)})
+                        <ScrollView style={{ maxHeight: 230 }} nestedScrollEnabled>
+                           {availableProducts.length === 0 ? (
+                              <Text style={styles.pickerEmptyText}>
+                                 No se encontraron prendas con stock disponible.
                               </Text>
-                              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                                 {(prod.variants || []).map((v, vIdx) =>
-                                    (v.sizes || [])
-                                       .filter((s) => Number(s.stock) > 0)
-                                       .map((s, sIdx) => (
-                                          <TouchableOpacity
-                                             key={`${vIdx}-${sIdx}`}
-                                             style={styles.addVariantChip}
-                                             onPress={() => handleAddToCart(prod, v.color, s.size)}
-                                          >
-                                             <Text style={styles.addVariantText}>
-                                                + {v.color}/{s.size}
-                                             </Text>
-                                          </TouchableOpacity>
-                                       ))
-                                 )}
-                              </ScrollView>
-                           </View>
-                        ))}
+                           ) : (
+                              availableProducts.map((prod) => (
+                                 <View key={prod.id || prod.code} style={styles.pickerProductRow}>
+                                    <Text style={styles.pickerProdName}>
+                                       {prod.brand || 'Marca'} - {prod.name} (${Number(prod.price || 0).toFixed(2)})
+                                       {prod.code ? ` · ${prod.code}` : ''}
+                                    </Text>
+                                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                       {(prod.variants || []).map((v, vIdx) =>
+                                          (v.sizes || [])
+                                             .filter((s) => Number(s.stock) > 0)
+                                             .map((s, sIdx) => (
+                                                <TouchableOpacity
+                                                   key={`${vIdx}-${sIdx}`}
+                                                   style={styles.addVariantChip}
+                                                   onPress={() => handleAddToCart(prod, v.color, s.size)}
+                                                >
+                                                   <Text style={styles.addVariantText}>
+                                                      + {v.color}/{s.size} ({Number(s.stock) || 0})
+                                                   </Text>
+                                                </TouchableOpacity>
+                                             ))
+                                       )}
+                                    </ScrollView>
+                                 </View>
+                              ))
+                           )}
+                        </ScrollView>
                      </View>
 
                      <Text style={styles.sectionLabel}>Prendas Seleccionadas ({cartItems.length}):</Text>
@@ -670,6 +829,12 @@ export const LayawayScreen: React.FC<Props> = ({
                </View>
             </View>
          </Modal>
+
+         <SaleReceiptModal
+            sale={receiptSale}
+            visible={!!receiptSale}
+            onClose={() => setReceiptSale(null)}
+         />
       </View>
    );
 };
@@ -792,11 +957,13 @@ const styles = StyleSheet.create({
    balMainLabel: { fontSize: 13, color: '#1e3a8a', fontWeight: 'bold' },
    balMainVal: { fontSize: 16, color: '#ef4444', fontWeight: '800' },
 
-   modalFooter: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, padding: 16, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0' },
+   modalFooter: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, padding: 16, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0' },
    addAbonoBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#2563eb', paddingVertical: 10, borderRadius: 8 },
    addAbonoBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
    cancelBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5' },
    cancelBtnText: { color: '#ef4444', fontSize: 12, fontWeight: 'bold' },
+   receiptBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a', paddingVertical: 10, borderRadius: 8 },
+   receiptBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
 
    inputLabel: { fontSize: 12, fontWeight: 'bold', color: '#334155', marginTop: 10, marginBottom: 4 },
    inputField: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 13, color: '#0f172a', backgroundColor: '#ffffff' },
@@ -808,7 +975,10 @@ const styles = StyleSheet.create({
    saveAbonoSubmitBtn: { backgroundColor: '#16a34a', paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginTop: 12 },
    saveAbonoSubmitText: { color: '#ffffff', fontWeight: 'bold', fontSize: 13 },
 
-   productPickerBox: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, padding: 8, maxHeight: 180 },
+   productPickerBox: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, padding: 8, maxHeight: 250 },
+   pickerSearchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 10, height: 38, marginBottom: 8 },
+   pickerSearchInput: { flex: 1, fontSize: 12, color: '#0f172a', paddingVertical: 0 },
+   pickerEmptyText: { fontSize: 11, color: '#64748b', fontStyle: 'italic', textAlign: 'center', paddingVertical: 12 },
    pickerProductRow: { marginBottom: 8 },
    pickerProdName: { fontSize: 11, fontWeight: 'bold', color: '#0f172a', marginBottom: 2 },
    addVariantChip: { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, marginRight: 4 },

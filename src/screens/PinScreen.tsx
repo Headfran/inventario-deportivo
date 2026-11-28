@@ -62,7 +62,7 @@ export const PinScreen: React.FC<PinScreenProps> = ({ mode, onSuccess, onCancelL
 
    return (
       <Container style={[styles.container]}>
-         <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
+         <StatusBar barStyle="light-content" />
 
          {onCancelLogin && (
             <TouchableOpacity

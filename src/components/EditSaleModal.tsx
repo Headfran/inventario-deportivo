@@ -4,13 +4,17 @@ import {
 } from 'react-native';
 import {
    X, Plus, Minus, Trash2, Search, Save, ArrowRightLeft,
-   AlertTriangle, Coins, ChevronDown, ChevronUp,
+   AlertTriangle, Coins, ChevronDown, ChevronUp, User, Percent,
 } from 'lucide-react-native';
 import { Cover } from '../components/Cover';
 import { Sale, SaleItem, editSale } from '../services/salesHistoryService';
+import { Seller } from '../types/sale';
 import { Product } from '../types/inventory';
 import { subscribeToProducts } from '../services/productService';
+import { subscribeToSellers } from '../services/sellerService';
+import { getRates } from '../services/settingsService';
 import { showAlert, showConfirm } from '../utils/alert';
+import { roundMoney } from '../utils/pricingUtils';
 import { MONO as T, display } from '../design';
 
 interface Props {
@@ -36,14 +40,21 @@ const paymentLabels: Record<string, string> = {
 
 export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved }) => {
    const [items, setItems] = useState<SaleItem[]>([]);
+   const [discountInput, setDiscountInput] = useState('0');
    const [reason, setReason] = useState('');
    const [adjustmentMethod, setAdjustmentMethod] = useState('efectivo');
    const [saving, setSaving] = useState(false);
 
    const [products, setProducts] = useState<Product[]>([]);
+   const [sellers, setSellers] = useState<Seller[]>([]);
    const [showPicker, setShowPicker] = useState(false);
    const [search, setSearch] = useState('');
    const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+
+   const [sellerId, setSellerId] = useState('');
+   const [sellerName, setSellerName] = useState('');
+   const [eurRateInput, setEurRateInput] = useState('');
+   const [usdRateInput, setUsdRateInput] = useState('');
 
    const [isPickerSearchFocused, setIsPickerSearchFocused] = useState(false);
 
@@ -61,40 +72,123 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
    }, [visible]);
 
    useEffect(() => {
+      if (!visible) return;
+      const unsub = subscribeToSellers(setSellers);
+      return unsub;
+   }, [visible]);
+
+   useEffect(() => {
       if (visible && sale) {
          setItems(sale.items.map((i) => ({ ...i })));
+         // A-04: conservar el descuento original en lugar de forzar 0.
+         setDiscountInput(String(roundMoney(Number(sale.discount) || 0)));
          setReason('');
          setAdjustmentMethod(sale.paymentMethod === 'pago_movil' ? 'pago_movil' : 'efectivo');
          setShowPicker(false);
          setSearch('');
          setExpandedProductId(null);
+         setSellerId(sale.sellerId || '');
+         setSellerName(sale.sellerName || '');
+         setEurRateInput(sale.eurToBsRate ? String(sale.eurToBsRate) : '');
+         setUsdRateInput(sale.usdToBsRate ? String(sale.usdToBsRate) : '');
+
+         // Ventas antiguas sin tasas: ofrecer las centrales de settings/rates.
+         if (!sale.eurToBsRate || !sale.usdToBsRate) {
+            let cancelled = false;
+            void getRates().then((rates) => {
+               if (cancelled || !rates) return;
+               setEurRateInput((prev) => prev || String(rates.eurToBsRate));
+               setUsdRateInput((prev) => prev || String(rates.usdToBsRate));
+            });
+            return () => { cancelled = true; };
+         }
       }
    }, [visible, sale]);
 
    const newSubtotal = useMemo(
-      () => items.reduce((s, i) => s + i.totalPrice, 0),
+      () => roundMoney(items.reduce((s, i) => s + i.totalPrice, 0)),
       [items]
    );
 
-   // Los combos y descuentos de combos se limpian al editar (se envían vacíos al service)
-   const newDiscount = 0;
-   const newTotal = Math.max(0, newSubtotal - newDiscount);
+   // A-04: el descuento original se conserva y solo cambia si el usuario
+   // edita explícitamente el campo. Se limita al subtotal para no dejar
+   // totales negativos si se eliminan prendas.
+   const newDiscount = useMemo(() => {
+      const parsed = parseFloat(discountInput);
+      if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+      return roundMoney(Math.min(newSubtotal, parsed));
+   }, [discountInput, newSubtotal]);
+   const newTotal = roundMoney(Math.max(0, newSubtotal - newDiscount));
 
-   const totalDiff = sale ? newTotal - sale.total : 0;
-   const isRefund = totalDiff < 0;
-   const isCharge = totalDiff > 0;
-   const diffAmount = Math.abs(totalDiff);
+   // Tasas ingresadas: vacío = conservar la tasa original.
+   const parsedEurRate = parseFloat(eurRateInput);
+   const parsedUsdRate = parseFloat(usdRateInput);
+   const effectiveEurRate = Number.isFinite(parsedEurRate) && parsedEurRate > 0 ? parsedEurRate : undefined;
+   const effectiveUsdRate = Number.isFinite(parsedUsdRate) && parsedUsdRate > 0 ? parsedUsdRate : undefined;
+   const previewTotalBS =
+      effectiveUsdRate !== undefined ? roundMoney(newTotal * effectiveUsdRate) : undefined;
+   const previewTotalBSRef =
+      previewTotalBS !== undefined && effectiveEurRate !== undefined
+         ? roundMoney(previewTotalBS / effectiveEurRate)
+         : undefined;
+
+   const sellerOptions = useMemo(() => {
+      const options = sellers.map((seller) => ({ id: seller.id, name: seller.name }));
+      if (sale?.sellerId && !options.some((option) => option.id === sale.sellerId)) {
+         options.unshift({ id: sale.sellerId, name: sale.sellerName || 'Vendedor actual' });
+      }
+      return options;
+   }, [sellers, sale]);
+
+   const totalDiff = sale ? roundMoney(newTotal - sale.total) : 0;
+   const isRefund = totalDiff < -0.005;
+   const isCharge = totalDiff > 0.005;
+   const diffAmount = roundMoney(Math.abs(totalDiff));
 
    const adjustQty = (idx: number, delta: number) => {
+      const currentItem = items[idx];
+      if (!currentItem) return;
+
+      const newQty = currentItem.quantity + delta;
+
+      if (newQty > 0 && delta > 0) {
+         const key = `${currentItem.productId}_${currentItem.color}_${currentItem.size}`;
+         const originalItem = sale?.items.find(
+            (item) => `${item.productId}_${item.color}_${item.size}` === key
+         );
+         const originalQty = Number(originalItem?.quantity) || 0;
+
+         const product = products.find(
+            (candidate) => (candidate.id || candidate.code) === currentItem.productId
+         );
+         const variant = product?.variants?.find(
+            (candidate) =>
+               candidate.color.toLowerCase() === currentItem.color.toLowerCase()
+         );
+         const sizeObj = variant?.sizes?.find((size) => size.size === currentItem.size);
+         const currentStock = Number(sizeObj?.stock) || 0;
+         const maxQuantity = originalQty + currentStock;
+
+         if (newQty > maxQuantity) {
+            showAlert(
+               'Stock insuficiente',
+               `Solo puedes agregar ${currentStock} unidad(es) de esta talla ` +
+               `(el stock actual es ${currentStock}).`
+            );
+            return;
+         }
+      }
+
       setItems((prev) => {
          const next = [...prev];
          const item = { ...next[idx] };
-         const newQty = item.quantity + delta;
-         if (newQty <= 0) {
+         if (!item) return prev;
+         const quantity = item.quantity + delta;
+         if (quantity <= 0) {
             next.splice(idx, 1);
          } else {
-            item.quantity = newQty;
-            item.totalPrice = item.unitPrice * newQty;
+            item.quantity = quantity;
+            item.totalPrice = roundMoney(item.unitPrice * quantity);
             next[idx] = item;
          }
          return next;
@@ -110,22 +204,18 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
       if (!variant) return;
       const sizeObj = variant.sizes.find((s) => s.size === size);
       const availableStock = Number(sizeObj?.stock) || 0;
-      if (availableStock <= 0) {
-         showAlert('Sin stock', 'Esta talla está agotada.');
-         return;
-      }
 
       const productId = product.id || product.code || 'unknown';
       const key = `${productId}_${variant.color}_${size}`;
       const existingIdx = items.findIndex((i) => `${i.productId}_${i.color}_${i.size}` === key);
 
       if (existingIdx > -1) {
-         if (items[existingIdx].quantity + 1 > availableStock) {
-            showAlert('Sin stock', `Solo hay ${availableStock} disponibles.`);
-            return;
-         }
          adjustQty(existingIdx, 1);
       } else {
+         if (availableStock <= 0) {
+            showAlert('Sin stock', 'Esta talla está agotada.');
+            return;
+         }
          const unitPrice = Number(product.price) || 0;
          const newItem: SaleItem = {
             productId,
@@ -156,6 +246,14 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
          showAlert('Motivo requerido', 'Indica el motivo del cambio.');
          return;
       }
+      if (eurRateInput.trim() && effectiveEurRate === undefined) {
+         showAlert('Tasa inválida', 'La tasa EUR → Bs debe ser un número mayor a 0.');
+         return;
+      }
+      if (usdRateInput.trim() && effectiveUsdRate === undefined) {
+         showAlert('Tasa inválida', 'La tasa USD → Bs debe ser un número mayor a 0.');
+         return;
+      }
 
       const summary = isRefund
          ? `Se devolverán $${diffAmount.toFixed(2)} al cliente vía ${paymentLabels[adjustmentMethod] || adjustmentMethod}.`
@@ -182,7 +280,11 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
                   newDiscount,
                   newTotal,
                   reason: reason.trim(),
-                  adjustmentMethod: totalDiff !== 0 ? adjustmentMethod : undefined,
+                  adjustmentMethod: Math.abs(totalDiff) >= 0.005 ? adjustmentMethod : undefined,
+                  newSellerId: sellerId || undefined,
+                  newSellerName: sellerName || undefined,
+                  newEurToBsRate: effectiveEurRate,
+                  newUsdToBsRate: effectiveUsdRate,
                });
                showAlert('Listo', 'La venta fue actualizada y el stock ajustado.');
                onSaved();
@@ -243,7 +345,7 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
                      <AlertTriangle size={16} color="#B45309" />
                      <Text style={styles.warnText}>
                         Esta venta tenía {hadCombos && 'combos aplicados'}{hadCombos && hadSplits && ' y '}{hadSplits && 'pagos divididos'}.
-                        Al guardar se recalcularán los totales y se limpiarán los combos. Los pagos divididos quedarán como referencia histórica.
+                        Al guardar se recalcularán los totales y los combos se consolidarán en el descuento conservado. Los pagos divididos quedarán como referencia histórica.
                      </Text>
                   </View>
                )}
@@ -379,7 +481,50 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
 
                         <View style={styles.divider} />
 
+                        {/* VENDEDOR */}
+                        <Text style={styles.label}>Vendedor</Text>
+                        {sellerOptions.length === 0 ? (
+                           <Text style={styles.discountHint}>No hay vendedores configurados.</Text>
+                        ) : (
+                           <ScrollView
+                              horizontal
+                              showsHorizontalScrollIndicator={false}
+                              contentContainerStyle={{ gap: 6, paddingBottom: 2 }}
+                              style={{ marginBottom: 12 }}
+                           >
+                              {sellerOptions.map((option) => {
+                                 const active = sellerId === option.id;
+                                 return (
+                                    <P
+                                       key={option.id}
+                                       style={[styles.methodChip, active && styles.methodChipActive, styles.sellerChip]}
+                                       onPress={() => {
+                                          setSellerId(option.id);
+                                          setSellerName(option.name);
+                                       }}
+                                       disabled={saving}
+                                    >
+                                       <User size={11} color={active ? T.onSolid : T.inkSoft} />
+                                       <Text style={[styles.methodChipText, active && styles.methodChipTextActive]} numberOfLines={1}>
+                                          {option.name}
+                                       </Text>
+                                    </P>
+                                 );
+                              })}
+                           </ScrollView>
+                        )}
+
                         {/* TOTALES COMPARATIVOS */}
+                        <View style={styles.compareRow}>
+                           <Text style={styles.compareLabel}>Subtotal artículos:</Text>
+                           <Text style={styles.compareValueMuted}>${newSubtotal.toFixed(2)}</Text>
+                        </View>
+                        <View style={styles.compareRow}>
+                           <Text style={styles.compareLabel}>Descuento:</Text>
+                           <Text style={[styles.compareValueMuted, { color: '#DC2626' }]}>
+                              -${newDiscount.toFixed(2)}
+                           </Text>
+                        </View>
                         <View style={styles.compareRow}>
                            <Text style={styles.compareLabel}>Total anterior:</Text>
                            <Text style={styles.compareValueMuted}>${sale.total.toFixed(2)}</Text>
@@ -389,7 +534,85 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
                            <Text style={styles.compareValue}>${newTotal.toFixed(2)}</Text>
                         </View>
 
-                        {totalDiff !== 0 && (
+                        <Text style={[styles.label, { marginTop: 12 }]}>Descuento aplicado (USD)</Text>
+                        <View style={styles.discountEditRow}>
+                           <TextInput
+                              style={styles.discountInput}
+                              value={discountInput}
+                              onChangeText={(value) =>
+                                 setDiscountInput(value.replace(/[^0-9.]/g, ''))
+                              }
+                              keyboardType="decimal-pad"
+                              placeholder="0.00"
+                              placeholderTextColor={T.inkMute}
+                              editable={!saving}
+                           />
+                           <P
+                              style={styles.restoreDiscountBtn}
+                              onPress={() =>
+                                 setDiscountInput(String(roundMoney(Math.max(0, Number(sale.discount) || 0))))
+                              }
+                              disabled={saving}
+                           >
+                              <Text style={styles.restoreDiscountText}>Restaurar</Text>
+                           </P>
+                        </View>
+                        <Text style={styles.discountHint}>
+                           {newDiscount > 0
+                              ? `Descuento conservado: $${newDiscount.toFixed(2)}. Edítalo solo si deseas cambiarlo.`
+                              : 'Esta venta no tiene descuento aplicado.'}
+                        </Text>
+
+                        {/* TASAS APLICADAS */}
+                        <View style={styles.rateHeader}>
+                           <Percent size={11} color={T.inkMute} />
+                           <Text style={styles.label}>Tasas aplicadas (Bs)</Text>
+                        </View>
+                        <View style={styles.rateRow}>
+                           <View style={styles.rateField}>
+                              <Text style={styles.rateLabel}>EUR → Bs</Text>
+                              <TextInput
+                                 style={styles.rateInput}
+                                 value={eurRateInput}
+                                 onChangeText={(value) => setEurRateInput(value.replace(/[^0-9.]/g, ''))}
+                                 keyboardType="decimal-pad"
+                                 placeholder="Tasa EUR"
+                                 placeholderTextColor={T.inkMute}
+                                 editable={!saving}
+                              />
+                           </View>
+                           <View style={styles.rateField}>
+                              <Text style={styles.rateLabel}>USD → Bs</Text>
+                              <TextInput
+                                 style={styles.rateInput}
+                                 value={usdRateInput}
+                                 onChangeText={(value) => setUsdRateInput(value.replace(/[^0-9.]/g, ''))}
+                                 keyboardType="decimal-pad"
+                                 placeholder="Tasa USD"
+                                 placeholderTextColor={T.inkMute}
+                                 editable={!saving}
+                              />
+                           </View>
+                        </View>
+                        <Text style={styles.discountHint}>
+                           Déjalas vacías para conservar las tasas originales de la venta.
+                        </Text>
+
+                        {previewTotalBS !== undefined && (
+                           <View style={styles.ratesPreview}>
+                              <Text style={styles.ratesPreviewLabel}>Total con nuevas tasas:</Text>
+                              <Text style={styles.ratesPreviewValue}>
+                                 {previewTotalBS.toFixed(2)} Bs
+                              </Text>
+                              {previewTotalBSRef !== undefined && (
+                                 <Text style={styles.ratesPreviewRef}>
+                                    €{previewTotalBSRef.toFixed(2)} ref.
+                                 </Text>
+                              )}
+                           </View>
+                        )}
+
+                        {Math.abs(totalDiff) >= 0.005 && (
                            <View style={[
                               styles.diffBox,
                               isRefund ? styles.diffBoxRefund : styles.diffBoxCharge,
@@ -409,7 +632,7 @@ export const EditSaleModal: React.FC<Props> = ({ sale, visible, onClose, onSaved
                            </View>
                         )}
 
-                        {totalDiff !== 0 && (
+                        {Math.abs(totalDiff) >= 0.005 && (
                            <>
                               <Text style={[styles.label, { marginTop: 12 }]}>
                                  Método de {isRefund ? 'reembolso' : 'cobro'}:
@@ -607,6 +830,23 @@ const styles = StyleSheet.create({
    methodChipTextActive: { color: T.onSolid },
 
    reasonInput: { borderWidth: 1, borderColor: T.line, borderRadius: 10, backgroundColor: T.bg, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: T.ink, minHeight: 70, textAlignVertical: 'top' },
+
+   discountEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+   discountInput: { flex: 1, borderWidth: 1, borderColor: T.line, borderRadius: 8, backgroundColor: T.bg, paddingHorizontal: 12, paddingVertical: 9, fontSize: 14, fontWeight: '700', color: T.ink },
+   restoreDiscountBtn: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8, borderWidth: 1, borderColor: T.line, backgroundColor: T.surface },
+   restoreDiscountText: { fontSize: 11, fontWeight: '800', color: T.inkSoft },
+   discountHint: { fontSize: 10, color: T.inkMute, marginTop: 5, fontStyle: 'italic' },
+
+   sellerChip: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: 180 },
+   rateHeader: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 14, marginBottom: 6 },
+   rateRow: { flexDirection: 'row', gap: 8 },
+   rateField: { flex: 1 },
+   rateLabel: { fontSize: 10, fontWeight: '800', color: T.inkMute, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.4 },
+   rateInput: { borderWidth: 1, borderColor: T.line, borderRadius: 8, backgroundColor: T.bg, paddingHorizontal: 12, paddingVertical: 9, fontSize: 14, fontWeight: '700', color: T.ink },
+   ratesPreview: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginTop: 8, padding: 10, borderRadius: 8, backgroundColor: T.surface, borderWidth: 1, borderColor: T.line },
+   ratesPreviewLabel: { fontSize: 11, fontWeight: '700', color: T.inkSoft },
+   ratesPreviewValue: { ...display, fontSize: 16, fontWeight: '800', color: T.ink },
+   ratesPreviewRef: { fontSize: 11, color: T.inkMute },
 
    footer: { flexDirection: 'row', gap: 8, padding: 16, backgroundColor: T.surface, borderTopWidth: 1, borderTopColor: T.line },
    cancelBtn: { flex: 1, height: 46, borderRadius: 10, borderWidth: 1, borderColor: T.line, alignItems: 'center', justifyContent: 'center' },

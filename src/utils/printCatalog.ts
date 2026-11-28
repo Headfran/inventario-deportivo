@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { Product } from '../types/inventory';
+import { escapeHtml, openPrintWindow, safeColorHex } from './htmlUtils';
 
 export interface CatalogPrintOptions {
   showPrices: boolean;
@@ -170,7 +171,7 @@ const compressImageNative = async (url: string): Promise<string | null> => {
 // HTML de carga (con barra + contador + timer propio)
 // ==========================================
 const buildLoadingHtml = (storeName: string): string => `
-<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>${storeName} — Generando</title>
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>${escapeHtml(storeName)} — Generando</title>
 <style>
   *{box-sizing:border-box;}
   body{margin:0;min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;font-family:system-ui,-apple-system,sans-serif;background:#fafafa;color:#111;padding:24px;}
@@ -248,6 +249,9 @@ const updateLoadingWindow = (win: any, progress: CatalogPrintProgress): void => 
 const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, imageMap: Map<string, string>): string => {
   const { showPrices, storeName = 'Catálogo', categoryFilterName, subtitle } = options;
   const currentDate = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
+  const logoUrl = typeof window !== 'undefined' && window.location?.origin
+    ? `${window.location.origin}/logo.jpg`
+    : '/logo.jpg';
 
   // ==========================================
   // Render de una card individual
@@ -255,22 +259,26 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
   const renderCard = (p: Product): string => {
     const img1 = p.images?.[0] ? (imageMap.get(p.images[0]) || FALLBACK_IMAGE) : FALLBACK_IMAGE;
     const img2 = p.images?.[1] ? (imageMap.get(p.images[1]) || null) : null;
+    const safeImg1 = escapeHtml(img1);
+    const safeImg2 = img2 ? escapeHtml(img2) : null;
 
-    const imagesMarkup = img2
-      ? `<div class="img-wrap dual-img"><img src="${img1}" class="img-left"/><img src="${img2}" class="img-right"/></div>`
-      : `<div class="img-wrap single-img"><img src="${img1}" /></div>`;
+    const imagesMarkup = safeImg2
+      ? `<div class="img-wrap dual-img"><img src="${safeImg1}" class="img-left"/><img src="${safeImg2}" class="img-right"/></div>`
+      : `<div class="img-wrap single-img"><img src="${safeImg1}" /></div>`;
 
     const variantsMarkup = (p.variants || [])
       .filter((v: any) => (v.sizes || []).some((s: any) => Number(s.stock) > 0))
       .map((v: any) => {
-        const availableSizes = sortSizes((v.sizes || []).filter((s: any) => Number(s.stock) > 0).map((s: any) => String(s.size))).join(' <span class="sep">|</span> ');
-        const fallbackHex = COLOR_MAP[v.color] || v.colorHex || '#cbd5e1';
+        const availableSizes = sortSizes((v.sizes || []).filter((s: any) => Number(s.stock) > 0).map((s: any) => String(s.size)))
+          .map((sizeLabel) => escapeHtml(sizeLabel))
+          .join(' <span class="sep">|</span> ');
+        const fallbackHex = safeColorHex(COLOR_MAP[v.color] || v.colorHex, '#cbd5e1');
 
         return `
       <div class="variant-row">
         <div class="color-circle" style="background-color: ${fallbackHex};"></div>
         <div class="variant-info">
-          <span class="color-name">${v.color || 'Único'}</span>
+          <span class="color-name">${escapeHtml(v.color || 'Único')}</span>
           <div class="leader"></div>
           <span class="sizes">${availableSizes}</span>
         </div>
@@ -281,12 +289,12 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
     <div class="card">
       <div class="image-container">
         ${imagesMarkup}
-        <div class="brand-badge">${p.brand || 'EXCLUSIVE'}</div>
+        <div class="brand-badge">${escapeHtml(p.brand || 'EXCLUSIVE')}</div>
       </div>
       <div class="card-body">
         <div class="card-meta">
-          <h2 class="card-name">${p.name || 'Sin Nombre'}</h2>
-          <span class="card-code">${p.code || 'N/A'}</span>
+          <h2 class="card-name">${escapeHtml(p.name || 'Sin Nombre')}</h2>
+          <span class="card-code">${escapeHtml(p.code || 'N/A')}</span>
         </div>
         <div class="variants-container">
           ${variantsMarkup}
@@ -313,9 +321,9 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
       return `
         <header class="sheet-header sheet-header-main">
           <div>
-            <img src="/logo.png" class="logo-img" alt="" onerror="this.style.display='none'; document.getElementById('text-logo').style.display='block';" />
-            <h1 id="text-logo" class="store-title" style="display:none;">${storeName}</h1>
-            <p class="store-subtitle">${categoryFilterName ? `${categoryFilterName} • ` : ''}${subtitle || 'Lookbook Oficial'}</p>
+            <img src="${escapeHtml(logoUrl)}" class="logo-img" alt="" onerror="this.style.display='none'; document.getElementById('text-logo').style.display='block';" />
+            <h1 id="text-logo" class="store-title" style="display:none;">${escapeHtml(storeName)}</h1>
+            <p class="store-subtitle">${escapeHtml(categoryFilterName ? `${categoryFilterName} • ` : '')}${escapeHtml(subtitle || 'Lookbook Oficial')}</p>
           </div>
           <div class="header-right">
             ${currentDate}<br/>${products.length} Referencias
@@ -324,7 +332,7 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
     }
     return `
       <header class="sheet-header sheet-header-compact">
-        <div class="compact-brand">${storeName}</div>
+        <div class="compact-brand">${escapeHtml(storeName)}</div>
         <div class="compact-page">Página ${pageNum} / ${totalPages}</div>
       </header>`;
   };
@@ -333,7 +341,7 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
     if (isLast) {
       return `
         <footer class="sheet-footer sheet-footer-main">
-          Colección sujeta a disponibilidad • Diseñado para ${storeName}
+          Colección sujeta a disponibilidad • Diseñado para ${escapeHtml(storeName)}
         </footer>`;
     }
     return `<footer class="sheet-footer sheet-footer-mini">&nbsp;</footer>`;
@@ -359,7 +367,7 @@ const buildCatalogHtml = (products: Product[], options: CatalogPrintOptions, ima
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${storeName} — Lookbook</title>
+  <title>${escapeHtml(storeName)} — Lookbook</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     @page { size: A4 portrait; margin: 0; }
@@ -767,8 +775,12 @@ export const generateCatalogPrint = async (
   // Abrir la pestaña YA (gesto del usuario) y guardarla como ref para actualizarla
   let printWindow: any = null;
   try {
+    // No se pasa `noopener` en este window.open inicial porque el spec
+    // devuelve null y se perdería la referencia necesaria para actualizar
+    // el progreso. Se corta `opener` inmediatamente después de abrirla.
     printWindow = window.open('', '_blank');
     if (printWindow) {
+      try { printWindow.opener = null; } catch { /* noop */ }
       loadingWinRef = printWindow;
       printWindow.document.write(buildLoadingHtml(storeName));
       printWindow.document.close();
@@ -809,6 +821,13 @@ export const generateCatalogPrint = async (
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
+  } else {
+    const opened = await openPrintWindow(html);
+    if (!opened) {
+      throw new Error(
+        'El navegador bloqueó la ventana del catálogo. Habilita las ventanas emergentes e inténtalo de nuevo.'
+      );
+    }
   }
 
   emit({ phase: 'done', done: total, total, message: 'Listo' });

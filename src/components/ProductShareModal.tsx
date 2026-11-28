@@ -20,8 +20,6 @@ interface Props {
 }
 
 export const ProductShareModal: React.FC<Props> = ({ product, visible, onClose }) => {
-   if (!product) return null;
-
    const [phone, setPhone] = useState('');
    const [selectedColors, setSelectedColors] = useState<string[]>([]);
    const [selectedImage, setSelectedImage] = useState<string>('');
@@ -37,6 +35,8 @@ export const ProductShareModal: React.FC<Props> = ({ product, visible, onClose }
          setStatusText(null);
       }
    }, [visible, product]);
+
+   if (!product) return null;
 
    const toggleColor = (color: string) => {
       setSelectedColors((prev) =>

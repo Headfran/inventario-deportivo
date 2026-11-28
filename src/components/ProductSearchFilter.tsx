@@ -9,6 +9,7 @@ import {
    useWindowDimensions,
    Platform,
 } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 import {
    Search, X, Filter, Sparkles, Store, Layers, AlertTriangle,
    Grid, ChevronLeft, ChevronRight,
@@ -95,9 +96,9 @@ export const ProductSearchFilter: React.FC<Props> = ({
    const { width } = useWindowDimensions();
 
    // Refs + posiciones de scroll para flechas laterales
-   const categoryRef = useRef<ScrollView>(null);
-   const brandRef = useRef<ScrollView>(null);
-   const sizeRef = useRef<ScrollView>(null);
+   const categoryRef = useRef<ScrollViewInstance>(null);
+   const brandRef = useRef<ScrollViewInstance>(null);
+   const sizeRef = useRef<ScrollViewInstance>(null);
 
    const [isSearchFocused, setIsSearchFocused] = useState(false);
 

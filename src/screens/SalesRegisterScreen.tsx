@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
    View, Text, ScrollView, Pressable, StyleSheet, TextInput,
    ActivityIndicator, Modal, useWindowDimensions, FlatList, Platform,
@@ -8,12 +8,12 @@ import {
    ShoppingBag, Plus, Minus, CheckCircle2, CreditCard, Banknote, Smartphone,
    User, Phone, ChevronLeft, ChevronRight, X, QrCode, Pencil, Trash2, Crown,
    Coins, AlertCircle, Check, ChevronDown, ChevronUp, Settings,
-   Percent, DollarSign, Tag,
+   Percent, DollarSign, Tag, Euro, RefreshCw, Clock3,
 } from 'lucide-react-native';
 import { Product } from '../types/inventory';
 import { Sale, SaleItem, PaymentMethod, Seller, PaymentSplit, SaleCombo } from '../types/sale';
 import { createSeller, updateSeller, deleteSeller } from '../services/sellerService';
-import { enqueuePendingSale } from '../services/offlineSyncService';
+import { enqueuePendingSale, generateClientSaleId } from '../services/offlineSyncService';
 import { createSale } from '../services/saleService';
 import { showAlert, showConfirm } from '../utils/alert';
 import { SaleReceiptModal } from '../components/SaleReceiptModal';
@@ -26,15 +26,22 @@ import { Combo, AppliedCombo } from '../types/combo';
 import { ComboManagerModal } from '../components/ComboManagerModal';
 import { ComboApplyModal } from '../components/ComboApplyModal';
 import { MONO as T, display } from '../design';
+import { useAuth } from '../context/AuthContext';
+import {
+   DEFAULT_RATES,
+   RatesConfig,
+   fetchVenezuelaRates,
+   saveRates,
+   subscribeToRates,
+} from '../services/settingsService';
+import {
+   countWholesalePieces,
+   isWholesaleQuantity,
+   resolveProductPrices,
+   roundMoney,
+} from '../utils/pricingUtils';
 
 const ITEMS_PER_PAGE = 10;
-const WHOLESALE_THRESHOLD = 6;
-const RATE_STORAGE_KEYS = {
-   eur: 'jdstore.eur_to_bs_rate',
-   usd: 'jdstore.usd_to_bs_rate',
-};
-const DEFAULT_RATE = 50;
-
 const P = ({ style, ...rest }: any) => (
    <Pressable {...rest} style={({ pressed }: any) => [style, pressed && styles.pressed]} />
 );
@@ -46,16 +53,10 @@ const PAYMENT_OPTIONS = [
    { id: 'binance', label: 'Binance', icon: QrCode },
 ] as const;
 
-const getInitialRate = (which: 'eur' | 'usd'): number => {
-   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const saved = window.localStorage.getItem(RATE_STORAGE_KEYS[which]);
-      const parsed = saved ? Number(saved) : NaN;
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RATE;
-   }
-   return DEFAULT_RATE;
-};
+const getInitialRate = (which: 'eur' | 'usd'): number =>
+   which === 'eur' ? DEFAULT_RATES.eurToBsRate : DEFAULT_RATES.usdToBsRate;
 
-type DiscountType = 'none' | 'percent' | 'fixed';
+type DiscountType = 'none' | 'percent' | 'fixed' | 'eur';
 
 interface Props {
    isOnline?: boolean;
@@ -114,6 +115,13 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
 
    const [showRatesModal, setShowRatesModal] = useState(false);
+   const [ratesMeta, setRatesMeta] = useState<RatesConfig>(DEFAULT_RATES);
+   const [fetchingRates, setFetchingRates] = useState(false);
+   const [savingRates, setSavingRates] = useState(false);
+   const [ratesFeedback, setRatesFeedback] = useState<string | null>(null);
+   const ratesDirtyRef = useRef(false);
+   const ratesModalOpenRef = useRef(false);
+   const pendingRatesRef = useRef<RatesConfig | null>(null);
    const [showClientSection, setShowClientSection] = useState(false);
 
    const [viewerImage, setViewerImage] = useState<string | null>(null);
@@ -128,6 +136,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const [showComboApply, setShowComboApply] = useState(false);
 
    const insets = useSafeAreaInsets();
+   const { appUser } = useAuth();
 
    useEffect(() => {
       if (!selectedSeller && sellers.length > 0) {
@@ -135,12 +144,31 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }
    }, [sellers, selectedSeller]);
 
+   // Mantiene el ref sincronizado para no pisar las tasas mientras el
+   // operador las está editando en el modal.
    useEffect(() => {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-         window.localStorage.setItem(RATE_STORAGE_KEYS.eur, String(eurToBsRate));
-         window.localStorage.setItem(RATE_STORAGE_KEYS.usd, String(usdToBsRate));
-      }
-   }, [eurToBsRate, usdToBsRate]);
+      ratesModalOpenRef.current = showRatesModal;
+   }, [showRatesModal]);
+
+   // Tasa central en Firestore: todos los POS ven la misma tasa vigente.
+   useEffect(() => {
+      const unsubscribe = subscribeToRates((remote) => {
+         if (!remote) return;
+         setRatesMeta(remote);
+
+         if (ratesModalOpenRef.current && ratesDirtyRef.current) {
+            pendingRatesRef.current = remote;
+            return;
+         }
+
+         setEurToBsRate(remote.eurToBsRate);
+         setUsdToBsRate(remote.usdToBsRate);
+         setEurRateInput(String(remote.eurToBsRate));
+         setUsdRateInput(String(remote.usdToBsRate));
+         ratesDirtyRef.current = false;
+      });
+      return unsubscribe;
+   }, []);
 
    useEffect(() => {
       if (cart.length === 0 && discountType !== 'none') {
@@ -178,18 +206,20 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    // 👈 CAMBIO 1: cartCount ahora es el número real de ítems (para los badges visuales)
    const cartCount = cart.reduce((n, i) => n + i.quantity, 0);
 
-   // 👈 CAMBIO 2: Calculamos las "piezas equivalentes" para el modo mayor
-   const wholesalePiecesCount = useMemo(() => {
-      return cart.reduce((acc, item) => {
-         const prod = products.find(p => (p.id || p.code) === item.productId);
-         // Si el producto es un conjunto, multiplicamos por 2
-         const multiplier = prod?.category === 'Conjuntos' ? 2 : 1;
-         return acc + (item.quantity * multiplier);
-      }, 0);
-   }, [cart, products]);
+   // 👈 CAMBIO 2: Piezas equivalentes con la regla unificada (Conjuntos = 2)
+   const wholesalePiecesCount = useMemo(
+      () =>
+         countWholesalePieces(
+            cart.map((item) => ({
+               product: products.find((p) => (p.id || p.code) === item.productId) || null,
+               quantity: item.quantity,
+            }))
+         ),
+      [cart, products]
+   );
 
-   // 👈 CAMBIO 3: Evaluamos el umbral con las piezas equivalentes
-   const isWholesale = wholesalePiecesCount >= WHOLESALE_THRESHOLD;
+   // 👈 CAMBIO 3: Umbral unificado de 6 piezas totales
+   const isWholesale = isWholesaleQuantity(wholesalePiecesCount);
 
    // ==========================================
    // PRECIOS CALCULADOS POR ITEM
@@ -197,24 +227,18 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const pricedCart: PricedItem[] = useMemo(() => {
       return cart.map((item) => {
          const product = products.find((p) => (p.id || p.code) === item.productId);
-         const wholesaleUSD = Number((product as any)?.wholesalePrice) || 0;
-         const retailUSD = Number(product?.price) || item.unitPrice;
-         const wholesaleBS = Number((product as any)?.bolivarWholesalePrice) || 0;
-         const retailBS = Number((product as any)?.bolivarPrice) || 0;
-
-         const unitPriceUSD = isWholesale && wholesaleUSD > 0 ? wholesaleUSD : retailUSD;
-         const bsRefUnit = isWholesale && wholesaleBS > 0 ? wholesaleBS : retailBS;
-         const bsRefTotal = bsRefUnit * item.quantity;
-         const bsActualTotal = bsRefTotal * eurToBsRate;
+         const prices = resolveProductPrices(product, isWholesale, item.unitPrice);
+         const bsRefTotal = roundMoney(prices.unitPriceBS * item.quantity);
+         const bsActualTotal = roundMoney(bsRefTotal * eurToBsRate);
 
          return {
             ...item,
-            unitPrice: unitPriceUSD,
-            totalPrice: unitPriceUSD * item.quantity,
-            bsRefUnit,
+            unitPrice: prices.unitPriceUSD,
+            totalPrice: roundMoney(prices.unitPriceUSD * item.quantity),
+            bsRefUnit: prices.unitPriceBS,
             bsRefTotal,
             bsActualTotal,
-            isWholesalePrice: isWholesale && wholesaleUSD > 0,
+            isWholesalePrice: prices.isWholesaleApplied,
          };
       });
    }, [cart, products, isWholesale, eurToBsRate]);
@@ -259,8 +283,8 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }, 0);
    }, [pricedCart, consumedByCombos]);
 
-   const subtotalBeforeDiscountUSD = itemsOutsideCombosUSD + comboInfo.totalCombosUSD;
-   const subtotalBeforeDiscountBSRef = itemsOutsideCombosBSRef + comboInfo.totalCombosBSRef;
+   const subtotalBeforeDiscountUSD = roundMoney(itemsOutsideCombosUSD + comboInfo.totalCombosUSD);
+   const subtotalBeforeDiscountBSRef = roundMoney(itemsOutsideCombosBSRef + comboInfo.totalCombosBSRef);
 
    const explicitDiscountUSD = useMemo(() => {
       if (discountType === 'none') return 0;
@@ -269,46 +293,62 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
 
       if (discountType === 'percent') {
          const pct = Math.min(100, val);
-         return (subtotalBeforeDiscountUSD * pct) / 100;
+         return roundMoney((subtotalBeforeDiscountUSD * pct) / 100);
       }
-      return Math.min(subtotalBeforeDiscountUSD, val);
-   }, [discountType, discountValue, subtotalBeforeDiscountUSD]);
+
+      if (discountType === 'eur') {
+         // Descuento directo en € (precio ref. Euro/Bs): se convierte a Bs
+         // con la tasa EUR y de ahí a USD con la tasa USD.
+         if (usdToBsRate <= 0) return 0;
+         return roundMoney(
+            Math.min(subtotalBeforeDiscountUSD, (val * eurToBsRate) / usdToBsRate)
+         );
+      }
+
+      return roundMoney(Math.min(subtotalBeforeDiscountUSD, val));
+   }, [discountType, discountValue, subtotalBeforeDiscountUSD, eurToBsRate, usdToBsRate]);
 
    const explicitDiscountBS = useMemo(() => {
       if (discountType === 'none') return 0;
       const val = parseFloat(discountValue);
       if (!Number.isFinite(val) || val <= 0) return 0;
 
-      const subtotalBSBefore = subtotalBeforeDiscountBSRef * eurToBsRate;
+      const subtotalBSBefore = roundMoney(subtotalBeforeDiscountBSRef * eurToBsRate);
 
       if (discountType === 'percent') {
          const pct = Math.min(100, val);
-         return (subtotalBSBefore * pct) / 100;
+         return roundMoney((subtotalBSBefore * pct) / 100);
       }
-      return Math.min(subtotalBSBefore, val * usdToBsRate);
+
+      if (discountType === 'eur') {
+         return roundMoney(Math.min(subtotalBSBefore, val * eurToBsRate));
+      }
+
+      return roundMoney(Math.min(subtotalBSBefore, val * usdToBsRate));
    }, [discountType, discountValue, subtotalBeforeDiscountBSRef, eurToBsRate, usdToBsRate]);
 
-   const totalUSD = Math.max(0, subtotalBeforeDiscountUSD - explicitDiscountUSD);
-   const totalBSExpected = Math.max(
-      0,
-      subtotalBeforeDiscountBSRef * eurToBsRate - explicitDiscountBS
+   const totalUSD = roundMoney(Math.max(0, subtotalBeforeDiscountUSD - explicitDiscountUSD));
+   const totalBSExpected = roundMoney(
+      Math.max(0, subtotalBeforeDiscountBSRef * eurToBsRate - explicitDiscountBS)
    );
-   const totalBSRef = eurToBsRate > 0 ? totalBSExpected / eurToBsRate : 0;
-   const totalBSExpectedUSDEquiv = usdToBsRate > 0 ? totalBSExpected / usdToBsRate : 0;
+   const totalBSRef = eurToBsRate > 0 ? roundMoney(totalBSExpected / eurToBsRate) : 0;
+   const totalBSExpectedUSDEquiv = usdToBsRate > 0 ? roundMoney(totalBSExpected / usdToBsRate) : 0;
 
    const subtotalAllItems = useMemo(() => {
       if (isFullBsPayment) {
          if (usdToBsRate <= 0) return 0;
-         return pricedCart.reduce(
-            (s, i) => s + (i.bsRefTotal * eurToBsRate) / usdToBsRate,
-            0
+         return roundMoney(
+            pricedCart.reduce(
+               (s, i) => s + (i.bsRefTotal * eurToBsRate) / usdToBsRate,
+               0
+            )
          );
       }
-      return pricedCart.reduce((s, i) => s + i.totalPrice, 0);
+      return roundMoney(pricedCart.reduce((s, i) => s + i.totalPrice, 0));
    }, [pricedCart, isFullBsPayment, eurToBsRate, usdToBsRate]);
 
-   const finalTotalUSD = isFullBsPayment ? totalBSExpectedUSDEquiv : totalUSD;
-   const discountAmount = Math.max(0, subtotalAllItems - finalTotalUSD);
+   const finalTotalUSD = roundMoney(isFullBsPayment ? totalBSExpectedUSDEquiv : totalUSD);
+   const discountAmount = roundMoney(Math.max(0, subtotalAllItems - finalTotalUSD));
 
    useEffect(() => {
       if (appliedCombos.length === 0) return;
@@ -335,15 +375,19 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       // eslint-disable-next-line react-hooks/exhaustive-deps
    }, [isFullBsPayment, totalBSExpected, cart.length]);
 
-   const paidUSD = paymentSplits.filter((s) => s.currency === 'USD').reduce((s, p) => s + p.amount, 0);
-   const paidBS = paymentSplits.filter((s) => s.currency === 'BS').reduce((s, p) => s + p.amount, 0);
-   const paidInUSDEquiv = paidUSD + (usdToBsRate > 0 ? paidBS / usdToBsRate : 0);
+   const paidUSD = roundMoney(
+      paymentSplits.filter((s) => s.currency === 'USD').reduce((s, p) => s + p.amount, 0)
+   );
+   const paidBS = roundMoney(
+      paymentSplits.filter((s) => s.currency === 'BS').reduce((s, p) => s + p.amount, 0)
+   );
+   const paidInUSDEquiv = roundMoney(paidUSD + (usdToBsRate > 0 ? paidBS / usdToBsRate : 0));
 
-   const remainingInUSDEquiv = Math.max(0, totalUSD - paidInUSDEquiv);
-   const overpaidUSD = Math.max(0, paidInUSDEquiv - totalUSD);
+   const remainingInUSDEquiv = roundMoney(Math.max(0, totalUSD - paidInUSDEquiv));
+   const overpaidUSD = roundMoney(Math.max(0, paidInUSDEquiv - totalUSD));
 
-   const bsShortfall = isFullBsPayment ? Math.max(0, totalBSExpected - paidBS) : 0;
-   const bsOverpay = isFullBsPayment ? Math.max(0, paidBS - totalBSExpected) : 0;
+   const bsShortfall = isFullBsPayment ? roundMoney(Math.max(0, totalBSExpected - paidBS)) : 0;
+   const bsOverpay = isFullBsPayment ? roundMoney(Math.max(0, paidBS - totalBSExpected)) : 0;
 
    const isCovered = isFullBsPayment ? bsShortfall <= 1 : remainingInUSDEquiv <= 0.01;
    const isFullyCovered = isCovered;
@@ -384,7 +428,11 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             return;
          }
          const updated = [...cart];
-         updated[existingIndex] = { ...updated[existingIndex], quantity: updated[existingIndex].quantity + 1 };
+         updated[existingIndex] = {
+            ...updated[existingIndex],
+            productCode: selectedProduct.code || updated[existingIndex].productCode || 'S/N',
+            quantity: updated[existingIndex].quantity + 1,
+         };
          setCart(updated);
       } else {
          const newItem: SaleItem = {
@@ -467,18 +515,130 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       setShowDiscountModal(false);
    };
 
+   const applyRatesConfig = (rates: RatesConfig) => {
+      setRatesMeta(rates);
+      setEurToBsRate(rates.eurToBsRate);
+      setUsdToBsRate(rates.usdToBsRate);
+      setEurRateInput(String(rates.eurToBsRate));
+      setUsdRateInput(String(rates.usdToBsRate));
+   };
+
+   const openRatesModal = () => {
+      setEurRateInput(String(eurToBsRate));
+      setUsdRateInput(String(usdToBsRate));
+      setRatesFeedback(null);
+      ratesDirtyRef.current = false;
+      pendingRatesRef.current = null;
+      setShowRatesModal(true);
+   };
+
+   const closeRatesModal = () => {
+      // Si llegó una tasa remota mientras editábamos, se aplica al cerrar.
+      const pending = pendingRatesRef.current;
+      if (pending) {
+         applyRatesConfig(pending);
+         pendingRatesRef.current = null;
+      } else {
+         // Cancelar descarta ajustes/consultas no guardadas.
+         setEurRateInput(String(ratesMeta.eurToBsRate));
+         setUsdRateInput(String(ratesMeta.usdToBsRate));
+         setEurToBsRate(ratesMeta.eurToBsRate);
+         setUsdToBsRate(ratesMeta.usdToBsRate);
+      }
+      ratesDirtyRef.current = false;
+      setRatesFeedback(null);
+      setShowRatesModal(false);
+   };
+
    const makeRateHandler = (
       setter: (n: number) => void,
       inputSetter: (s: string) => void,
    ) => (val: string) => {
       const clean = val.replace(/[^0-9.]/g, '');
       inputSetter(clean);
+      ratesDirtyRef.current = true;
+      setRatesFeedback(null);
       const parsed = parseFloat(clean);
       if (Number.isFinite(parsed) && parsed > 0) setter(parsed);
    };
 
    const handleEurRateChange = makeRateHandler(setEurToBsRate, setEurRateInput);
    const handleUsdRateChange = makeRateHandler(setUsdToBsRate, setUsdRateInput);
+
+   const handleFetchRemoteRates = async () => {
+      if (fetchingRates) return;
+      setFetchingRates(true);
+      setRatesFeedback(null);
+      try {
+         const remote = await fetchVenezuelaRates();
+         if (remote.usdToBsRate !== undefined) {
+            setUsdToBsRate(remote.usdToBsRate);
+            setUsdRateInput(String(remote.usdToBsRate));
+         }
+         if (remote.eurToBsRate !== undefined) {
+            setEurToBsRate(remote.eurToBsRate);
+            setEurRateInput(String(remote.eurToBsRate));
+         }
+         ratesDirtyRef.current = true;
+
+         const fetched: string[] = [];
+         if (remote.usdToBsRate !== undefined) fetched.push(`USD ${remote.usdToBsRate}`);
+         if (remote.eurToBsRate !== undefined) fetched.push(`EUR ${remote.eurToBsRate}`);
+         setRatesFeedback(
+            `Tasas consultadas: ${fetched.join(' · ')} Bs. ` +
+            'Ajústalas si hace falta y pulsa "Guardar tasas" para publicarlas.'
+         );
+
+         if (remote.errors.length > 0) {
+            showAlert(
+               'Actualización parcial',
+               `Se actualizaron las tasas disponibles, pero hubo errores:\n\n${remote.errors.join('\n')}`
+            );
+         }
+      } catch (error: any) {
+         showAlert(
+            'No se pudo consultar la API',
+            error?.message ||
+            'Verifica tu conexión a internet. Si el navegador bloquea la petición por CORS, ingresa las tasas manualmente.'
+         );
+      } finally {
+         setFetchingRates(false);
+      }
+   };
+
+   const handleSaveRates = async () => {
+      if (savingRates) return;
+      const eur = parseFloat(eurRateInput);
+      const usd = parseFloat(usdRateInput);
+
+      if (!Number.isFinite(eur) || eur <= 0 || !Number.isFinite(usd) || usd <= 0) {
+         showAlert('Tasas inválidas', 'Ingresa una tasa EUR y una tasa USD mayores a 0.');
+         return;
+      }
+
+      setSavingRates(true);
+      try {
+         const updatedBy =
+            appUser?.displayName || appUser?.email || appUser?.uid || 'Personal';
+         const saved = await saveRates(
+            { eurToBsRate: roundMoney(eur), usdToBsRate: roundMoney(usd) },
+            updatedBy
+         );
+         applyRatesConfig(saved);
+         ratesDirtyRef.current = false;
+         pendingRatesRef.current = null;
+         setRatesFeedback(null);
+         setShowRatesModal(false);
+         showAlert(
+            'Tasas guardadas',
+            'La tasa central fue publicada. Todos los vendedores conectados la usarán en tiempo real.'
+         );
+      } catch (error: any) {
+         showAlert('Error al guardar', error?.message || 'No se pudieron guardar las tasas.');
+      } finally {
+         setSavingRates(false);
+      }
+   };
 
    const openSplitModal = () => {
       if (isFullBsPayment) {
@@ -513,7 +673,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          id: `split_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
          method: newSplitMethod,
          currency,
-         amount,
+         amount: roundMoney(amount),
          ...(newSplitRef.trim() && { reference: newSplitRef.trim() }),
       };
 
@@ -675,6 +835,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
    const executeCompleteSale = async () => {
       if (!selectedSeller) return;
 
+      const clientSaleId = generateClientSaleId();
       const receiptNumber = `REC-${Math.floor(100000 + Math.random() * 900000)}`;
       const isOffline = !isOnline;
 
@@ -686,9 +847,11 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       const itemsPayload = pricedCart.map((item) => {
          const product = products.find((p) => (p.id || p.code) === item.productId);
 
-         const effectiveUnitUSD = isFullBsPayment && usdToBsRate > 0
-            ? (item.bsRefUnit * eurToBsRate) / usdToBsRate
-            : item.unitPrice;
+         const effectiveUnitUSD = roundMoney(
+            isFullBsPayment && usdToBsRate > 0
+               ? (item.bsRefUnit * eurToBsRate) / usdToBsRate
+               : item.unitPrice
+         );
 
          return {
             productId: item.productId,
@@ -698,39 +861,61 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             color: item.color,
             size: item.size,
             quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            totalPrice: item.totalPrice,
+            unitPrice: roundMoney(item.unitPrice),
+            totalPrice: roundMoney(item.totalPrice),
             effectiveUnitPriceUSD: effectiveUnitUSD,
-            effectiveTotalUSD: effectiveUnitUSD * item.quantity,
-            unitPriceBSRef: item.bsRefUnit,
-            totalBSRef: item.bsRefTotal,
+            effectiveTotalUSD: roundMoney(effectiveUnitUSD * item.quantity),
+            unitPriceBSRef: roundMoney(item.bsRefUnit),
+            totalBSRef: roundMoney(item.bsRefTotal),
             purchasePrice: (product as any)?.purchasePrice,
          };
       });
+
+      const normalizedSplits = paymentSplits.map((split) => ({
+         ...split,
+         amount: roundMoney(split.amount),
+      }));
+
+      // Vuelto explícito (M-02): si el cliente entregó más que el total.
+      const changeAmountUSD = roundMoney(
+         isFullBsPayment
+            ? (usdToBsRate > 0 ? bsOverpay / usdToBsRate : 0)
+            : overpaidUSD
+      );
+      const changeAmountBS = isFullBsPayment ? roundMoney(bsOverpay) : 0;
 
       const saleDataToSave: any = {
          receiptNumber,
          sellerId: selectedSeller.id,
          sellerName: selectedSeller.name,
          items: itemsPayload,
-         subtotal: subtotalAllItems,
-         discount: discountAmount,
-         total: finalTotalUSD,
-         totalCatalogUSD: subtotalBeforeDiscountUSD,
+         subtotal: roundMoney(subtotalAllItems),
+         discount: roundMoney(discountAmount),
+         total: roundMoney(finalTotalUSD),
+         totalCatalogUSD: roundMoney(subtotalBeforeDiscountUSD),
          paymentMethod: primaryMethod,
-         paymentSplits,
-         totalBS: totalBSExpected,
-         totalBSRef,
-         eurToBsRate,
-         usdToBsRate,
+         paymentSplits: normalizedSplits,
+         totalBS: roundMoney(totalBSExpected),
+         totalBSRef: roundMoney(totalBSRef),
+         eurToBsRate: roundMoney(eurToBsRate),
+         usdToBsRate: roundMoney(usdToBsRate),
          isWholesale,
          isFullBsPayment,
+         paidAmountUSD: roundMoney(paidInUSDEquiv),
+         paidAmountBS: roundMoney(paidBS),
+         ...(changeAmountUSD > 0.005 || changeAmountBS > 0.005
+            ? {
+                 changeAmount: changeAmountUSD,
+                 changeAmountBS,
+                 changeCurrency: isFullBsPayment ? 'BS' : 'USD',
+              }
+            : {}),
       };
-      if (discountType !== 'none' && explicitDiscountUSD > 0) {
+      if (discountType !== 'none' && (explicitDiscountUSD > 0 || explicitDiscountBS > 0)) {
          saleDataToSave.explicitDiscountType = discountType;
          saleDataToSave.explicitDiscountValue = parseFloat(discountValue) || 0;
-         saleDataToSave.explicitDiscountUSD = explicitDiscountUSD;
-         saleDataToSave.explicitDiscountBS = explicitDiscountBS;
+         saleDataToSave.explicitDiscountUSD = roundMoney(explicitDiscountUSD);
+         saleDataToSave.explicitDiscountBS = roundMoney(explicitDiscountBS);
       }
       if (customerName.trim()) saleDataToSave.customerName = customerName.trim();
       if (customerPhone.trim()) saleDataToSave.customerPhone = customerPhone.trim();
@@ -755,7 +940,9 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       setProcessing(true);
 
       const buildOfflineSale = () => ({
-         id: `OFFLINE-${Date.now()}`,
+         id: clientSaleId,
+         clientSaleId,
+         status: 'pending' as const,
          ...saleDataToSave,
          createdAt: new Date().toISOString(),
       });
@@ -767,7 +954,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          try {
             await enqueuePendingSale(buildOfflineSale() as any);
             onPendingChange?.();
-            setLastCompletedSale(buildCompletedSale(`OFFLINE-${Date.now()}`));
+            setLastCompletedSale(buildCompletedSale(clientSaleId));
             resetCart();
             if (!split) setPanel('catalog');
          } catch {
@@ -779,7 +966,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       }
 
       try {
-         const saleId = await createSale(saleDataToSave);
+         const saleId = await createSale(saleDataToSave, clientSaleId);
          setLastCompletedSale(buildCompletedSale(saleId));
          resetCart();
          if (!split) setPanel('catalog');
@@ -803,7 +990,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
          try {
             await enqueuePendingSale(buildOfflineSale() as any);
             onPendingChange?.();
-            setLastCompletedSale(buildCompletedSale(`OFFLINE-${Date.now()}`));
+            setLastCompletedSale(buildCompletedSale(clientSaleId));
             resetCart();
             if (!split) setPanel('catalog');
             showAlert(
@@ -854,7 +1041,8 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
       );
    };
 
-   const discountActive = discountType !== 'none' && explicitDiscountUSD > 0;
+   const discountActive =
+      discountType !== 'none' && (explicitDiscountUSD > 0 || explicitDiscountBS > 0);
 
    const checkout = (
       <View style={styles.checkoutSection}>
@@ -894,11 +1082,18 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
             </P>
          </ScrollView>
 
-         <P style={styles.ratesChip} onPress={() => setShowRatesModal(true)}>
+         <P style={styles.ratesChip} onPress={openRatesModal}>
             <Coins size={13} color="#4338CA" />
-            <Text style={styles.ratesChipText}>
-               1 USD = {usdToBsRate} Bs · 1 EUR = {eurToBsRate} Bs
-            </Text>
+            <View style={{ flex: 1, minWidth: 0 }}>
+               <Text style={styles.ratesChipText}>
+                  1 USD = {usdToBsRate} Bs · 1 EUR = {eurToBsRate} Bs
+               </Text>
+               <Text style={styles.ratesMetaText} numberOfLines={1}>
+                  {ratesMeta.updatedAt > 0
+                     ? `Actualizado ${new Date(ratesMeta.updatedAt).toLocaleString('es-VE')}${ratesMeta.updatedBy ? ` · ${ratesMeta.updatedBy}` : ''}`
+                     : 'Tasa central sin configurar · valor por defecto'}
+               </Text>
+            </View>
             <Settings size={12} color="#4338CA" />
          </P>
 
@@ -1001,6 +1196,8 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                <View style={styles.discountActiveIconBox}>
                   {discountType === 'percent' ? (
                      <Percent size={14} color="#B45309" />
+                  ) : discountType === 'eur' ? (
+                     <Euro size={14} color="#B45309" />
                   ) : (
                      <DollarSign size={14} color="#B45309" />
                   )}
@@ -1009,11 +1206,14 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                   <Text style={styles.discountActiveTitle} numberOfLines={1}>
                      {discountType === 'percent'
                         ? `Descuento ${discountValue}%`
-                        : `Descuento $${discountValue}`}
+                        : discountType === 'eur'
+                           ? `Descuento €${discountValue} (ref. Euro/Bs)`
+                           : `Descuento $${discountValue}`}
                   </Text>
                   <Text style={styles.discountActiveAmount}>
                      -${explicitDiscountUSD.toFixed(2)} USD
                      {explicitDiscountBS > 0 ? ` · -${explicitDiscountBS.toFixed(2)} Bs` : ''}
+                     {discountType === 'eur' ? ` · -€${discountValue} ref` : ''}
                   </Text>
                </View>
             </View>
@@ -1335,7 +1535,11 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                            <View style={styles.cartHeaderDiscountBadge}>
                               <Tag size={10} color="#B45309" />
                               <Text style={styles.cartHeaderDiscountText}>
-                                 {discountType === 'percent' ? `-${discountValue}%` : `-$${discountValue}`}
+                                 {discountType === 'percent'
+                                    ? `-${discountValue}%`
+                                    : discountType === 'eur'
+                                       ? `-€${discountValue}`
+                                       : `-$${discountValue}`}
                               </Text>
                            </View>
                         )}
@@ -1390,7 +1594,9 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                            const isFullyInCombo = consumed > 0 && consumed >= item.quantity;
                            const isPartiallyInCombo = consumed > 0 && consumed < item.quantity;
                            const remainingQty = Math.max(0, item.quantity - consumed);
-                           const isConjunto = products.find((p) => (p.id || p.code) === item.productId)?.category === 'Conjuntos';
+                           const resolvedProduct = products.find((p) => (p.id || p.code) === item.productId);
+                           const isConjunto = resolvedProduct?.category === 'Conjuntos';
+                           const itemCode = item.productCode || resolvedProduct?.code || 'S/N';
 
                            return (
                               <View key={itemKey} style={styles.cartItemRow}>
@@ -1398,7 +1604,10 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                                     <Cover uri={item.productImage} name={item.name} bg={T.imgBg} fg={T.line} style={styles.cartItemImg} />
                                  </Pressable>
                                  <View style={{ flex: 1, minWidth: 120 }}>
-                                    <Text style={styles.cartItemName} numberOfLines={2}>{item.name}</Text>
+                                    <Text style={styles.cartItemName} numberOfLines={2}>
+                                       <Text style={styles.cartItemCode}>[{itemCode}] </Text>
+                                       {item.name}
+                                    </Text>
                                     <Text style={styles.cartItemDetail}>Color: {item.color} · Talla: {item.size}</Text>
                                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
                                        <Text style={styles.cartItemPrice}>${item.unitPrice.toFixed(2)} c/u</Text>
@@ -1623,9 +1832,9 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                   </View>
                   <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled">
                      <Text style={styles.subLabel}>Tipo:</Text>
-                     <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16 }}>
+                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
                         <P
-                           style={[styles.chip, discountType === 'percent' && styles.chipOn, { flex: 1, justifyContent: 'center' }]}
+                           style={[styles.chip, discountType === 'percent' && styles.chipOn, { flexGrow: 1, flexBasis: '30%', justifyContent: 'center' }]}
                            onPress={() => { setDiscountType('percent'); setDiscountValue(''); }}
                         >
                            <Percent size={14} color={discountType === 'percent' ? T.onSolid : T.inkMute} />
@@ -1634,12 +1843,21 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                            </Text>
                         </P>
                         <P
-                           style={[styles.chip, discountType === 'fixed' && styles.chipOn, { flex: 1, justifyContent: 'center' }]}
+                           style={[styles.chip, discountType === 'fixed' && styles.chipOn, { flexGrow: 1, flexBasis: '30%', justifyContent: 'center' }]}
                            onPress={() => { setDiscountType('fixed'); setDiscountValue(''); }}
                         >
                            <DollarSign size={14} color={discountType === 'fixed' ? T.onSolid : T.inkMute} />
                            <Text style={[styles.chipText, discountType === 'fixed' && styles.chipOnText]}>
-                              Monto fijo
+                              Monto USD
+                           </Text>
+                        </P>
+                        <P
+                           style={[styles.chip, discountType === 'eur' && styles.chipOn, { flexGrow: 1, flexBasis: '30%', justifyContent: 'center' }]}
+                           onPress={() => { setDiscountType('eur'); setDiscountValue(''); }}
+                        >
+                           <Euro size={14} color={discountType === 'eur' ? T.onSolid : T.inkMute} />
+                           <Text style={[styles.chipText, discountType === 'eur' && styles.chipOnText]}>
+                              Monto €
                            </Text>
                         </P>
                      </View>
@@ -1682,20 +1900,43 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                         </>
                      )}
 
+                     {discountType === 'eur' && (
+                        <>
+                           <Text style={styles.subLabel}>Presets (€ ref. Euro/Bs):</Text>
+                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                              {[1, 2, 5, 10, 20, 50].map((d) => (
+                                 <P
+                                    key={d}
+                                    style={[styles.chip, discountValue === String(d) && styles.chipOn]}
+                                    onPress={() => setDiscountValue(String(d))}
+                                 >
+                                    <Text style={[styles.chipText, discountValue === String(d) && styles.chipOnText]}>
+                                       €{d}
+                                    </Text>
+                                 </P>
+                              ))}
+                           </View>
+                        </>
+                     )}
+
                      <Text style={styles.subLabel}>
-                        {discountType === 'percent' ? 'Porcentaje (0-100):' : 'Monto en USD:'}
+                        {discountType === 'percent'
+                           ? 'Porcentaje (0-100):'
+                           : discountType === 'eur'
+                              ? 'Monto exacto en € (ref. Euro/Bs):'
+                              : 'Monto en USD:'}
                      </Text>
                      <TextInput
                         style={styles.sellerInput}
                         value={discountValue}
                         onChangeText={(v) => setDiscountValue(v.replace(/[^0-9.]/g, ''))}
                         keyboardType="numeric"
-                        placeholder={discountType === 'percent' ? '10' : '5.00'}
+                        placeholder={discountType === 'percent' ? '10' : discountType === 'eur' ? '5.00' : '5.00'}
                         placeholderTextColor={T.inkMute}
                         autoFocus
                      />
 
-                     {explicitDiscountUSD > 0 && (
+                     {(explicitDiscountUSD > 0 || explicitDiscountBS > 0) && (
                         <View style={[styles.splitConvertPreview, { marginTop: 12 }]}>
                            <Text style={[styles.splitConvertText, { fontWeight: '800', color: '#B45309' }]}>
                               Descuento: -${explicitDiscountUSD.toFixed(2)} USD
@@ -1703,6 +1944,11 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                            {explicitDiscountBS > 0 && (
                               <Text style={[styles.splitConvertText, { color: '#7C3AED', marginTop: 4 }]}>
                                  ≈ -{explicitDiscountBS.toFixed(2)} Bs
+                              </Text>
+                           )}
+                           {discountType === 'eur' && (
+                              <Text style={[styles.splitConvertText, { color: '#4338CA', marginTop: 4 }]}>
+                                 -€{discountValue} ref. Euro/Bs
                               </Text>
                            )}
                         </View>
@@ -1774,11 +2020,18 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                <View style={styles.sellerModalCard}>
                   <View style={styles.sellerModalHeader}>
                      <Text style={styles.sellerModalTitle}>Tasas del Día</Text>
-                     <P onPress={() => setShowRatesModal(false)}>
+                     <P onPress={closeRatesModal}>
                         <X size={20} color={T.onBar} />
                      </P>
                   </View>
-                  <View style={{ padding: 20 }}>
+                  <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled">
+                     <View style={styles.rateCentralBanner}>
+                        <Clock3 size={14} color="#4338CA" />
+                        <Text style={styles.rateCentralText}>
+                           Tasa central compartida. Al guardar, todos los vendedores conectados la recibirán en tiempo real.
+                        </Text>
+                     </View>
+
                      <Text style={styles.subLabel}>1 EUR =</Text>
                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                         <TextInput
@@ -1789,11 +2042,12 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                            placeholder="50"
                            placeholderTextColor={T.inkMute}
                            selectTextOnFocus
+                           editable={!savingRates}
                         />
                         <Text style={{ fontSize: 15, fontWeight: '800', color: T.inkSoft }}>Bs</Text>
                      </View>
                      <Text style={styles.rateRowHint}>
-                        Referencia para precios en Bs del catálogo
+                        Referencia para precios en Bs/€ del catálogo
                      </Text>
 
                      <Text style={[styles.subLabel, { marginTop: 14 }]}>1 USD =</Text>
@@ -1806,6 +2060,7 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                            placeholder="40"
                            placeholderTextColor={T.inkMute}
                            selectTextOnFocus
+                           editable={!savingRates}
                         />
                         <Text style={{ fontSize: 15, fontWeight: '800', color: T.inkSoft }}>Bs</Text>
                      </View>
@@ -1813,12 +2068,52 @@ export const SalesRegisterScreen: React.FC<Props> = ({ isOnline = true, onPendin
                         Conversión de pagos en Bs → USD equivalentes
                      </Text>
 
-                     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 20 }}>
-                        <P style={styles.sellerSaveBtn} onPress={() => setShowRatesModal(false)}>
-                           <Text style={styles.sellerSaveText}>Listo</Text>
+                     <P
+                        style={[styles.autoRateBtn, fetchingRates && { opacity: 0.7 }]}
+                        onPress={handleFetchRemoteRates}
+                        disabled={fetchingRates || savingRates}
+                     >
+                        {fetchingRates ? (
+                           <ActivityIndicator size="small" color="#4338CA" />
+                        ) : (
+                           <RefreshCw size={14} color="#4338CA" />
+                        )}
+                        <Text style={styles.autoRateBtnText}>
+                           {fetchingRates ? 'Consultando API…' : 'Consultar tasas automáticamente'}
+                        </Text>
+                     </P>
+
+                     {ratesFeedback ? (
+                        <View style={styles.rateFeedbackBox}>
+                           <Check size={13} color="#047857" />
+                           <Text style={styles.rateFeedbackText}>{ratesFeedback}</Text>
+                        </View>
+                     ) : null}
+
+                     {ratesMeta.updatedAt > 0 ? (
+                        <Text style={styles.rateUpdatedText}>
+                           Última publicación: {new Date(ratesMeta.updatedAt).toLocaleString('es-VE')}
+                           {ratesMeta.updatedBy ? ` · ${ratesMeta.updatedBy}` : ''}
+                        </Text>
+                     ) : null}
+
+                     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+                        <P style={styles.sellerCancelBtn} onPress={closeRatesModal} disabled={savingRates}>
+                           <Text style={styles.sellerCancelText}>Cancelar</Text>
+                        </P>
+                        <P
+                           style={[styles.sellerSaveBtn, (savingRates || fetchingRates) && { opacity: 0.7 }]}
+                           onPress={handleSaveRates}
+                           disabled={savingRates || fetchingRates}
+                        >
+                           {savingRates ? (
+                              <ActivityIndicator size="small" color={T.onSolid} />
+                           ) : (
+                              <Text style={styles.sellerSaveText}>Guardar tasas</Text>
+                           )}
                         </P>
                      </View>
-                  </View>
+                  </ScrollView>
                </View>
             </View>
          </Modal>
@@ -1930,6 +2225,7 @@ const styles = StyleSheet.create({
    cartItemRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: T.line },
    cartItemImg: { width: 44, height: 56, borderRadius: 6 },
    cartItemName: { fontSize: 14, fontWeight: '700', color: T.ink },
+   cartItemCode: { fontSize: 12, fontWeight: '800', color: '#7C3AED' },
    cartItemDetail: { fontSize: 12, color: T.inkMute },
    cartItemPrice: { fontSize: 12, color: T.inkSoft, fontWeight: '700' },
    cartItemPriceBS: { fontSize: 12, color: '#7C3AED', fontWeight: '700' },
@@ -2154,10 +2450,77 @@ const styles = StyleSheet.create({
       marginBottom: 4,
    },
    ratesChipText: {
-      flex: 1,
+      flexShrink: 1,
       fontSize: 11,
       fontWeight: '700',
       color: '#4338CA',
+   },
+   ratesMetaText: {
+      fontSize: 9,
+      fontWeight: '600',
+      color: '#6366F1',
+      marginTop: 2,
+   },
+   rateCentralBanner: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      padding: 10,
+      backgroundColor: '#EEF2FF',
+      borderWidth: 1,
+      borderColor: '#C7D2FE',
+      borderRadius: 8,
+      marginBottom: 14,
+   },
+   rateCentralText: {
+      flex: 1,
+      fontSize: 11,
+      fontWeight: '600',
+      color: '#4338CA',
+      lineHeight: 15,
+   },
+   autoRateBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      marginTop: 14,
+      paddingVertical: 11,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#C7D2FE',
+      backgroundColor: '#EEF2FF',
+   },
+   autoRateBtnText: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: '#4338CA',
+   },
+   rateFeedbackBox: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      marginTop: 12,
+      padding: 10,
+      backgroundColor: '#F0FDF4',
+      borderWidth: 1,
+      borderColor: '#A7F3D0',
+      borderRadius: 8,
+   },
+   rateFeedbackText: {
+      flex: 1,
+      fontSize: 11,
+      fontWeight: '600',
+      color: '#047857',
+      lineHeight: 15,
+   },
+   rateUpdatedText: {
+      fontSize: 10,
+      fontWeight: '600',
+      color: T.inkMute,
+      marginTop: 10,
+      fontStyle: 'italic',
    },
 
    fullBsToggle: {

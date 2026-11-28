@@ -6,13 +6,13 @@ import {
    TouchableOpacity,
    StyleSheet,
    ActivityIndicator,
-   Alert,
    Animated,
    KeyboardAvoidingView,
    Platform,
    StatusBar,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { showAlert } from '../utils/alert';
 
 // Paleta de diseño (un solo lugar para cambiar colores)
 const C = {
@@ -37,7 +37,7 @@ export const LoginScreen = () => {
 
    const handleLogin = async () => {
       if (!email.trim() || !password.trim()) {
-         Alert.alert('Error', 'Por favor ingresa tu correo y contraseña');
+         showAlert('Error', 'Por favor ingresa tu correo y contraseña');
          return;
       }
 
@@ -45,7 +45,7 @@ export const LoginScreen = () => {
          setSubmitting(true);
          await login(email, password);
       } catch (error: any) {
-         Alert.alert('Error al iniciar sesión', error.message || 'Credenciales inválidas');
+         showAlert('Error al iniciar sesión', error.message || 'Credenciales inválidas');
       } finally {
          setSubmitting(false);
       }
@@ -70,7 +70,7 @@ export const LoginScreen = () => {
          style={styles.container}
          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-         <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+         <StatusBar barStyle="light-content" />
 
          {/* Formas decorativas */}
          <View style={styles.shapeBig} />

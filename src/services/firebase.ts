@@ -1,6 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { initializeAuth, browserLocalPersistence, getReactNativePersistence } from 'firebase/auth';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { initializeAuth, browserLocalPersistence, getAuth } from 'firebase/auth';
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -27,12 +26,11 @@ let dbInstance;
 if (getApps().length === 0) {
   app = initializeApp(firebaseConfig);
 
-  // Inicializamos Auth inyectando AsyncStorage de forma segura para móviles
-  authInstance = initializeAuth(app, {
-    persistence: Platform.OS === 'web'
-      ? browserLocalPersistence
-      : getReactNativePersistence(AsyncStorage),
-  });
+  // App 100% Web/PWA: persistencia local del navegador. En nativo se usa
+  // getAuth (la app no se compila para Android/iOS en este sprint).
+  authInstance = Platform.OS === 'web'
+    ? initializeAuth(app, { persistence: browserLocalPersistence })
+    : getAuth(app);
 
   if (Platform.OS === 'web') {
     dbInstance = initializeFirestore(app, {

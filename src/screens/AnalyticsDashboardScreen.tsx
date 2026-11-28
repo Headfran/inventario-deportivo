@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { DollarSign, ShoppingBag, TrendingUp, CreditCard, Award, PieChart, CalendarRange, Shirt, Coins } from 'lucide-react-native';
-import { Sale, subscribeToSales, calculateSaleProfit } from '../services/salesHistoryService';
+import { Sale, subscribeToSales } from '../services/salesHistoryService';
 import { Product } from '../types/inventory';
-import { calculateAnalytics } from '../services/analyticsService';
+import {
+   calculateAnalytics,
+   buildCatalogPurchasePriceMap,
+   resolveSaleItemPurchasePrice,
+} from '../services/analyticsService';
 import { DateRangePickerModal } from '../components/DateRangePickerModal';
 import { Cover } from '../components/Cover';
 import { MONO as T, display } from '../design';
@@ -57,6 +61,9 @@ const filterSalesByTimeRange = (
    const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
 
    return sales.filter((sale) => {
+      // Las ventas anuladas no suman ingresos, unidades ni margen.
+      if (sale.status === 'voided') return false;
+
       const d = getSaleDate(sale.createdAt);
       if (range === 'all') return true;
       if (range === 'today') return d >= startOfToday;
@@ -111,48 +118,66 @@ export const AnalyticsDashboardScreen: React.FC<AnalyticsDashboardScreenProps> =
    }, []);
 
    const filteredSales = filterSalesByTimeRange(allSales, timeRange, customDateRange);
-   const analytics = calculateAnalytics(filteredSales);
+   const analytics = calculateAnalytics(filteredSales, catalog);
 
    // ==========================================
    // GANANCIAS
    // ==========================================
-   const profitData = useMemo(() => {
-      let totalProfit = 0;
-      let determined = true;
+   // Fuente única: analyticsService prioriza el purchasePrice histórico del
+   // ítem y usa el catálogo solo como respaldo; además excluye anuladas y
+   // descuenta sale.discount.
+   const profitData = {
+      totalProfit: analytics.totalProfit,
+      determined: analytics.profitDetermined,
+      margin: analytics.profitMargin,
+   };
 
-      filteredSales.forEach((sale) => {
-         if (sale.status === 'voided') return;
-         const r = calculateSaleProfit(sale);
-         totalProfit += r.profit;
-         if (!r.determined) determined = false;
-      });
-
-      const margin = analytics.totalRevenue > 0
-         ? (totalProfit / analytics.totalRevenue) * 100
-         : 0;
-
-      return { totalProfit, determined, margin };
-   }, [filteredSales, analytics.totalRevenue]);
-
-   // Ganancia por producto (agregada por productId, no por variante)
+   // Ganancia neta por producto (agregada por productId, no por variante).
+   // El descuento de la venta se reparte proporcionalmente al importe de cada línea.
    const profitByProductId = useMemo(() => {
       const map = new Map<string, { profit: number; determined: boolean }>();
+      const catalogPurchasePrices = buildCatalogPurchasePriceMap(catalog);
 
       filteredSales.forEach((sale) => {
          if (sale.status === 'voided') return;
-         sale.items.forEach((item) => {
-            const existing = map.get(item.productId) || { profit: 0, determined: true };
-            if (item.purchasePrice === undefined) {
+
+         const items = sale.items || [];
+         const itemsTotal = items.reduce((sum, item) => {
+            const qty = Number(item.quantity) || 0;
+            const unitPrice = Number(item.unitPrice) || 0;
+            const lineTotal = Number(item.totalPrice ?? (item as any).subtotal);
+            return sum + (Number.isFinite(lineTotal) ? lineTotal : unitPrice * qty);
+         }, 0);
+         const saleDiscount = Math.max(0, Number(sale.discount) || 0);
+
+         items.forEach((item) => {
+            const productKey = item.productId || 'unknown';
+            const existing = map.get(productKey) || { profit: 0, determined: true };
+
+            const qty = Number(item.quantity) || 0;
+            const unitPrice = Number(item.unitPrice) || 0;
+            const lineTotalRaw = Number(item.totalPrice ?? (item as any).subtotal);
+            const lineTotal = Number.isFinite(lineTotalRaw) ? lineTotalRaw : unitPrice * qty;
+            const discountShare = itemsTotal > 0 ? saleDiscount * (lineTotal / itemsTotal) : 0;
+
+            const cost = resolveSaleItemPurchasePrice(item, catalogPurchasePrices);
+            if (cost === undefined) {
                existing.determined = false;
             } else {
-               existing.profit += (item.unitPrice - item.purchasePrice) * item.quantity;
+               existing.profit += (unitPrice - cost) * qty;
             }
-            map.set(item.productId, existing);
+            // El descuento aplica a la venta completa, con o sin costo conocido.
+            existing.profit -= discountShare;
+            map.set(productKey, existing);
          });
       });
 
+      map.forEach((value) => {
+         value.profit = Math.round(value.profit * 100) / 100;
+      });
+
       return map;
-   }, [filteredSales]);
+   }, [filteredSales, catalog]);
 
    if (loading) {
       return (

@@ -11,6 +11,7 @@ import {
    useWindowDimensions,
    Platform,
 } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -19,7 +20,14 @@ import {
    Coins, ShoppingCart,
 } from 'lucide-react-native';
 import { Product, ProductCategory, ProductVariant } from '../types/inventory';
-import { createProduct, updateProduct } from '../services/productService';
+import { createProduct, updateProductWithVariants } from '../services/productService';
+import type {
+   ProductMutationPayload,
+   UpdateProductVariantsOptions,
+   VariantStockDelta,
+   VariantSizeRemoval,
+   VariantRemoval,
+} from '../services/productService';
 import { uploadImageToR2, deleteImageFromR2 } from '../services/storage';
 import { optimizeImage } from '../utils/imageOptimizer';
 import { showConfirm, showAlert } from '../utils/alert';
@@ -29,6 +37,7 @@ interface ProductFormProps {
    initialProduct?: Product | null;
    availableBrands?: string[];
    onClose: () => void;
+   onSavingChange?: (saving: boolean) => void;
 }
 
 interface ImageItem {
@@ -125,6 +134,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
    initialProduct,
    availableBrands = [],
    onClose,
+   onSavingChange,
 }) => {
    const { width } = useWindowDimensions();
    const isMobile = width < 600;
@@ -166,24 +176,108 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
 
    // ---- Estado de guardado ----
    const [submitting, setSubmitting] = useState(false);
+   const submittingRef = useRef(false);
    const [saveStage, setSaveStage] = useState<string>('');
    const [errors, setErrors] = useState<FormErrors>({});
 
    // ---- Refs para scrolls ----
-   const formScrollRef = useRef<ScrollView | null>(null);
-   const brandScrollRef = useRef<ScrollView | null>(null);
-   const categoryScrollRef = useRef<ScrollView | null>(null);
+   const formScrollRef = useRef<ScrollViewInstance | null>(null);
+   const brandScrollRef = useRef<ScrollViewInstance | null>(null);
+   const categoryScrollRef = useRef<ScrollViewInstance | null>(null);
    const [brandScrollX, setBrandScrollX] = useState(0);
    const [categoryScrollX, setCategoryScrollX] = useState(0);
 
    const handleScroll = (
-      ref: React.RefObject<ScrollView | null>,
+      ref: React.RefObject<ScrollViewInstance | null>,
       currentX: number,
       dir: 'left' | 'right'
    ) => {
       const step = 200;
       const newX = dir === 'left' ? Math.max(0, currentX - step) : currentX + step;
       (ref.current as any)?.scrollTo({ x: newX, animated: true });
+   };
+
+   const handleClose = () => {
+      if (submittingRef.current) return;
+      onClose();
+   };
+
+   const buildVariantStockOptions = (): UpdateProductVariantsOptions => {
+      const initialVariants = initialProduct?.variants || [];
+      const stockDeltas: VariantStockDelta[] = [];
+      const removedSizes: VariantSizeRemoval[] = [];
+      const removedVariants: VariantRemoval[] = [];
+      const matchedInitial = new Set<string>();
+
+      const sameColor = (a: string, b: string) =>
+         String(a || '').toLowerCase().trim() === String(b || '').toLowerCase().trim();
+      const initialKey = (variant: ProductVariant) =>
+         variant.id ? `id:${variant.id}` : `color:${String(variant.color || '').toLowerCase().trim()}`;
+
+      for (const formVariant of variants) {
+         const initialVariant = initialVariants.find(
+            (variant) =>
+               (!!variant.id && !!formVariant.id && variant.id === formVariant.id) ||
+               sameColor(variant.color, formVariant.color)
+         );
+
+         if (!initialVariant) {
+            for (const formSize of formVariant.sizes || []) {
+               stockDeltas.push({
+                  variantId: formVariant.id,
+                  color: formVariant.color,
+                  size: formSize.size,
+                  delta: Number(formSize.stock) || 0,
+               });
+            }
+            continue;
+         }
+
+         matchedInitial.add(initialKey(initialVariant));
+
+         for (const initialSize of initialVariant.sizes || []) {
+            const formSize = (formVariant.sizes || []).find((size) => size.size === initialSize.size);
+            if (!formSize) {
+               removedSizes.push({
+                  variantId: initialVariant.id,
+                  color: initialVariant.color,
+                  size: initialSize.size,
+               });
+               continue;
+            }
+
+            const delta = (Number(formSize.stock) || 0) - (Number(initialSize.stock) || 0);
+            if (delta !== 0) {
+               stockDeltas.push({
+                  variantId: initialVariant.id || formVariant.id,
+                  color: formVariant.color,
+                  size: formSize.size,
+                  delta,
+               });
+            }
+         }
+
+         for (const formSize of formVariant.sizes || []) {
+            if ((initialVariant.sizes || []).some((size) => size.size === formSize.size)) continue;
+            stockDeltas.push({
+               variantId: formVariant.id,
+               color: formVariant.color,
+               size: formSize.size,
+               delta: Number(formSize.stock) || 0,
+            });
+         }
+      }
+
+      for (const initialVariant of initialVariants) {
+         if (!matchedInitial.has(initialKey(initialVariant))) {
+            removedVariants.push({
+               variantId: initialVariant.id,
+               color: initialVariant.color,
+            });
+         }
+      }
+
+      return { stockDeltas, removedSizes, removedVariants };
    };
 
    // ==========================================
@@ -390,6 +484,8 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
    // Guardado con etapas
    // ==========================================
    const handleSubmit = async () => {
+      if (submittingRef.current) return;
+
       const errs = validate();
       setErrors(errs);
 
@@ -399,8 +495,12 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
          return;
       }
 
+      submittingRef.current = true;
+      setSubmitting(true);
+      onSavingChange?.(true);
+      let saved = false;
+
       try {
-         setSubmitting(true);
          setSaveStage('Optimizando datos...');
 
          const finalImageUrls: string[] = [];
@@ -427,7 +527,7 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
          const parsedBolivarWholesale = bolivarWholesalePrice.trim() ? parseFloat(bolivarWholesalePrice) : undefined;
          const parsedPurchase = purchasePrice.trim() ? parseFloat(purchasePrice) : undefined;
 
-         const productPayload: Omit<Product, 'id'> = {
+         const productPayload: ProductMutationPayload = {
             code: code.trim().toUpperCase(),
             name: name.trim(),
             brand: brand.trim(),
@@ -442,21 +542,27 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
          };
 
          if (initialProduct?.id) {
-            await updateProduct(initialProduct.id, productPayload);
+            await updateProductWithVariants(
+               initialProduct.id,
+               productPayload,
+               buildVariantStockOptions(),
+            );
          } else {
             await createProduct(productPayload);
          }
 
          setSaveStage('Finalizando...');
-         await new Promise((r) => setTimeout(r, 400));
-
-         onClose();
+         saved = true;
       } catch (error: any) {
          showAlert('Error', error.message || 'No se pudo completar el registro.');
       } finally {
+         submittingRef.current = false;
          setSubmitting(false);
          setSaveStage('');
+         onSavingChange?.(false);
       }
+
+      if (saved) onClose();
    };
 
    const availableSizes = category === 'Zapatos' ? PRESET_SIZES_SHOES : PRESET_SIZES_CLOTHING;
@@ -472,7 +578,8 @@ export const ProductFormScreen: React.FC<ProductFormProps> = ({
             </Text>
             <Pressable
                style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
-               onPress={onClose}
+               onPress={handleClose}
+               disabled={submitting}
             >
                <X size={20} color={T.ink} />
             </Pressable>

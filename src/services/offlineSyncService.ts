@@ -29,6 +29,8 @@ export interface PendingSaleItem {
 
 export interface PendingSale {
   id: string;
+  /** ID único e idempotente del documento de venta. */
+  clientSaleId?: string;
   receiptNumber: string;
   createdAt: string; // ISO string cuando se guardó offline
   sellerId?: string;
@@ -57,6 +59,9 @@ export interface PendingSale {
   isFullBsPayment?: boolean;
   appliedCombos?: any[];
   notes?: string;
+  status?: 'pending' | 'conflict';
+  conflictReason?: string;
+  conflictAt?: string;
 }
 
 const DB_NAME = 'InventarioOfflineDB';
@@ -82,12 +87,13 @@ const openDB = (): Promise<IDBDatabase> => {
 };
 
 export const enqueuePendingSale = async (sale: PendingSale): Promise<void> => {
+  const payload: PendingSale = { ...sale, status: sale.status || 'pending' };
   try {
     if (Platform.OS === 'web') {
       const idb = await openDB();
       return new Promise((resolve, reject) => {
         const tx = idb.transaction(STORE_NAME, 'readwrite');
-        const req = tx.objectStore(STORE_NAME).put(sale);
+        const req = tx.objectStore(STORE_NAME).put(payload);
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error);
       });
@@ -97,7 +103,9 @@ export const enqueuePendingSale = async (sale: PendingSale): Promise<void> => {
   } catch {
     const existingStr = await AsyncStorage.getItem(FALLBACK_KEY);
     const existing: PendingSale[] = existingStr ? JSON.parse(existingStr) : [];
-    existing.push(sale);
+    const existingIndex = existing.findIndex((item) => item.id === payload.id);
+    if (existingIndex >= 0) existing[existingIndex] = payload;
+    else existing.push(payload);
     await AsyncStorage.setItem(FALLBACK_KEY, JSON.stringify(existing));
   }
 };
@@ -192,48 +200,116 @@ const sanitizeForFirestore = (obj: any): any => {
   return obj;
 };
 
+export const generateClientSaleId = (): string => doc(collection(db, 'sales')).id;
+
+class StockConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StockConflictError';
+  }
+}
+
+const cloneVariants = (variants: any[]): any[] =>
+  (variants || []).map((variant) => ({
+    ...variant,
+    sizes: (variant.sizes || []).map((size: any) => ({ ...size })),
+  }));
+
+const writePendingSale = async (sale: PendingSale): Promise<void> => {
+  if (Platform.OS === 'web') {
+    try {
+      const idb = await openDB();
+      await new Promise<void>((resolve, reject) => {
+        const tx = idb.transaction(STORE_NAME, 'readwrite');
+        const req = tx.objectStore(STORE_NAME).put(sale);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (error) {
+      console.warn('No se pudo actualizar IndexedDB:', error);
+    }
+  }
+
+  try {
+    const fallbackStr = await AsyncStorage.getItem(FALLBACK_KEY);
+    const fallback: PendingSale[] = fallbackStr ? JSON.parse(fallbackStr) : [];
+    const index = fallback.findIndex((item) => item.id === sale.id);
+    if (index >= 0) fallback[index] = sale;
+    else fallback.push(sale);
+    await AsyncStorage.setItem(FALLBACK_KEY, JSON.stringify(fallback));
+  } catch (error) {
+    console.warn('No se pudo actualizar la cola fallback:', error);
+  }
+};
+
+const markPendingSaleConflict = async (saleId: string, reason: string): Promise<void> => {
+  const pending = await getPendingSales();
+  const target = pending.find((sale) => sale.id === saleId);
+  if (!target) return;
+
+  await writePendingSale({
+    ...target,
+    status: 'conflict',
+    conflictReason: reason,
+    conflictAt: new Date().toISOString(),
+  });
+};
+
 export const syncPendingSalesWithFirestore = async (
-  onProgress?: (syncedCount: number, total: number) => void
-): Promise<{ success: number; failed: number }> => {
-  if (!db) return { success: 0, failed: 0 };
+  onProgress?: (syncedCount: number, total: number) => void,
+  options: { retryConflicts?: boolean } = {}
+): Promise<{
+  success: number;
+  failed: number;
+  conflicts: { receiptNumber: string; reason: string }[];
+}> => {
+  if (!db) return { success: 0, failed: 0, conflicts: [] };
 
   const pendingList = await getPendingSales();
-  if (pendingList.length === 0) return { success: 0, failed: 0 };
+  if (pendingList.length === 0) return { success: 0, failed: 0, conflicts: [] };
 
   let successCount = 0;
   let failedCount = 0;
+  const conflicts: { receiptNumber: string; reason: string }[] = [];
 
   for (let idx = 0; idx < pendingList.length; idx++) {
     const pendingSale = pendingList[idx];
-    try {
-      // ────────────────────────────────────────────────────────────
-      // 1) IDEMPOTENCIA: verificar si ya existe por receiptNumber
-      //    (fuera de la transacción — queries no se permiten dentro)
-      // ────────────────────────────────────────────────────────────
-      const existingQuery = query(
-        collection(db, 'sales'),
-        where('receiptNumber', '==', pendingSale.receiptNumber)
-      );
-      const existingSnap = await getDocs(existingQuery);
 
-      if (!existingSnap.empty) {
-        // Ya está en Firestore → solo limpiamos la cola local
-        await removePendingSale(pendingSale.id);
-        successCount++;
-        if (onProgress) onProgress(successCount, pendingList.length);
-        continue;
+    // Un conflicto de stock no se reintenta automáticamente para no generar
+    // bucles de lectura; el reintento manual sí puede forzarlo.
+    if (pendingSale.status === 'conflict' && !options.retryConflicts) {
+      continue;
+    }
+
+    try {
+      let clientSaleId = pendingSale.clientSaleId;
+
+      // Compatibilidad con ventas encoladas por versiones anteriores:
+      // solo para ventas sin clientSaleId se comprueba el receiptNumber.
+      if (!clientSaleId) {
+        const existingQuery = query(
+          collection(db, 'sales'),
+          where('receiptNumber', '==', pendingSale.receiptNumber)
+        );
+        const existingSnap = await getDocs(existingQuery);
+
+        if (!existingSnap.empty) {
+          await removePendingSale(pendingSale.id);
+          successCount++;
+          if (onProgress) onProgress(successCount, pendingList.length);
+          continue;
+        }
+
+        clientSaleId = generateClientSaleId();
       }
 
-      // ────────────────────────────────────────────────────────────
-      // 2) TRANSACCIÓN: descontar stock + crear venta
-      // ────────────────────────────────────────────────────────────
       await runTransaction(db, async (transaction) => {
-        // Re-verificar por ID (redundante pero sirve si dos syncs corren en paralelo)
-        const saleRef = doc(db, 'sales', pendingSale.receiptNumber);
+        const saleRef = doc(db, 'sales', clientSaleId as string);
+
+        // 1) Lectura de idempotencia + lecturas de productos.
         const existingById = await transaction.get(saleRef);
         if (existingById.exists()) return;
 
-        // Cargar productos involucrados
         const productSnaps = new Map<string, { ref: any; data: any }>();
         for (const item of pendingSale.items) {
           if (!item.productId || productSnaps.has(item.productId)) continue;
@@ -247,54 +323,78 @@ export const syncPendingSalesWithFirestore = async (
           }
         }
 
-        // Descontar stock por variante/talla
+        // 2) Validación estricta de stock + cálculo en memoria.
         const updatedProducts = new Map<string, { ref: any; variants: any[] }>();
+
         for (const item of pendingSale.items) {
           if (!item.productId) continue;
+
           const productInfo = productSnaps.get(item.productId);
-          if (!productInfo) continue;
+          if (!productInfo) {
+            throw new StockConflictError(
+              `El producto "${item.name}" ya no existe; no se puede sincronizar la venta.`
+            );
+          }
 
           const currentVariants =
             updatedProducts.get(item.productId)?.variants ||
-            productInfo.data.variants ||
-            [];
+            cloneVariants(productInfo.data.variants || []);
 
-          const updatedVariants = currentVariants.map((variant: any) => {
-            if (
-              (variant.color || '').toLowerCase().trim() ===
+          const variant = currentVariants.find(
+            (candidate: any) =>
+              (candidate.color || '').toLowerCase().trim() ===
               (item.color || '').toLowerCase().trim()
-            ) {
-              const updatedSizes = (variant.sizes || []).map((sObj: any) => {
-                if (
-                  (sObj.size || '').toString().trim() ===
-                  (item.size || '').toString().trim()
-                ) {
-                  return {
-                    ...sObj,
-                    stock: Math.max(0, (Number(sObj.stock) || 0) - item.quantity),
-                  };
-                }
-                return sObj;
-              });
-              return { ...variant, sizes: updatedSizes };
-            }
-            return variant;
-          });
+          );
 
+          if (!variant) {
+            throw new StockConflictError(
+              `La variante "${item.color}" de "${item.name}" ya no existe.`
+            );
+          }
+
+          const size = (variant.sizes || []).find(
+            (candidate: any) =>
+              (candidate.size || '').toString().trim() ===
+              (item.size || '').toString().trim()
+          );
+
+          if (!size) {
+            throw new StockConflictError(
+              `La talla "${item.size}" de "${item.name}" (${item.color}) ya no existe.`
+            );
+          }
+
+          const quantity = Number(item.quantity) || 0;
+          const currentStock = Number(size.stock) || 0;
+
+          if (quantity <= 0) {
+            throw new StockConflictError(
+              `Cantidad inválida para "${item.name}" (${item.color} - Talla ${item.size}).`
+            );
+          }
+
+          if (currentStock < quantity) {
+            throw new StockConflictError(
+              `Stock insuficiente para "${item.name}" (${item.color} - Talla ${item.size}). ` +
+              `Disponible: ${currentStock}, vendido offline: ${quantity}.`
+            );
+          }
+
+          size.stock = currentStock - quantity;
           updatedProducts.set(item.productId, {
             ref: productInfo.ref,
-            variants: updatedVariants,
+            variants: currentVariants,
           });
         }
 
-        for (const [, prod] of updatedProducts) {
-          transaction.update(prod.ref, {
-            variants: prod.variants,
-            updatedAt: Timestamp.now(),
+        // 3) Escrituras: productos, venta.
+        for (const [, product] of updatedProducts) {
+          transaction.update(product.ref, {
+            variants: product.variants,
+            updatedAt: Date.now(),
           });
         }
 
-        // Construir el documento de venta
         const createdAtDate = new Date(pendingSale.createdAt);
         const createdAtTs = Number.isNaN(createdAtDate.getTime())
           ? Timestamp.now()
@@ -303,6 +403,7 @@ export const syncPendingSalesWithFirestore = async (
         transaction.set(
           saleRef,
           sanitizeForFirestore({
+            clientSaleId,
             receiptNumber: pendingSale.receiptNumber,
             createdAt: createdAtTs,
             syncedAt: Timestamp.now(),
@@ -335,10 +436,20 @@ export const syncPendingSalesWithFirestore = async (
       successCount++;
       if (onProgress) onProgress(successCount, pendingList.length);
     } catch (error) {
-      console.error(`❌ Sync falló para ${pendingSale.receiptNumber}:`, error);
+      if (error instanceof StockConflictError) {
+        console.warn(`⚠️ Conflicto de stock en ${pendingSale.receiptNumber}:`, error.message);
+        conflicts.push({ receiptNumber: pendingSale.receiptNumber, reason: error.message });
+        try {
+          await markPendingSaleConflict(pendingSale.id, error.message);
+        } catch (markError) {
+          console.error('No se pudo marcar el conflicto en la cola:', markError);
+        }
+      } else {
+        console.error(`❌ Sync falló para ${pendingSale.receiptNumber}:`, error);
+      }
       failedCount++;
     }
   }
 
-  return { success: successCount, failed: failedCount };
+  return { success: successCount, failed: failedCount, conflicts };
 };

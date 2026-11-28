@@ -203,6 +203,7 @@ export const InventoryListScreen: React.FC<InventoryListScreenProps> = ({ produc
    const [sharingProduct, setSharingProduct] = useState<Product | null>(null);
    const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
    const [isFormOpen, setIsFormOpen] = useState(false);
+   const formSavingRef = useRef(false);
    const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
    const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
    const [bulkShareStatus, setBulkShareStatus] = useState<string | null>(null);
@@ -472,7 +473,7 @@ export const InventoryListScreen: React.FC<InventoryListScreenProps> = ({ produc
             data={paginatedProducts}
             keyExtractor={(item) => item.id || item.code}
             ListHeaderComponent={renderHeader()}
-            ListFooterComponent={renderFooter()}
+            ListFooterComponent={renderFooter() ?? undefined}
             contentContainerStyle={[
                styles.listContent,
                { paddingHorizontal: padX },
@@ -545,8 +546,20 @@ export const InventoryListScreen: React.FC<InventoryListScreenProps> = ({ produc
             </View>
          </Modal>
 
-         <Modal visible={isFormOpen} animationType="slide" onRequestClose={() => setIsFormOpen(false)}>
-            <ProductFormScreen initialProduct={selectedProduct} onClose={() => setIsFormOpen(false)} />
+         <Modal
+            visible={isFormOpen}
+            animationType="slide"
+            onRequestClose={() => {
+               if (!formSavingRef.current) setIsFormOpen(false);
+            }}
+         >
+            <ProductFormScreen
+               initialProduct={selectedProduct}
+               onSavingChange={(saving) => { formSavingRef.current = saving; }}
+               onClose={() => {
+                  if (!formSavingRef.current) setIsFormOpen(false);
+               }}
+            />
          </Modal>
 
          <StockAdjustModal

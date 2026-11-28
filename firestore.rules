@@ -1,0 +1,106 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // Helpers de autenticación / rol
+    // ============================================================
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Usuario autenticado con perfil existente y activo.
+    function isActiveUser() {
+      return isSignedIn()
+        && exists(userPath())
+        && get(userPath()).data.isActive == true;
+    }
+
+    function isOwner() {
+      return isActiveUser()
+        && get(userPath()).data.role == 'owner';
+    }
+
+    function isSelf(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Debe coincidir con OWNER_EMAILS de src/services/userService.ts.
+    function isOwnerEmail() {
+      return isSignedIn()
+        && request.auth.token.email == 'vendedor@gmail.com';
+    }
+
+    // ============================================================
+    // products: catálogo público, escritura solo usuarios activos
+    // ============================================================
+    match /products/{productId} {
+      allow read: if true;
+      allow create, update, delete: if isActiveUser();
+    }
+
+    // ============================================================
+    // sales: vendedor puede leer/crear; editar/anular SOLO owner
+    // ============================================================
+    match /sales/{saleId} {
+      allow read, create: if isActiveUser();
+      allow update, delete: if isOwner();
+    }
+
+    // ============================================================
+    // Operación diaria: usuarios activos
+    // ============================================================
+    match /layaways/{layawayId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /shelves/{shelfId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /combos/{comboId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /sellers/{sellerId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /settings/{settingId} {
+      allow read, write: if isActiveUser();
+    }
+
+    // ============================================================
+    // users: lectura propia o owner.
+    // role/isActive solo los cambia el owner.
+    // El auto-registro solo puede crear seller (o owner si el email
+    // está autorizado), evitando escalada de privilegios.
+    // ============================================================
+    match /users/{userId} {
+      allow read: if isSelf(userId) || isOwner();
+
+      allow create: if isSelf(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.isActive == true
+        && (
+          request.resource.data.role == 'seller'
+          || (request.resource.data.role == 'owner' && isOwnerEmail())
+        );
+
+      allow update: if isOwner() || (
+        isSelf(userId)
+        && isActiveUser()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.isActive == resource.data.isActive
+      );
+
+      allow delete: if isOwner();
+    }
+  }
+}

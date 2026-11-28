@@ -3,6 +3,7 @@ import {
    View, Text, ScrollView, Pressable, StyleSheet, Modal, Platform,
    ActivityIndicator, UIManager, LayoutAnimation, ViewStyle,
 } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 import { Image } from 'expo-image';
 import {
    Store, Plus, Trash2, Eye, MapPin, Layers, Pencil, ChevronLeft, ChevronRight,
@@ -12,7 +13,8 @@ import {
 import Animated, { useSharedValue, useAnimatedStyle } from 'react-native-reanimated';
 import { Product, Shelf, ShelfLocation, ProductVariant } from '../types/inventory';
 import { subscribeToShelves, deleteShelf, updateShelf } from '../services/shelfService';
-import { updateProduct } from '../services/productService';
+import { updateProductLocations, updateVariantExhibition } from '../services/productService';
+import type { VariantLocationUpdate } from '../services/productService';
 import { showConfirm, showAlert } from '../utils/alert';
 import { EditShelfModal } from './EditShelfModal';
 import { ProductSearchFilter } from '../components/ProductSearchFilter';
@@ -64,7 +66,7 @@ const ScrollRow = ({ children, style, contentContainerStyle }: {
    style?: any;
    contentContainerStyle?: any;
 }) => {
-   const scrollRef = useRef<ScrollView>(null);
+   const scrollRef = useRef<ScrollViewInstance>(null);
    const scrollX = useRef(0);
    const [clientWidth, setClientWidth] = useState(250);
 
@@ -111,6 +113,7 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
 
    const [editingShelf, setEditingShelf] = useState<Shelf | null>(null);
    const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+   const productFormSavingRef = useRef(false);
 
    const [selectedVariant, setSelectedVariant] = useState<SelectedVariantRef | null>(null);
    const [stash, setStash] = useState<InspectedItem[]>([]);
@@ -145,7 +148,7 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
    const hoverH = useSharedValue(0);
 
    const [dragGhostImg, setDragGhostImg] = useState<string | null>(null);
-   const containerRef = useRef<View>(null);
+   const containerRef = useRef<any>(null);
    const cellLayoutsRef = useRef<Record<string, CellLayout>>({});
    const scrollYRef = useRef(0);
 
@@ -166,7 +169,7 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
    const [viewerData, setViewerData] = useState<{ images: string[]; visible: boolean } | null>(null);
    const [viewerIndex, setViewerIndex] = useState(0);
    const [viewerWidth, setViewerWidth] = useState(0);
-   const viewerScrollRef = useRef<ScrollView>(null);
+   const viewerScrollRef = useRef<ScrollViewInstance>(null);
 
    useEffect(() => {
       if (inspectedSpace) {
@@ -554,24 +557,42 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
       const performSave = async () => {
          setSaving(true);
          try {
-            const productUpdates: Record<string, Product> = {};
+            const productUpdates = new Map<string, VariantLocationUpdate[]>();
+
             for (const [key, newLocs] of Object.entries(draftLocationsMap)) {
-               const [productId, vIdxStr] = key.split('_');
-               const vIdx = parseInt(vIdxStr, 10);
+               const separator = key.lastIndexOf('_');
+               if (separator < 0) continue;
+               const productId = key.slice(0, separator);
+               const vIdx = parseInt(key.slice(separator + 1), 10);
+               if (!Number.isInteger(vIdx)) continue;
+
                const originalProd = products.find((p) => p.id === productId);
                if (!originalProd) continue;
-               const originalLocs = originalProd.variants[vIdx]?.locations || [];
-               if (JSON.stringify(originalLocs) !== JSON.stringify(newLocs)) {
-                  if (!productUpdates[productId]) productUpdates[productId] = JSON.parse(JSON.stringify(originalProd));
-                  if (productUpdates[productId] && productUpdates[productId].variants[vIdx]) {
-                     productUpdates[productId].variants[vIdx].locations = newLocs;
-                  }
-               }
+
+               const variant = originalProd.variants?.[vIdx];
+               if (!variant) continue;
+
+               const originalLocs = variant.locations || [];
+               if (JSON.stringify(originalLocs) === JSON.stringify(newLocs)) continue;
+
+               const entries = productUpdates.get(productId) || [];
+               entries.push({
+                  variantId: variant.id,
+                  variantIndex: vIdx,
+                  color: variant.color,
+                  locations: newLocs,
+               });
+               productUpdates.set(productId, entries);
             }
-            const updates = Object.values(productUpdates);
-            if (updates.length > 0) {
-               await Promise.all(updates.map((upd) => upd.id ? updateProduct(upd.id, { variants: upd.variants }) : Promise.resolve()));
+
+            if (productUpdates.size > 0) {
+               await Promise.all(
+                  Array.from(productUpdates.entries()).map(([productId, updates]) =>
+                     updateProductLocations(productId, updates)
+                  )
+               );
             }
+
             setHasUnsavedChanges(false);
             setStash([]);
             showAlert('Guardado', 'Cambios guardados exitosamente.');
@@ -606,12 +627,11 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
    const assignProductToVitrina = async (product: Product, variantIndex: number, sizeToDisplay?: string) => {
       if (!product.id) return;
       try {
-         const updatedVariants = [...product.variants];
-         updatedVariants[variantIndex].exhibition = {
+         const variant = product.variants[variantIndex];
+         await updateVariantExhibition(product.id, variantIndex, variant?.id, {
             isOnDisplay: true,
-            displaySize: sizeToDisplay || updatedVariants[variantIndex]?.sizes[0]?.size || 'M',
-         };
-         await updateProduct(product.id, { variants: updatedVariants });
+            displaySize: sizeToDisplay || variant?.sizes[0]?.size || 'M',
+         });
          setSelectedVariant(null);
       } catch (error: any) { showAlert('Error', error.message); }
    };
@@ -619,18 +639,21 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
    const updateVitrinaDisplaySize = async (product: Product, variantIndex: number, newSize: string) => {
       if (!product.id) return;
       try {
-         const updatedVariants = [...product.variants];
-         updatedVariants[variantIndex].exhibition = { isOnDisplay: true, displaySize: newSize };
-         await updateProduct(product.id, { variants: updatedVariants });
+         const variant = product.variants[variantIndex];
+         await updateVariantExhibition(product.id, variantIndex, variant?.id, {
+            isOnDisplay: true,
+            displaySize: newSize,
+         });
       } catch (error: any) { showAlert('Error', error.message); }
    };
 
    const removeFromVitrina = async (product: Product, variantIndex: number) => {
       if (!product.id) return;
       try {
-         const updatedVariants = [...product.variants];
-         updatedVariants[variantIndex].exhibition = { isOnDisplay: false };
-         await updateProduct(product.id, { variants: updatedVariants });
+         const variant = product.variants[variantIndex];
+         await updateVariantExhibition(product.id, variantIndex, variant?.id, {
+            isOnDisplay: false,
+         });
       } catch (error: any) { showAlert('Error', error.message); }
    };
 
@@ -1608,9 +1631,22 @@ export const ShelfMapScreen: React.FC<ShelfMapScreenProps> = ({ products }) => {
 
          <EditShelfModal shelf={editingShelf} visible={!!editingShelf} onClose={() => setEditingShelf(null)} />
 
-         <Modal visible={!!editingProduct} animationType="slide" presentationStyle="formSheet">
+         <Modal
+            visible={!!editingProduct}
+            animationType="slide"
+            presentationStyle="formSheet"
+            onRequestClose={() => {
+               if (!productFormSavingRef.current) setEditingProduct(null);
+            }}
+         >
             <View style={{ flex: 1, backgroundColor: T.bg, marginTop: Platform.OS === 'ios' ? 50 : 0 }}>
-               <ProductFormScreen initialProduct={editingProduct} onClose={() => setEditingProduct(null)} />
+               <ProductFormScreen
+                  initialProduct={editingProduct}
+                  onSavingChange={(saving) => { productFormSavingRef.current = saving; }}
+                  onClose={() => {
+                     if (!productFormSavingRef.current) setEditingProduct(null);
+                  }}
+               />
             </View>
          </Modal>
       </View>

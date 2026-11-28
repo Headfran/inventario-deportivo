@@ -34,9 +34,18 @@ const sanitizeForFirestore = (obj: any): any => {
 };
 
 export const createSale = async (
-  saleData: Omit<Sale, 'id' | 'createdAt'>
+  saleData: Omit<Sale, 'id' | 'createdAt'>,
+  saleId?: string
 ): Promise<string> => {
   return await runTransaction(db, async (transaction) => {
+    // La lectura del ID de la venta va primero: si el cliente ya la creó
+    // (reintento tras perder la respuesta de red) no se vuelve a descontar.
+    const newSaleRef = saleId
+      ? doc(collection(db, 'sales'), saleId)
+      : doc(collection(db, 'sales'));
+    const existingSale = await transaction.get(newSaleRef);
+    if (existingSale.exists()) return newSaleRef.id;
+
     const productIds = Array.from(new Set(saleData.items.map((item) => item.productId)));
     const productRefs = productIds.map((id) => doc(db, 'products', id));
     const productDocs = await Promise.all(productRefs.map((ref) => transaction.get(ref)));
@@ -94,9 +103,9 @@ export const createSale = async (
     const metaRef = doc(db, 'settings', 'catalog_meta');
     transaction.set(metaRef, { lastUpdate: Date.now() }, { merge: true }); // 👈 Avisa que hay versión nueva
 
-    const newSaleRef = doc(collection(db, 'sales'));
     const newSaleData = sanitizeForFirestore({
       ...saleData,
+      ...(saleId ? { clientSaleId: saleId } : {}),
       createdAt: Timestamp.now(),
     });
     transaction.set(newSaleRef, newSaleData);

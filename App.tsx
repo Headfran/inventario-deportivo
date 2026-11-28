@@ -25,6 +25,7 @@ import {
    Wifi,
    WifiOff,
    RefreshCw,
+   Clock,
 } from 'lucide-react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
@@ -65,6 +66,7 @@ const NAV: { id: StaffTab; label: string; Icon: any }[] = [
    { id: 'inventory', label: 'Inventario', Icon: Package },
    { id: 'shelves', label: 'Mapa Estantes', Icon: MapPin },
    { id: 'sales', label: 'Registro de Ventas', Icon: ShoppingBag },
+   { id: 'layaways', label: 'Apartados', Icon: Clock },
    { id: 'history', label: 'Historial', Icon: Receipt },
    { id: 'sellers', label: 'Vendedores', Icon: Users },
    { id: 'analytics', label: 'Analíticas', Icon: BarChart3 },
@@ -229,14 +231,24 @@ const MainApp = () => {
       syncingRef.current = true;
       setIsSyncing(true);
       try {
-         const result = await syncPendingSalesWithFirestore();
+         // El sync manual sí reintenta conflictos de stock (p. ej. tras reponer).
+         const result = await syncPendingSalesWithFirestore(undefined, { retryConflicts: true });
          await checkPendingSales();
          if (result.success > 0 && result.failed === 0) {
             showAlert('Sincronización Completada', `Se sincronizaron ${result.success} ventas con éxito.`);
          } else if (result.success > 0 && result.failed > 0) {
             showAlert('Sincronización Parcial', `${result.success} enviadas, ${result.failed} fallaron.`);
          } else if (result.failed > 0) {
-            showAlert('Sincronización Fallida', `${result.failed} ventas no pudieron enviarse.`);
+            const conflictDetail = result.conflicts.length > 0
+               ? `\n\nConflictos de stock:\n${result.conflicts
+                    .slice(0, 3)
+                    .map((conflict) => `#${conflict.receiptNumber}: ${conflict.reason}`)
+                    .join('\n')}`
+               : '';
+            showAlert(
+               'Sincronización Fallida',
+               `${result.failed} ventas no pudieron enviarse.${conflictDetail}`
+            );
          } else {
             showAlert('Todo al Día', 'No hay ventas pendientes por sincronizar.');
          }

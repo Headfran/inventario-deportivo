@@ -1,4 +1,5 @@
 import { Sale, SaleItem } from '../services/salesHistoryService';
+import { Product } from '../types/inventory';
 
 export type TimeRangeOption = 'today' | '7days' | '30days' | 'all' | 'custom';
 
@@ -29,6 +30,14 @@ export interface AnalyticsData {
   averageTicket: number;
   paymentBreakdown: PaymentMethodBreakdown[];
   topProducts: TopProductStat[];
+  totalProfit: number;
+  profitMargin: number;
+  profitDetermined: boolean;
+}
+
+export interface SaleProfitResult {
+  profit: number;
+  determined: boolean;
 }
 
 /**
@@ -78,18 +87,107 @@ export const filterSalesByTimeRange = (
   });
 };
 
+const roundProfit = (value: number): number => Math.round(value * 100) / 100;
+
 /**
- * Calcula todas las analíticas a partir del listado de ventas filtrado
+ * Índice de costos del catálogo por id y por código.
+ * Solo se usa como FALLBACK cuando la línea histórica no trae `purchasePrice`.
  */
-export const calculateAnalytics = (sales: Sale[]): AnalyticsData => {
+export const buildCatalogPurchasePriceMap = (products?: Product[]): Map<string, number> => {
+  const map = new Map<string, number>();
+
+  (products || []).forEach((product) => {
+    if (typeof product.purchasePrice !== 'number' || !Number.isFinite(product.purchasePrice)) {
+      return;
+    }
+    if (product.id) map.set(product.id, product.purchasePrice);
+    if (product.code) map.set(product.code, product.purchasePrice);
+  });
+
+  return map;
+};
+
+/**
+ * Costo unitario de una línea de venta.
+ * Prioridad absoluta: el costo congelado en el ítem histórico (para que
+ * `resyncSaleProfits()` se refleje de inmediato). El catálogo es solo fallback.
+ */
+export const resolveSaleItemPurchasePrice = (
+  item: SaleItem | any,
+  catalogPurchasePrices?: Map<string, number>
+): number | undefined => {
+  if (typeof item?.purchasePrice === 'number' && Number.isFinite(item.purchasePrice)) {
+    return item.purchasePrice;
+  }
+
+  if (!catalogPurchasePrices) return undefined;
+
+  const keys = [item?.productId, item?.productCode, item?.code];
+  for (const key of keys) {
+    if (key && catalogPurchasePrices.has(key)) {
+      return catalogPurchasePrices.get(key);
+    }
+  }
+
+  return undefined;
+};
+
+/**
+ * Ganancia neta de una venta: margen bruto de las líneas con costo conocido
+ * menos el descuento aplicado a la venta. Las ventas anuladas se excluyen.
+ */
+export const calculateSaleNetProfit = (
+  sale: Sale,
+  catalogPurchasePrices?: Map<string, number>
+): SaleProfitResult => {
+  if (sale.status === 'voided') {
+    return { profit: 0, determined: true };
+  }
+
+  let grossProfit = 0;
+  let determined = true;
+
+  (sale.items || []).forEach((item) => {
+    const cost = resolveSaleItemPurchasePrice(item, catalogPurchasePrices);
+    if (cost === undefined) {
+      determined = false;
+      return;
+    }
+
+    const quantity = Number(item.quantity) || 0;
+    const unitPrice = Number(item.unitPrice) || 0;
+    grossProfit += (unitPrice - cost) * quantity;
+  });
+
+  const discount = Math.max(0, Number(sale.discount) || 0);
+  return { profit: roundProfit(grossProfit - discount), determined };
+};
+
+/**
+ * Calcula todas las analíticas a partir del listado de ventas filtrado.
+ * `products` es opcional: solo aporta el costo de respaldo para líneas
+ * históricas sin `purchasePrice`.
+ */
+export const calculateAnalytics = (sales: Sale[], products?: Product[]): AnalyticsData => {
+  // Defensa adicional: nunca contar ventas anuladas, aunque el llamador las pase.
+  const activeSales = sales.filter((sale) => sale.status !== 'voided');
+  const catalogPurchasePrices = buildCatalogPurchasePriceMap(products);
+
   let totalRevenue = 0;
   let totalUnitsSold = 0;
-  const totalTransactions = sales.length;
+  let totalProfit = 0;
+  let profitDetermined = true;
+  const totalTransactions = activeSales.length;
 
   const paymentMap: Record<string, { totalAmount: number; count: number }> = {};
   const productMap: Record<string, TopProductStat> = {};
 
-  sales.forEach((sale) => {
+  activeSales.forEach((sale) => {
+    // Ganancia neta: costo histórico del ítem > costo del catálogo, menos descuento.
+    const profitResult = calculateSaleNetProfit(sale, catalogPurchasePrices);
+    totalProfit += profitResult.profit;
+    if (!profitResult.determined) profitDetermined = false;
+
     // Compatibilidad: lee tanto 'total' (nuevo) como 'totalAmount' (viejo)
     const saleTotal = Number(sale.total || (sale as any).totalAmount) || 0;
     totalRevenue += saleTotal;
@@ -166,6 +264,9 @@ export const calculateAnalytics = (sales: Sale[]): AnalyticsData => {
   // Ordenar productos más vendidos
   const topProducts = Object.values(productMap).sort((a, b) => b.unitsSold - a.unitsSold);
 
+  const profit = roundProfit(totalProfit);
+  const profitMargin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
+
   return {
     totalRevenue,
     totalUnitsSold,
@@ -173,5 +274,8 @@ export const calculateAnalytics = (sales: Sale[]): AnalyticsData => {
     averageTicket,
     paymentBreakdown,
     topProducts,
+    totalProfit: profit,
+    profitMargin,
+    profitDetermined,
   };
 };

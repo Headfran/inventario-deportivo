@@ -1,5 +1,7 @@
 import { Sale } from './salesHistoryService';
 import { Layaway } from './layawayService';
+import { Product } from '../types/inventory';
+import { buildCatalogPurchasePriceMap, calculateSaleNetProfit } from './analyticsService';
 
 export interface SellerMetrics {
   sellerId: string;
@@ -10,6 +12,9 @@ export interface SellerMetrics {
   totalLayawaysAmount: number;
   totalVolume: number;
   averageTicket: number;
+  totalProfit: number;
+  profitMargin: number;
+  profitDetermined: boolean;
   completedSales: Sale[];
   activeLayaways: Layaway[];
 }
@@ -123,15 +128,18 @@ export const computeSellerPerformance = (
   salesList: Sale[],
   layawaysList: Layaway[],
   period: TimePeriod,
-  customRange?: { start: Date; end: Date } | null
+  customRange?: { start: Date; end: Date } | null,
+  products?: Product[]
 ): SellerMetrics[] => {
+  // Regla: las ventas anuladas no cuentan para el rendimiento ni la ganancia.
   const filteredSales = filterByPeriod(salesList, period, customRange).filter(
-    (s) => s.status === 'completed'
+    (s) => s.status !== 'voided'
   );
   const filteredLayaways = filterByPeriod(layawaysList, period, customRange).filter(
     (l) => l.status !== 'cancelled'
   );
 
+  const catalogPurchasePrices = buildCatalogPurchasePriceMap(products);
   const sellersMap = new Map<string, SellerMetrics>();
 
   const getOrCreateSeller = (id: string, name: string): SellerMetrics => {
@@ -148,6 +156,9 @@ export const computeSellerPerformance = (
         totalLayawaysAmount: 0,
         totalVolume: 0,
         averageTicket: 0,
+        totalProfit: 0,
+        profitMargin: 0,
+        profitDetermined: true,
         completedSales: [],
         activeLayaways: [],
       });
@@ -162,9 +173,12 @@ export const computeSellerPerformance = (
       sale.sellerName || 'Vendedor General'
     );
     const amount = Number(sale.total) || 0;
+    const profitResult = calculateSaleNetProfit(sale, catalogPurchasePrices);
 
     seller.totalSalesCount += 1;
     seller.totalSalesAmount += amount;
+    seller.totalProfit += profitResult.profit;
+    if (!profitResult.determined) seller.profitDetermined = false;
     seller.completedSales.push(sale);
   });
 
@@ -186,11 +200,17 @@ export const computeSellerPerformance = (
     const totalVolume = seller.totalSalesAmount + seller.totalLayawaysAmount;
     const totalTransactions = seller.totalSalesCount + seller.totalLayawaysCount;
     const averageTicket = totalTransactions > 0 ? totalVolume / totalTransactions : 0;
+    const totalProfit = Math.round(seller.totalProfit * 100) / 100;
+    const profitMargin = seller.totalSalesAmount > 0
+      ? (totalProfit / seller.totalSalesAmount) * 100
+      : 0;
 
     return {
       ...seller,
       totalVolume,
       averageTicket,
+      totalProfit,
+      profitMargin,
     };
   });
 
