@@ -18,7 +18,7 @@ service cloud.firestore {
     function isActiveUser() {
       return isSignedIn()
         && exists(userPath())
-        && get(userPath()).data.isActive == true;
+        && get(userPath()).data.get('isActive', true) == true;
     }
 
     function isOwner() {
@@ -72,6 +72,12 @@ service cloud.firestore {
     }
 
     match /settings/{settingId} {
+      // El catálogo público necesita leer catalog_meta sin autenticarse.
+      allow read: if true;
+      allow write: if isActiveUser();
+    }
+
+    match /fcm_tokens/{tokenId} {
       allow read, write: if isActiveUser();
     }
 

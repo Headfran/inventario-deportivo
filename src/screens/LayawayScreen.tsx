@@ -3,16 +3,20 @@ import {
    View,
    Text,
    ScrollView,
-   TouchableOpacity,
    StyleSheet,
    TextInput,
    Modal,
    FlatList,
+   Pressable,
+   useWindowDimensions,
+   Platform,
 } from 'react-native';
+import { Image } from 'expo-image';
 import {
    Clock,
    Search,
    Plus,
+   Minus,
    User,
    MessageCircle,
    X,
@@ -21,6 +25,10 @@ import {
    ShieldCheck,
    XCircle,
    Receipt,
+   ShoppingBag,
+   Shirt,
+   Trash2,
+   CheckCircle2,
 } from 'lucide-react-native';
 import {
    Layaway,
@@ -38,11 +46,74 @@ import { SaleReceiptModal } from '../components/SaleReceiptModal';
 import { openExternalLink } from '../utils/htmlUtils';
 import { roundMoney } from '../utils/pricingUtils';
 import { showAlert, showConfirm } from '../utils/alert';
+import { display } from '../design';
+
+// ==========================================
+// Paleta y medidas compartidas con SalesRegister
+// ==========================================
+const C = {
+   bg: '#0A0A0A',
+   card: '#141414',
+   cardAlt: '#181818',
+   border: '#262626',
+   ink: '#F5F5F5',
+   soft: '#D4D4D4',
+   mute: '#8A8A8A',
+   solid: '#F5F5F5',
+   onSolid: '#0A0A0A',
+   green: '#4ADE80',
+   greenBg: 'rgba(74,222,128,0.12)',
+   greenBorder: 'rgba(74,222,128,0.35)',
+   red: '#F87171',
+   redBg: 'rgba(248,113,113,0.12)',
+   redBorder: 'rgba(248,113,113,0.35)',
+   amber: '#FBBF24',
+   amberBg: 'rgba(251,191,36,0.12)',
+   amberBorder: 'rgba(251,191,36,0.35)',
+   purple: '#A78BFA',
+   overlay: 'rgba(0,0,0,0.84)',
+};
+
+const MAX = 1180;
 
 const safeFixed = (val: any, decimals: number = 2): string => {
    const num = Number(val);
    return isNaN(num) ? (0).toFixed(decimals) : num.toFixed(decimals);
 };
+
+const formatDate = (value: any, withTime: boolean = false): string => {
+   if (!value) return '—';
+   let date: Date;
+   if (value instanceof Date) date = value;
+   else if (typeof value?.toDate === 'function') date = value.toDate();
+   else if (typeof value?.seconds === 'number') date = new Date(value.seconds * 1000);
+   else date = new Date(value);
+   if (isNaN(date.getTime())) return '—';
+   return withTime
+      ? date.toLocaleString('es-VE')
+      : date.toLocaleDateString('es-VE');
+};
+
+/**
+ * Normaliza la URL que consume expo-image. Las imágenes de producto ya se
+ * guardan como URLs públicas de R2, por lo que se devuelven tal cual.
+ */
+const getDisplayImageUrl = (url?: string | null): string => String(url || '').trim();
+
+const totalProductStock = (product: Product): number =>
+   (product.variants || []).reduce(
+      (total, variant) =>
+         total +
+         (variant.sizes || []).reduce(
+            (sum, size) => sum + Math.max(0, Number(size.stock) || 0),
+            0
+         ),
+      0
+   );
+
+const P = ({ style, ...rest }: any) => (
+   <Pressable {...rest} style={({ pressed }: any) => [style, pressed && styles.pressed]} />
+);
 
 interface Props {
    currentSellerName?: string;
@@ -53,6 +124,9 @@ export const LayawayScreen: React.FC<Props> = ({
    currentSellerName = 'Vendedor Principal',
    currentSellerId = 'v1',
 }) => {
+   const { width } = useWindowDimensions();
+   const wide = width >= 1000;
+
    const [layaways, setLayaways] = useState<Layaway[]>([]);
    const [products, setProducts] = useState<Product[]>([]);
    const [searchQuery, setSearchQuery] = useState('');
@@ -72,6 +146,11 @@ export const LayawayScreen: React.FC<Props> = ({
    const [paymentMethod, setPaymentMethod] = useState<any>('efectivo');
    const [daysToDue, setDaysToDue] = useState('15');
    const [cartItems, setCartItems] = useState<any[]>([]);
+
+   // Selector visual de producto
+   const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<Product | null>(null);
+   const [selectedColor, setSelectedColor] = useState('');
+   const [selectedSize, setSelectedSize] = useState('');
 
    // Formulario Nuevo Abono
    const [abonoAmount, setAbonoAmount] = useState('');
@@ -103,22 +182,20 @@ export const LayawayScreen: React.FC<Props> = ({
       return matchesQ && matchesStatus;
    });
 
-   const totalProductStock = (product: Product): number =>
-      (product.variants || []).reduce(
-         (total, variant) =>
-            total +
-            (variant.sizes || []).reduce(
-               (sum, size) => sum + Math.max(0, Number(size.stock) || 0),
-               0
-            ),
-         0
-      );
+   const activeLayaways = useMemo(
+      () => layaways.filter((layaway) => layaway.status === 'active'),
+      [layaways]
+   );
+   const totalPending = useMemo(
+      () => activeLayaways.reduce((sum, item) => sum + (Number(item.balanceRemaining) || 0), 0),
+      [activeLayaways]
+   );
 
-   // Buscador real de productos con stock (reemplaza products.slice(0, 10)).
+   // Buscador real de productos con stock.
    const availableProducts = useMemo(() => {
       const q = productSearch.trim().toLowerCase();
       return products
-         .filter((product) => totalProductStock(product) > 0)
+         .filter((product) => !product.deleted && totalProductStock(product) > 0)
          .filter((product) => {
             if (!q) return true;
             return (
@@ -128,8 +205,11 @@ export const LayawayScreen: React.FC<Props> = ({
                String(product.category || '').toLowerCase().includes(q)
             );
          })
-         .slice(0, 100);
+         .slice(0, 40);
    }, [products, productSearch]);
+
+   const findProduct = (productId: string): Product | undefined =>
+      products.find((product) => (product.id || product.code) === productId);
 
    const cartQuantityFor = (productId: string, color: string, size: string): number =>
       cartItems
@@ -141,8 +221,61 @@ export const LayawayScreen: React.FC<Props> = ({
          )
          .reduce((total, item) => total + (Number(item.quantity) || 0), 0);
 
+   const cartSubtotal = useMemo(
+      () => roundMoney(cartItems.reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0)),
+      [cartItems]
+   );
+   const initialPaymentValue = Math.max(0, Number(initialPayment) || 0);
+   const cartBalance = Math.max(0, roundMoney(cartSubtotal - initialPaymentValue));
+
+   const selectedVariant = selectedCatalogProduct?.variants?.find(
+      (variant) => variant.color === selectedColor
+   );
+   const selectedSizeStock = Number(
+      selectedVariant?.sizes?.find((size) => size.size === selectedSize)?.stock
+   ) || 0;
+   const selectedInCart = selectedCatalogProduct
+      ? cartQuantityFor(
+         selectedCatalogProduct.id || selectedCatalogProduct.code,
+         selectedColor,
+         selectedSize
+      )
+      : 0;
+   const canAddSelected =
+      !!selectedCatalogProduct &&
+      !!selectedSize &&
+      selectedSizeStock > selectedInCart;
+
+   const resetNewForm = () => {
+      setCartItems([]);
+      setProductSearch('');
+      setCustomerName('');
+      setCustomerPhone('');
+      setInitialPayment('');
+      setPaymentMethod('efectivo');
+      setDaysToDue('15');
+      setSelectedCatalogProduct(null);
+      setSelectedColor('');
+      setSelectedSize('');
+   };
+
+   const handleSelectProduct = (product: Product) => {
+      const firstVariant =
+         (product.variants || []).find((variant) =>
+            (variant.sizes || []).some((size) => Number(size.stock) > 0)
+         ) || product.variants?.[0];
+      const firstSize =
+         firstVariant?.sizes?.find((size) => Number(size.stock) > 0)?.size || '';
+
+      setSelectedCatalogProduct(product);
+      setSelectedColor(firstVariant?.color || '');
+      setSelectedSize(firstSize);
+   };
+
    const handleAddToCart = (product: Product, color: string, size: string) => {
       const pId = product.id || product.code;
+      if (!pId) return;
+
       const variant = (product.variants || []).find((v) => v.color === color);
       const sizeObj = (variant?.sizes || []).find((s) => s.size === size);
       const availableStock = Math.max(0, Number(sizeObj?.stock) || 0);
@@ -169,10 +302,10 @@ export const LayawayScreen: React.FC<Props> = ({
             prev.map((i) =>
                i.productId === pId && i.color === color && i.size === size
                   ? {
-                       ...i,
-                       quantity: i.quantity + 1,
-                       totalPrice: roundMoney((i.quantity + 1) * i.unitPrice),
-                    }
+                     ...i,
+                     quantity: i.quantity + 1,
+                     totalPrice: roundMoney((i.quantity + 1) * i.unitPrice),
+                  }
                   : i
             )
          );
@@ -181,16 +314,61 @@ export const LayawayScreen: React.FC<Props> = ({
             ...prev,
             {
                productId: pId,
-               brand: product.brand || 'Generico',
+               productCode: product.code || 'S/N',
+               brand: product.brand || 'Genérico',
                name: product.name || 'Prenda',
                color: color || '',
                size: size || '',
                quantity: 1,
                unitPrice: roundMoney(Number(product.price) || 0),
                totalPrice: roundMoney(Number(product.price) || 0),
+               productImage: getDisplayImageUrl(product.images?.[0] || ''),
             },
          ]);
       }
+   };
+
+   const updateCartQuantity = (index: number, delta: number) => {
+      const item = cartItems[index];
+      if (!item) return;
+
+      const product = findProduct(item.productId);
+      const variant = product?.variants?.find((v) => v.color === item.color);
+      const sizeObj = variant?.sizes?.find((s) => s.size === item.size);
+      const maxStock = Number(sizeObj?.stock) || 0;
+      const nextQuantity = Number(item.quantity || 0) + delta;
+
+      if (nextQuantity <= 0) {
+         setCartItems((prev) => prev.filter((_, i) => i !== index));
+         return;
+      }
+      if (delta > 0 && (!product || !sizeObj)) {
+         showAlert('Prenda no disponible', 'Esta prenda o talla ya no está en el catálogo.');
+         return;
+      }
+      if (delta > 0 && nextQuantity > maxStock) {
+         showAlert(
+            'Stock insuficiente',
+            `Solo hay ${maxStock} unidad(es) disponibles de esta talla.`
+         );
+         return;
+      }
+
+      setCartItems((prev) =>
+         prev.map((cartItem, i) =>
+            i === index
+               ? {
+                  ...cartItem,
+                  quantity: nextQuantity,
+                  totalPrice: roundMoney(nextQuantity * cartItem.unitPrice),
+               }
+               : cartItem
+         )
+      );
+   };
+
+   const removeCartItem = (index: number) => {
+      setCartItems((prev) => prev.filter((_, i) => i !== index));
    };
 
    const handleSaveLayaway = async () => {
@@ -221,11 +399,7 @@ export const LayawayScreen: React.FC<Props> = ({
          if (result.sale) setReceiptSale(result.sale);
 
          setIsNewModalOpen(false);
-         setCartItems([]);
-         setProductSearch('');
-         setCustomerName('');
-         setCustomerPhone('');
-         setInitialPayment('');
+         resetNewForm();
          if (result.sale) {
             showAlert(
                'Apartado Completado',
@@ -301,10 +475,10 @@ export const LayawayScreen: React.FC<Props> = ({
          setSelectedLayaway((current) =>
             current && current.id === layaway.id
                ? {
-                    ...current,
-                    saleId: sale.id,
-                    saleReceiptNumber: sale.receiptNumber,
-                 }
+                  ...current,
+                  saleId: sale.id,
+                  saleReceiptNumber: sale.receiptNumber,
+               }
                : current
          );
          setReceiptSale(sale);
@@ -340,7 +514,7 @@ export const LayawayScreen: React.FC<Props> = ({
       msg += `• *Total:* $${safeFixed(layaway.totalAmount)}\n`;
       msg += `• *Abonado:* $${safeFixed(layaway.totalPaid)}\n`;
       msg += `• *PENDIENTE:* *$${safeFixed(layaway.balanceRemaining)}*\n`;
-      msg += `• *Vence:* ${new Date(layaway.dueDate).toLocaleDateString('es-ES')}\n\n`;
+      msg += `• *Vence:* ${formatDate(layaway.dueDate)}\n\n`;
       msg += `¡Pasa por la tienda a retirar tus prendas! 😊`;
 
       const cleanPhone = (layaway.customerPhone || '').replace(/[^0-9]/g, '');
@@ -348,180 +522,298 @@ export const LayawayScreen: React.FC<Props> = ({
       void openExternalLink(url);
    };
 
+   const renderProductImage = (product: Product | undefined, style: any) => {
+      const uri = product ? getDisplayImageUrl(product.images?.[0] || '') : '';
+      if (!uri) {
+         return (
+            <View style={[style, styles.imageFallback]}>
+               <Shirt size={18} color={C.mute} />
+            </View>
+         );
+      }
+      return (
+         <Image
+            source={{ uri }}
+            style={style}
+            contentFit="cover"
+            transition={150}
+         />
+      );
+   };
+
+   const renderCartProductImage = (item: any, style: any) => {
+      const product = findProduct(item.productId);
+      const uri = product
+         ? getDisplayImageUrl(product.images?.[0] || '')
+         : item.productImage || '';
+      if (!uri) {
+         return (
+            <View style={[style, styles.imageFallback]}>
+               <Shirt size={16} color={C.mute} />
+            </View>
+         );
+      }
+      return <Image source={{ uri }} style={style} contentFit="cover" transition={150} />;
+   };
+
    return (
       <View style={styles.container}>
+         {/* HEADER */}
          <View style={styles.header}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-               <Clock size={22} color="#2563eb" style={{ marginRight: 8 }} />
-               <View>
-                  <Text style={styles.headerTitle}>Apartados y Pedidos</Text>
-                  <Text style={styles.headerSubtitle}>Reserva de stock, abonos y entregas</Text>
+            <View style={styles.headerInner}>
+               <View style={styles.headerLeft}>
+                  <View style={styles.headerIconBox}>
+                     <Clock size={20} color={C.ink} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                     <Text style={styles.headerTitle} numberOfLines={1}>Apartados y Pedidos</Text>
+                     <Text style={styles.headerSubtitle} numberOfLines={1}>
+                        Reserva de stock, abonos y entregas
+                     </Text>
+                  </View>
+               </View>
+
+               <P
+                  style={styles.newLayawayBtn}
+                  onPress={() => {
+                     resetNewForm();
+                     setIsNewModalOpen(true);
+                  }}
+               >
+                  <Plus size={16} color={C.onSolid} />
+                  <Text style={styles.newLayawayBtnText}>Nuevo Apartado</Text>
+               </P>
+            </View>
+
+            <View style={[styles.metricsRow, { maxWidth: MAX }]}>
+               <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>Activos</Text>
+                  <Text style={styles.metricValue}>{activeLayaways.length}</Text>
+               </View>
+               <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>Por cobrar</Text>
+                  <Text style={[styles.metricValue, { color: C.amber }]}>${safeFixed(totalPending)}</Text>
+               </View>
+               <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>Total registrados</Text>
+                  <Text style={styles.metricValue}>{layaways.length}</Text>
                </View>
             </View>
-
-            <TouchableOpacity
-               style={styles.newLayawayBtn}
-               onPress={() => {
-                  setProductSearch('');
-                  setIsNewModalOpen(true);
-               }}
-            >
-               <Plus size={16} color="#ffffff" style={{ marginRight: 4 }} />
-               <Text style={styles.newLayawayBtnText}>Nuevo Apartado</Text>
-            </TouchableOpacity>
          </View>
 
+         {/* FILTROS */}
          <View style={styles.filterSection}>
-            <View style={styles.searchBar}>
-               <Search size={16} color="#94a3b8" style={{ marginRight: 8 }} />
-               <TextInput
-                  style={styles.searchInput}
-                  placeholder="Buscar por código, cliente o vendedor..."
-                  placeholderTextColor="#94a3b8"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-               />
-               {searchQuery ? (
-                  <TouchableOpacity onPress={() => setSearchQuery('')}>
-                     <X size={16} color="#94a3b8" />
-                  </TouchableOpacity>
-               ) : null}
+            <View style={styles.filterInner}>
+               <View style={styles.searchBar}>
+                  <Search size={16} color={C.mute} />
+                  <TextInput
+                     style={styles.searchInput}
+                     placeholder="Buscar por código, cliente o vendedor..."
+                     placeholderTextColor={C.mute}
+                     value={searchQuery}
+                     onChangeText={setSearchQuery}
+                  />
+                  {searchQuery ? (
+                     <P onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+                        <X size={14} color={C.mute} />
+                     </P>
+                  ) : null}
+               </View>
+
+               <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.chipsRow}
+               >
+                  {[
+                     { id: 'active', label: 'Activos / Pendientes' },
+                     { id: 'completed', label: 'Entregados / Pagados' },
+                     { id: 'cancelled', label: 'Cancelados' },
+                     { id: 'all', label: 'Todos' },
+                  ].map((chip) => (
+                     <P
+                        key={chip.id}
+                        style={[styles.chip, statusFilter === chip.id && styles.chipOn]}
+                        onPress={() => setStatusFilter(chip.id)}
+                     >
+                        <Text style={[styles.chipText, statusFilter === chip.id && styles.chipTextOn]}>
+                           {chip.label}
+                        </Text>
+                     </P>
+                  ))}
+               </ScrollView>
             </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
-               <TouchableOpacity
-                  style={[styles.chip, statusFilter === 'active' && styles.chipActive]}
-                  onPress={() => setStatusFilter('active')}
-               >
-                  <Text style={[styles.chipText, statusFilter === 'active' && styles.chipTextActive]}>
-                     Activos / Pendientes
-                  </Text>
-               </TouchableOpacity>
-
-               <TouchableOpacity
-                  style={[styles.chip, statusFilter === 'completed' && styles.chipActive]}
-                  onPress={() => setStatusFilter('completed')}
-               >
-                  <Text style={[styles.chipText, statusFilter === 'completed' && styles.chipTextActive]}>
-                     Entregados / Pagados
-                  </Text>
-               </TouchableOpacity>
-
-               <TouchableOpacity
-                  style={[styles.chip, statusFilter === 'cancelled' && styles.chipActive]}
-                  onPress={() => setStatusFilter('cancelled')}
-               >
-                  <Text style={[styles.chipText, statusFilter === 'cancelled' && styles.chipTextActive]}>
-                     Cancelados
-                  </Text>
-               </TouchableOpacity>
-
-               <TouchableOpacity
-                  style={[styles.chip, statusFilter === 'all' && styles.chipActive]}
-                  onPress={() => setStatusFilter('all')}
-               >
-                  <Text style={[styles.chipText, statusFilter === 'all' && styles.chipTextActive]}>
-                     Todos
-                  </Text>
-               </TouchableOpacity>
-            </ScrollView>
          </View>
 
+         {/* LISTA */}
          <FlatList
+            key={wide ? 'grid-2' : 'list-1'}
             data={filteredLayaways}
+            numColumns={wide ? 2 : 1}
+            columnWrapperStyle={wide ? styles.gridRow : undefined}
             keyExtractor={(item) => item.id || item.code || 'layaway'}
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => {
                const isCompleted = item.status === 'completed';
                const isCancelled = item.status === 'cancelled';
+               const isActive = item.status === 'active';
                const progressPercent = item.totalAmount > 0
                   ? Math.min(100, Math.round((item.totalPaid / item.totalAmount) * 100))
                   : 0;
 
                return (
-                  <TouchableOpacity
+                  <P
                      style={[
                         styles.layawayCard,
+                        wide && styles.layawayCardGrid,
                         isCompleted && styles.cardCompleted,
                         isCancelled && styles.cardCancelled,
                      ]}
-                     activeOpacity={0.85}
                      onPress={() => setSelectedLayaway(item)}
                   >
                      <View style={styles.cardHeader}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                           <Tag size={16} color={isCompleted ? '#16a34a' : isCancelled ? '#ef4444' : '#2563eb'} />
+                        <View style={styles.codeRow}>
+                           <View style={styles.codeIcon}>
+                              <Tag size={14} color={isCompleted ? C.green : isCancelled ? C.red : C.ink} />
+                           </View>
                            <Text style={styles.layawayCode}>#{item.code || 'N/A'}</Text>
                         </View>
 
-                        {isCompleted ? (
-                           <View style={styles.badgeSuccess}>
-                              <Text style={styles.badgeSuccessText}>COMPLETADO</Text>
-                           </View>
-                        ) : isCancelled ? (
-                           <View style={styles.badgeDanger}>
-                              <Text style={styles.badgeDangerText}>CANCELADO</Text>
-                           </View>
-                        ) : (
-                           <View style={styles.badgeActive}>
-                              <Text style={styles.badgeActiveText}>ACTIVO</Text>
-                           </View>
-                        )}
-                     </View>
-
-                     <View style={styles.customerRow}>
-                        <User size={13} color="#64748b" />
-                        <Text style={styles.customerName}>{item.customerName || 'Cliente'}</Text>
-                        <Text style={styles.customerPhone}>({item.customerPhone || 'Sin tel'})</Text>
-                     </View>
-
-                     {item.sellerName ? (
-                        <Text style={styles.sellerText}>Vendedor: {item.sellerName}</Text>
-                     ) : null}
-
-                     <View style={styles.progressSection}>
-                        <View style={styles.progressLabels}>
-                           <Text style={styles.progressLabelText}>
-                              Abonado: ${safeFixed(item.totalPaid)} de${safeFixed(item.totalAmount)}
+                        <View style={[
+                           styles.statusPill,
+                           isCompleted && styles.statusPillSuccess,
+                           isCancelled && styles.statusPillDanger,
+                           isActive && styles.statusPillActive,
+                        ]}>
+                           <Text style={[
+                              styles.statusText,
+                              isCompleted && { color: C.green },
+                              isCancelled && { color: C.red },
+                              isActive && { color: C.ink },
+                           ]}>
+                              {isCompleted ? 'COMPLETADO' : isCancelled ? 'CANCELADO' : 'ACTIVO'}
                            </Text>
-                           <Text style={styles.progressPercentText}>{progressPercent}%</Text>
                         </View>
+                     </View>
 
-                        <View style={styles.progressBarTrack}>
+                     <View style={styles.customerBlock}>
+                        <View style={styles.customerRow}>
+                           <User size={13} color={C.mute} />
+                           <Text style={styles.customerName} numberOfLines={1}>
+                              {item.customerName || 'Cliente'}
+                           </Text>
+                           <Text style={styles.customerPhone} numberOfLines={1}>
+                              {item.customerPhone || 'Sin teléfono'}
+                           </Text>
+                        </View>
+                        <Text style={styles.sellerText} numberOfLines={1}>
+                           Vendedor: {item.sellerName || '—'} · Vence: {formatDate(item.dueDate)}
+                        </Text>
+                     </View>
+
+                     <View style={styles.progressBlock}>
+                        <View style={styles.progressLabels}>
+                           <Text style={styles.progressLabel}>
+                              Abonado ${safeFixed(item.totalPaid)} de ${safeFixed(item.totalAmount)}
+                           </Text>
+                           <Text style={styles.progressPercent}>{progressPercent}%</Text>
+                        </View>
+                        <View style={styles.progressTrack}>
                            <View
                               style={[
-                                 styles.progressBarFill,
+                                 styles.progressFill,
                                  { width: `${progressPercent}%` },
-                                 isCompleted && { backgroundColor: '#22c55e' },
+                                 isCompleted && { backgroundColor: C.green },
+                                 isCancelled && { backgroundColor: C.red },
                               ]}
                            />
                         </View>
                      </View>
 
-                     <View style={styles.cardFooter}>
-                        <Text style={styles.balanceText}>
-                           Saldo Pendiente:{' '}
-                           <Text style={{ color: isCompleted ? '#16a34a' : '#ef4444', fontWeight: 'bold' }}>
+                     <View style={styles.miniMetricsRow}>
+                        <View style={styles.miniMetric}>
+                           <Text style={styles.miniMetricLabel}>Total</Text>
+                           <Text style={styles.miniMetricValue}>${safeFixed(item.totalAmount)}</Text>
+                        </View>
+                        <View style={styles.miniMetric}>
+                           <Text style={styles.miniMetricLabel}>Abonado</Text>
+                           <Text style={[styles.miniMetricValue, { color: C.green }]}>
+                              ${safeFixed(item.totalPaid)}
+                           </Text>
+                        </View>
+                        <View style={styles.miniMetric}>
+                           <Text style={styles.miniMetricLabel}>Pendiente</Text>
+                           <Text style={[
+                              styles.miniMetricValue,
+                              { color: isCompleted ? C.green : C.red },
+                           ]}>
                               ${safeFixed(item.balanceRemaining)}
                            </Text>
-                        </Text>
+                        </View>
+                     </View>
 
-                        <TouchableOpacity
-                           style={styles.waBtnQuick}
-                           onPress={(e) => {
-                              e.stopPropagation();
+                     <View style={styles.cardActions}>
+                        {isActive && (
+                           <P
+                              style={[styles.actionBtn, styles.actionPrimary]}
+                              onPress={(e: any) => {
+                                 e?.stopPropagation?.();
+                                 setSelectedLayaway(item);
+                                 setIsPaymentModalOpen(true);
+                              }}
+                           >
+                              <CreditCard size={13} color={C.onSolid} />
+                              <Text style={styles.actionPrimaryText}>Abonar</Text>
+                           </P>
+                        )}
+
+                        {isCompleted && (
+                           <P
+                              style={[styles.actionBtn, styles.actionGhost]}
+                              onPress={(e: any) => {
+                                 e?.stopPropagation?.();
+                                 void handleViewOrOfficializeSale(item);
+                              }}
+                              disabled={isProcessing}
+                           >
+                              <Receipt size={13} color={C.ink} />
+                              <Text style={styles.actionGhostText}>
+                                 {item.saleId ? 'Ver recibo' : 'Oficializar'}
+                              </Text>
+                           </P>
+                        )}
+
+                        {isActive && (
+                           <P
+                              style={[styles.actionBtn, styles.actionDanger]}
+                              onPress={(e: any) => {
+                                 e?.stopPropagation?.();
+                                 void handleCancelLayaway(item);
+                              }}
+                           >
+                              <XCircle size={13} color={C.red} />
+                              <Text style={styles.actionDangerText}>Cancelar</Text>
+                           </P>
+                        )}
+
+                        <P
+                           style={styles.iconBtn}
+                           onPress={(e: any) => {
+                              e?.stopPropagation?.();
                               handleSendReminderWA(item);
                            }}
                         >
-                           <MessageCircle size={14} color="#25d366" />
-                        </TouchableOpacity>
+                           <MessageCircle size={15} color={C.green} />
+                        </P>
                      </View>
-                  </TouchableOpacity>
+                  </P>
                );
             }}
             ListEmptyComponent={
                <View style={styles.emptyContainer}>
-                  <Clock size={36} color="#cbd5e1" />
+                  <View style={styles.emptyIconBox}>
+                     <Clock size={30} color={C.mute} />
+                  </View>
                   <Text style={styles.emptyTitle}>No hay apartados registrados</Text>
                   <Text style={styles.emptySubtitle}>
                      Crea un nuevo apartado para reservar prendas del stock y recibir abonos.
@@ -530,120 +822,178 @@ export const LayawayScreen: React.FC<Props> = ({
             }
          />
 
+         {/* DETALLE DEL APARTADO */}
          <Modal visible={!!selectedLayaway && !isPaymentModalOpen} transparent animationType="slide">
             {selectedLayaway && (
                <View style={styles.modalOverlay}>
                   <View style={styles.modalCard}>
                      <View style={styles.modalHeader}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                           <Clock size={18} color="#2563eb" />
-                           <Text style={styles.modalTitle}>Apartado #{selectedLayaway.code}</Text>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                           <Text style={styles.modalTitle} numberOfLines={1}>
+                              Apartado #{selectedLayaway.code}
+                           </Text>
+                           <Text style={styles.modalSubtitle} numberOfLines={1}>
+                              {selectedLayaway.status === 'active'
+                                 ? 'En curso · abonos habilitados'
+                                 : selectedLayaway.status === 'completed'
+                                    ? 'Completado y entregado'
+                                    : 'Cancelado'}
+                           </Text>
                         </View>
-                        <TouchableOpacity onPress={() => setSelectedLayaway(null)}>
-                           <X size={20} color="#64748b" />
-                        </TouchableOpacity>
+                        <P onPress={() => setSelectedLayaway(null)} style={styles.closeBtn}>
+                           <X size={18} color={C.ink} />
+                        </P>
                      </View>
 
-                     <ScrollView style={{ padding: 16 }}>
-                        <View style={styles.layawaySummaryBox}>
-                           <Text style={styles.boxTitle}>Información del Cliente</Text>
-                           <Text style={styles.boxVal}>Cliente: {selectedLayaway.customerName}</Text>
-                           <Text style={styles.boxVal}>Teléfono: {selectedLayaway.customerPhone}</Text>
-                           <Text style={styles.boxVal}>
-                              Vendedor Asignado: {selectedLayaway.sellerName || 'N/A'}
-                           </Text>
-                           <Text style={styles.boxVal}>
-                              Vence el:{' '}
-                              {new Date(selectedLayaway.dueDate).toLocaleDateString('es-ES')}
-                           </Text>
+                     <ScrollView style={styles.modalScroll} contentContainerStyle={{ padding: 16 }}>
+                        <View style={styles.summaryBox}>
+                           <Text style={styles.summaryLabel}>Cliente</Text>
+                           <Text style={styles.summaryValue}>{selectedLayaway.customerName}</Text>
+                           <View style={styles.summaryDivider} />
+                           <View style={styles.summaryRow}>
+                              <Text style={styles.summaryMuted}>Teléfono</Text>
+                              <Text style={styles.summaryValueSmall}>{selectedLayaway.customerPhone}</Text>
+                           </View>
+                           <View style={styles.summaryRow}>
+                              <Text style={styles.summaryMuted}>Vendedor</Text>
+                              <Text style={styles.summaryValueSmall}>{selectedLayaway.sellerName || '—'}</Text>
+                           </View>
+                           <View style={styles.summaryRow}>
+                              <Text style={styles.summaryMuted}>Vence</Text>
+                              <Text style={styles.summaryValueSmall}>{formatDate(selectedLayaway.dueDate)}</Text>
+                           </View>
                            {selectedLayaway.saleReceiptNumber ? (
-                              <Text style={styles.boxVal}>
-                                 Venta oficial: {selectedLayaway.saleReceiptNumber}
-                              </Text>
+                              <View style={styles.summaryRow}>
+                                 <Text style={styles.summaryMuted}>Venta oficial</Text>
+                                 <Text style={[styles.summaryValueSmall, { color: C.green }]}>
+                                    {selectedLayaway.saleReceiptNumber}
+                                 </Text>
+                              </View>
                            ) : null}
                         </View>
 
-                        <Text style={styles.sectionLabel}>Prendas Reservadas:</Text>
-                        <View style={styles.itemsTable}>
-                           {(selectedLayaway.items || []).map((i, idx) => (
-                              <View key={idx} style={styles.itemRow}>
-                                 <Text style={styles.itemText}>
-                                    {i.quantity || 1}x {i.brand || ''} - {i.name || ''} ({i.color || ''}/Talla {i.size || ''})
-                                 </Text>
-                                 <Text style={styles.itemPrice}>${safeFixed(i.totalPrice)}</Text>
-                              </View>
-                           ))}
+                        <View style={styles.progressBlock}>
+                           <View style={styles.progressLabels}>
+                              <Text style={styles.progressLabel}>
+                                 Abonado ${safeFixed(selectedLayaway.totalPaid)} de ${safeFixed(selectedLayaway.totalAmount)}
+                              </Text>
+                              <Text style={styles.progressPercent}>
+                                 {selectedLayaway.totalAmount > 0
+                                    ? Math.min(100, Math.round((selectedLayaway.totalPaid / selectedLayaway.totalAmount) * 100))
+                                    : 0}%
+                              </Text>
+                           </View>
+                           <View style={styles.progressTrack}>
+                              <View
+                                 style={[
+                                    styles.progressFill,
+                                    {
+                                       width: `${selectedLayaway.totalAmount > 0
+                                          ? Math.min(100, Math.round((selectedLayaway.totalPaid / selectedLayaway.totalAmount) * 100))
+                                          : 0}%`,
+                                    },
+                                 ]}
+                              />
+                           </View>
                         </View>
 
-                        <Text style={styles.sectionLabel}>Historial de Abonos Parciales:</Text>
-                        <View style={styles.paymentsTable}>
-                           {(selectedLayaway.payments || []).map((p, idx) => (
-                              <View key={idx} style={styles.paymentRow}>
-                                 <View>
-                                    <Text style={styles.paymentAmountText}>
-                                       +${safeFixed(p.amount)} ({(p.paymentMethod || '').replace('_', ' ').toUpperCase()})
+                        <Text style={styles.sectionTitle}>Prendas reservadas</Text>
+                        {(selectedLayaway.items || []).map((i: any, idx: number) => {
+                           const product = findProduct(i.productId);
+                           const code = i.productCode || product?.code || 'S/N';
+                           return (
+                              <View key={idx} style={styles.itemRow}>
+                                 {renderCartProductImage(i, styles.itemImg)}
+                                 <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Text style={styles.itemName} numberOfLines={2}>
+                                       <Text style={styles.itemCode}>[{code}] </Text>
+                                       {i.brand || ''} {i.name || ''}
                                     </Text>
-                                    <Text style={styles.paymentDateText}>
-                                       {new Date(p.date).toLocaleString('es-ES')} - {p.registeredBy || 'Sistema'}
+                                    <Text style={styles.itemMeta} numberOfLines={1}>
+                                       {i.color || '—'} · Talla {i.size || '—'} · {i.quantity || 1} ud.
+                                    </Text>
+                                    <Text style={styles.itemMeta} numberOfLines={1}>
+                                       ${safeFixed(i.unitPrice)} c/u
                                     </Text>
                                  </View>
-                                 <ShieldCheck size={16} color="#16a34a" />
+                                 <Text style={styles.itemPrice}>${safeFixed(i.totalPrice)}</Text>
                               </View>
-                           ))}
-                        </View>
+                           );
+                        })}
 
-                        <View style={styles.balanceSummaryBox}>
-                           <View style={styles.balRow}>
-                              <Text style={styles.balLabel}>Monto Total:</Text>
-                              <Text style={styles.balVal}>${safeFixed(selectedLayaway.totalAmount)}</Text>
+                        <Text style={styles.sectionTitle}>Historial de abonos</Text>
+                        {(selectedLayaway.payments || []).length === 0 ? (
+                           <Text style={styles.mutedText}>Aún no hay abonos registrados.</Text>
+                        ) : (
+                           (selectedLayaway.payments || []).map((p: any, idx: number) => (
+                              <View key={idx} style={styles.paymentRow}>
+                                 <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Text style={styles.paymentAmount}>
+                                       +${safeFixed(p.amount)} · {(p.paymentMethod || '').replace('_', ' ').toUpperCase()}
+                                    </Text>
+                                    <Text style={styles.paymentMeta} numberOfLines={1}>
+                                       {formatDate(p.date, true)} · {p.registeredBy || 'Sistema'}
+                                    </Text>
+                                 </View>
+                                 <ShieldCheck size={15} color={C.green} />
+                              </View>
+                           ))
+                        )}
+
+                        <View style={styles.balanceBox}>
+                           <View style={styles.balanceRow}>
+                              <Text style={styles.balanceLabel}>Monto total</Text>
+                              <Text style={styles.balanceValue}>${safeFixed(selectedLayaway.totalAmount)}</Text>
                            </View>
-                           <View style={styles.balRow}>
-                              <Text style={styles.balLabel}>Total Abonado:</Text>
-                              <Text style={styles.balValPaid}>${safeFixed(selectedLayaway.totalPaid)}</Text>
+                           <View style={styles.balanceRow}>
+                              <Text style={styles.balanceLabel}>Total abonado</Text>
+                              <Text style={[styles.balanceValue, { color: C.green }]}>
+                                 ${safeFixed(selectedLayaway.totalPaid)}
+                              </Text>
                            </View>
-                           <View style={[styles.balRow, { marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#cbd5e1' }]}>
-                              <Text style={styles.balMainLabel}>SALDO PENDIENTE:</Text>
-                              <Text style={styles.balMainVal}>${safeFixed(selectedLayaway.balanceRemaining)}</Text>
+                           <View style={[styles.balanceRow, { marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.border }]}>
+                              <Text style={styles.balancePendingLabel}>SALDO PENDIENTE</Text>
+                              <Text style={styles.balancePending}>${safeFixed(selectedLayaway.balanceRemaining)}</Text>
                            </View>
                         </View>
                      </ScrollView>
 
                      <View style={styles.modalFooter}>
                         {selectedLayaway.status === 'active' && (
-                           <TouchableOpacity
-                              style={styles.addAbonoBtn}
+                           <P
+                              style={[styles.footerBtn, styles.footerPrimary]}
                               onPress={() => setIsPaymentModalOpen(true)}
                            >
-                              <CreditCard size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                              <Text style={styles.addAbonoBtnText}>Registrar Abono</Text>
-                           </TouchableOpacity>
+                              <CreditCard size={15} color={C.onSolid} />
+                              <Text style={styles.footerPrimaryText}>Registrar abono</Text>
+                           </P>
                         )}
 
                         {selectedLayaway.status === 'active' && (
-                           <TouchableOpacity
-                              style={styles.cancelBtn}
-                              onPress={() => handleCancelLayaway(selectedLayaway)}
+                           <P
+                              style={[styles.footerBtn, styles.footerDanger]}
+                              onPress={() => void handleCancelLayaway(selectedLayaway)}
                            >
-                              <XCircle size={16} color="#ef4444" style={{ marginRight: 4 }} />
-                              <Text style={styles.cancelBtnText}>Anular</Text>
-                           </TouchableOpacity>
+                              <XCircle size={15} color={C.red} />
+                              <Text style={styles.footerDangerText}>Anular</Text>
+                           </P>
                         )}
 
                         {selectedLayaway.status === 'completed' && (
-                           <TouchableOpacity
-                              style={[styles.receiptBtn, isProcessing && { opacity: 0.6 }]}
-                              onPress={() => handleViewOrOfficializeSale(selectedLayaway)}
+                           <P
+                              style={[styles.footerBtn, styles.footerGhost, isProcessing && { opacity: 0.6 }]}
+                              onPress={() => void handleViewOrOfficializeSale(selectedLayaway)}
                               disabled={isProcessing}
                            >
-                              <Receipt size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                              <Text style={styles.receiptBtnText}>
+                              <Receipt size={15} color={C.ink} />
+                              <Text style={styles.footerGhostText}>
                                  {isProcessing
                                     ? 'Procesando…'
                                     : selectedLayaway.saleId
-                                       ? 'Ver Recibo'
-                                       : 'Oficializar Venta'}
+                                       ? 'Ver recibo'
+                                       : 'Oficializar venta'}
                               </Text>
-                           </TouchableOpacity>
+                           </P>
                         )}
                      </View>
                   </View>
@@ -651,180 +1001,401 @@ export const LayawayScreen: React.FC<Props> = ({
             )}
          </Modal>
 
+         {/* ABONO */}
          <Modal visible={isPaymentModalOpen} transparent animationType="fade">
             <View style={styles.modalOverlay}>
                <View style={styles.smallModalCard}>
                   <View style={styles.modalHeader}>
-                     <Text style={styles.modalTitle}>Registrar Abono</Text>
-                     <TouchableOpacity onPress={() => setIsPaymentModalOpen(false)}>
-                        <X size={18} color="#64748b" />
-                     </TouchableOpacity>
+                     <View>
+                        <Text style={styles.modalTitle}>Registrar abono</Text>
+                        <Text style={styles.modalSubtitle}>
+                           Saldo: ${safeFixed(selectedLayaway?.balanceRemaining)}
+                        </Text>
+                     </View>
+                     <P onPress={() => setIsPaymentModalOpen(false)} style={styles.closeBtn}>
+                        <X size={18} color={C.ink} />
+                     </P>
                   </View>
 
                   <View style={{ padding: 16 }}>
-                     <Text style={styles.inputLabel}>Monto a Abonar ($):</Text>
+                     <Text style={styles.inputLabel}>Monto a abonar ($)</Text>
                      <TextInput
-                        style={styles.inputField}
+                        style={styles.input}
                         placeholder="0.00"
-                        keyboardType="numeric"
+                        placeholderTextColor={C.mute}
+                        keyboardType="decimal-pad"
                         value={abonoAmount}
                         onChangeText={setAbonoAmount}
                      />
 
-                     <Text style={styles.inputLabel}>Método de Pago:</Text>
-                     <View style={styles.methodGrid}>
-                        {['efectivo', 'pago_movil', 'punto', 'transferencia'].map((m) => (
-                           <TouchableOpacity
+                     <Text style={styles.inputLabel}>Método de pago</Text>
+                     <View style={styles.methodRow}>
+                        {['efectivo', 'pago_movil', 'punto', 'transferencia', 'binance'].map((m) => (
+                           <P
                               key={m}
-                              style={[styles.methodChip, abonoMethod === m && styles.methodChipActive]}
+                              style={[styles.methodChip, abonoMethod === m && styles.methodChipOn]}
                               onPress={() => setAbonoMethod(m as any)}
                            >
-                              <Text style={[styles.methodChipText, abonoMethod === m && styles.methodChipTextActive]}>
+                              <Text style={[styles.methodText, abonoMethod === m && styles.methodTextOn]}>
                                  {m.replace('_', ' ').toUpperCase()}
                               </Text>
-                           </TouchableOpacity>
+                           </P>
                         ))}
                      </View>
 
-                     <TouchableOpacity
-                        style={styles.saveAbonoSubmitBtn}
+                     <Text style={styles.inputLabel}>Nota (opcional)</Text>
+                     <TextInput
+                        style={styles.input}
+                        placeholder="Referencia o nota del abono"
+                        placeholderTextColor={C.mute}
+                        value={abonoNotes}
+                        onChangeText={setAbonoNotes}
+                     />
+
+                     <P
+                        style={[styles.saveBtn, isProcessing && { opacity: 0.6 }]}
                         onPress={handleSaveAbono}
                         disabled={isProcessing}
                      >
-                        <Text style={styles.saveAbonoSubmitText}>
-                           {isProcessing ? 'Procesando...' : 'Confirmar Abono'}
+                        <Text style={styles.saveBtnText}>
+                           {isProcessing ? 'Procesando…' : 'Confirmar abono'}
                         </Text>
-                     </TouchableOpacity>
+                     </P>
                   </View>
                </View>
             </View>
          </Modal>
 
+         {/* NUEVO APARTADO */}
          <Modal visible={isNewModalOpen} transparent animationType="slide">
             <View style={styles.modalOverlay}>
                <View style={styles.modalCard}>
                   <View style={styles.modalHeader}>
-                     <Text style={styles.modalTitle}>Crear Nuevo Apartado</Text>
-                     <TouchableOpacity onPress={() => setIsNewModalOpen(false)}>
-                        <X size={20} color="#64748b" />
-                     </TouchableOpacity>
+                     <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.modalTitle}>Nuevo Apartado</Text>
+                        <Text style={styles.modalSubtitle}>Reserva stock y registra el abono inicial</Text>
+                     </View>
+                     <P onPress={() => setIsNewModalOpen(false)} style={styles.closeBtn}>
+                        <X size={18} color={C.ink} />
+                     </P>
                   </View>
 
-                  <ScrollView style={{ padding: 16 }}>
-                     <Text style={styles.inputLabel}>Nombre del Cliente *:</Text>
-                     <TextInput
-                        style={styles.inputField}
-                        placeholder="Ej. Juan Pérez"
-                        value={customerName}
-                        onChangeText={setCustomerName}
-                     />
+                  <ScrollView
+                     style={styles.modalScroll}
+                     contentContainerStyle={{ padding: 16 }}
+                     keyboardShouldPersistTaps="handled"
+                     nestedScrollEnabled
+                  >
+                     <Text style={styles.sectionTitleFirst}>Datos del cliente</Text>
+                     <View style={styles.formRow}>
+                        <View style={{ flex: 1.4 }}>
+                           <Text style={styles.inputLabel}>Nombre *</Text>
+                           <TextInput
+                              style={styles.input}
+                              placeholder="Ej. Juan Pérez"
+                              placeholderTextColor={C.mute}
+                              value={customerName}
+                              onChangeText={setCustomerName}
+                           />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                           <Text style={styles.inputLabel}>Teléfono *</Text>
+                           <TextInput
+                              style={styles.input}
+                              placeholder="+58 412..."
+                              placeholderTextColor={C.mute}
+                              keyboardType="phone-pad"
+                              value={customerPhone}
+                              onChangeText={setCustomerPhone}
+                           />
+                        </View>
+                     </View>
 
-                     <Text style={styles.inputLabel}>Teléfono / WhatsApp *:</Text>
-                     <TextInput
-                        style={styles.inputField}
-                        placeholder="Ej. +584121234567"
-                        keyboardType="phone-pad"
-                        value={customerPhone}
-                        onChangeText={setCustomerPhone}
-                     />
+                     <View style={styles.formRow}>
+                        <View style={{ flex: 1 }}>
+                           <Text style={styles.inputLabel}>Días para vencer</Text>
+                           <TextInput
+                              style={styles.input}
+                              placeholder="15"
+                              placeholderTextColor={C.mute}
+                              keyboardType="numeric"
+                              value={daysToDue}
+                              onChangeText={setDaysToDue}
+                           />
+                        </View>
+                        <View style={{ flex: 2 }} />
+                     </View>
 
-                     <Text style={styles.inputLabel}>Días para Vencimiento:</Text>
-                     <TextInput
-                        style={styles.inputField}
-                        placeholder="15"
-                        keyboardType="numeric"
-                        value={daysToDue}
-                        onChangeText={setDaysToDue}
-                     />
-
-                     <Text style={styles.sectionLabel}>Seleccionar Prendas del Stock:</Text>
+                     <Text style={styles.sectionTitle}>Seleccionar prendas</Text>
                      <View style={styles.pickerSearchBar}>
-                        <Search size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+                        <Search size={15} color={C.mute} />
                         <TextInput
                            style={styles.pickerSearchInput}
                            placeholder="Buscar por nombre, marca o código..."
-                           placeholderTextColor="#94a3b8"
+                           placeholderTextColor={C.mute}
                            value={productSearch}
                            onChangeText={setProductSearch}
                         />
                         {productSearch ? (
-                           <TouchableOpacity onPress={() => setProductSearch('')}>
-                              <X size={14} color="#94a3b8" />
-                           </TouchableOpacity>
+                           <P onPress={() => setProductSearch('')} style={styles.clearBtn}>
+                              <X size={14} color={C.mute} />
+                           </P>
                         ) : null}
                      </View>
 
-                     <View style={styles.productPickerBox}>
-                        <ScrollView style={{ maxHeight: 230 }} nestedScrollEnabled>
-                           {availableProducts.length === 0 ? (
-                              <Text style={styles.pickerEmptyText}>
-                                 No se encontraron prendas con stock disponible.
-                              </Text>
-                           ) : (
-                              availableProducts.map((prod) => (
-                                 <View key={prod.id || prod.code} style={styles.pickerProductRow}>
-                                    <Text style={styles.pickerProdName}>
-                                       {prod.brand || 'Marca'} - {prod.name} (${Number(prod.price || 0).toFixed(2)})
-                                       {prod.code ? ` · ${prod.code}` : ''}
-                                    </Text>
-                                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                                       {(prod.variants || []).map((v, vIdx) =>
-                                          (v.sizes || [])
-                                             .filter((s) => Number(s.stock) > 0)
-                                             .map((s, sIdx) => (
-                                                <TouchableOpacity
-                                                   key={`${vIdx}-${sIdx}`}
-                                                   style={styles.addVariantChip}
-                                                   onPress={() => handleAddToCart(prod, v.color, s.size)}
+                     <View style={styles.productListBox}>
+                        {availableProducts.length === 0 ? (
+                           <Text style={styles.emptyPickerText}>
+                              No se encontraron prendas con stock disponible.
+                           </Text>
+                        ) : (
+                           availableProducts.map((product) => {
+                              const isSelected =
+                                 (selectedCatalogProduct?.id || selectedCatalogProduct?.code) ===
+                                 (product.id || product.code);
+                              const variants = (product.variants || []).filter((variant) =>
+                                 (variant.sizes || []).some((size) => Number(size.stock) > 0)
+                              );
+                              const variant = variants.find((v) => v.color === selectedColor);
+
+                              return (
+                                 <View
+                                    key={product.id || product.code}
+                                    style={[styles.productCard, isSelected && styles.productCardOn]}
+                                 >
+                                    <P
+                                       style={styles.productCardTop}
+                                       onPress={() => handleSelectProduct(product)}
+                                    >
+                                       {renderProductImage(product, styles.productImg)}
+                                       <View style={{ flex: 1, minWidth: 0 }}>
+                                          <Text style={styles.productBrand} numberOfLines={1}>
+                                             {product.brand || 'Genérico'}
+                                          </Text>
+                                          <Text style={styles.productName} numberOfLines={2}>
+                                             <Text style={styles.productCode}>[{product.code || 'S/N'}] </Text>
+                                             {product.name}
+                                          </Text>
+                                          <Text style={styles.productMeta} numberOfLines={1}>
+                                             {product.category || 'Prenda'} · Stock total {totalProductStock(product)}
+                                          </Text>
+                                       </View>
+                                       <View style={styles.priceColumn}>
+                                          <Text style={styles.productPrice}>${safeFixed(product.price)}</Text>
+                                          <Text style={styles.productPriceHint}>Precio</Text>
+                                       </View>
+                                    </P>
+
+                                    {isSelected && (
+                                       <View style={styles.selectedPanel}>
+                                          <Text style={styles.subLabel}>Color</Text>
+                                          <ScrollView
+                                             horizontal
+                                             showsHorizontalScrollIndicator={false}
+                                             contentContainerStyle={styles.chipsRow}
+                                          >
+                                             {variants.map((v) => (
+                                                <P
+                                                   key={v.color}
+                                                   style={[
+                                                      styles.colorChip,
+                                                      selectedColor === v.color && styles.colorChipOn,
+                                                   ]}
+                                                   onPress={() => {
+                                                      setSelectedColor(v.color);
+                                                      const nextSize =
+                                                         (v.sizes || []).find((s) => Number(s.stock) > 0)?.size || '';
+                                                      setSelectedSize(nextSize);
+                                                   }}
                                                 >
-                                                   <Text style={styles.addVariantText}>
-                                                      + {v.color}/{s.size} ({Number(s.stock) || 0})
+                                                   <View
+                                                      style={[
+                                                         styles.colorSwatch,
+                                                         { backgroundColor: (v as any).colorHex || '#525252' },
+                                                      ]}
+                                                   />
+                                                   <Text
+                                                      style={[
+                                                         styles.colorChipText,
+                                                         selectedColor === v.color && styles.colorChipTextOn,
+                                                      ]}
+                                                   >
+                                                      {v.color}
                                                    </Text>
-                                                </TouchableOpacity>
-                                             ))
-                                       )}
-                                    </ScrollView>
+                                                </P>
+                                             ))}
+                                          </ScrollView>
+
+                                          <Text style={[styles.subLabel, { marginTop: 8 }]}>Talla / stock</Text>
+                                          <ScrollView
+                                             horizontal
+                                             showsHorizontalScrollIndicator={false}
+                                             contentContainerStyle={styles.chipsRow}
+                                          >
+                                             {(variant?.sizes || []).map((size) => {
+                                                const stock = Number(size.stock) || 0;
+                                                const disabled = stock <= 0;
+                                                return (
+                                                   <P
+                                                      key={size.size}
+                                                      disabled={disabled}
+                                                      style={[
+                                                         styles.sizeChip,
+                                                         selectedSize === size.size && styles.sizeChipOn,
+                                                         disabled && styles.chipDisabled,
+                                                      ]}
+                                                      onPress={() => setSelectedSize(size.size)}
+                                                   >
+                                                      <Text
+                                                         style={[
+                                                            styles.sizeChipText,
+                                                            selectedSize === size.size && styles.sizeChipTextOn,
+                                                            disabled && styles.chipTextDisabled,
+                                                         ]}
+                                                      >
+                                                         {size.size} ({stock})
+                                                      </Text>
+                                                   </P>
+                                                );
+                                             })}
+                                          </ScrollView>
+
+                                          <View style={styles.selectedFooter}>
+                                             <View>
+                                                <Text style={styles.selectedStock}>
+                                                   Disponible: {selectedSizeStock} · En carrito: {selectedInCart}
+                                                </Text>
+                                                <Text style={styles.selectedHint}>
+                                                   {selectedColor || 'Color'} · Talla {selectedSize || '—'}
+                                                </Text>
+                                             </View>
+                                             <P
+                                                style={[
+                                                   styles.addCartBtn,
+                                                   !canAddSelected && { opacity: 0.4 },
+                                                ]}
+                                                disabled={!canAddSelected}
+                                                onPress={() => {
+                                                   if (selectedCatalogProduct) {
+                                                      handleAddToCart(
+                                                         selectedCatalogProduct,
+                                                         selectedColor,
+                                                         selectedSize
+                                                      );
+                                                   }
+                                                }}
+                                             >
+                                                <Plus size={14} color={C.onSolid} />
+                                                <Text style={styles.addCartText}>Agregar</Text>
+                                             </P>
+                                          </View>
+                                       </View>
+                                    )}
                                  </View>
-                              ))
-                           )}
-                        </ScrollView>
+                              );
+                           })
+                        )}
                      </View>
 
-                     <Text style={styles.sectionLabel}>Prendas Seleccionadas ({cartItems.length}):</Text>
-                     {cartItems.map((item, idx) => (
-                        <View key={idx} style={styles.cartRow}>
-                           <Text style={styles.cartText}>
-                              {item.quantity}x {item.brand} {item.name} ({item.color}/{item.size})
+                     <Text style={styles.sectionTitle}>Carrito del apartado</Text>
+                     {cartItems.length === 0 ? (
+                        <View style={styles.cartEmptyBox}>
+                           <ShoppingBag size={24} color={C.mute} />
+                           <Text style={styles.cartEmptyText}>
+                              Agrega prendas para reservar el stock.
                            </Text>
-                           <Text style={styles.cartPrice}>${safeFixed(item.totalPrice)}</Text>
-                           <TouchableOpacity
-                              onPress={() => setCartItems((prev) => prev.filter((_, i) => i !== idx))}
-                           >
-                              <X size={14} color="#ef4444" style={{ marginLeft: 6 }} />
-                           </TouchableOpacity>
                         </View>
-                     ))}
+                     ) : (
+                        cartItems.map((item: any, idx: number) => {
+                           const product = findProduct(item.productId);
+                           const code = item.productCode || product?.code || 'S/N';
+                           return (
+                              <View key={`${item.productId}_${item.color}_${item.size}`} style={styles.cartRow}>
+                                 {renderCartProductImage(item, styles.cartImg)}
+                                 <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Text style={styles.cartName} numberOfLines={2}>
+                                       <Text style={styles.cartCode}>[{code}] </Text>
+                                       {item.name}
+                                    </Text>
+                                    <Text style={styles.cartMeta} numberOfLines={1}>
+                                       {item.color} · Talla {item.size} · ${safeFixed(item.unitPrice)} c/u
+                                    </Text>
+                                 </View>
 
-                     <Text style={styles.inputLabel}>Abono Inicial ($):</Text>
+                                 <View style={styles.qtyControls}>
+                                    <P style={styles.qtyBtn} onPress={() => updateCartQuantity(idx, -1)}>
+                                       <Minus size={12} color={C.ink} />
+                                    </P>
+                                    <Text style={styles.qtyText}>{item.quantity}</Text>
+                                    <P style={styles.qtyBtn} onPress={() => updateCartQuantity(idx, 1)}>
+                                       <Plus size={12} color={C.ink} />
+                                    </P>
+                                 </View>
+
+                                 <Text style={styles.cartSubtotal}>${safeFixed(item.totalPrice)}</Text>
+
+                                 <P style={styles.cartDeleteBtn} onPress={() => removeCartItem(idx)}>
+                                    <Trash2 size={13} color={C.mute} />
+                                 </P>
+                              </View>
+                           );
+                        })
+                     )}
+
+                     <View style={styles.cartTotals}>
+                        <View style={styles.totalRow}>
+                           <Text style={styles.totalLabel}>Subtotal ({cartItems.length} línea(s))</Text>
+                           <Text style={styles.totalValue}>${safeFixed(cartSubtotal)}</Text>
+                        </View>
+                        <View style={styles.totalRow}>
+                           <Text style={styles.totalLabel}>Abono inicial</Text>
+                           <Text style={[styles.totalValue, { color: C.green }]}>
+                              -${safeFixed(Math.min(initialPaymentValue, cartSubtotal))}
+                           </Text>
+                        </View>
+                        <View style={[styles.totalRow, { marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.border }]}>
+                           <Text style={styles.totalMainLabel}>Saldo pendiente</Text>
+                           <Text style={styles.totalMainValue}>${safeFixed(cartBalance)}</Text>
+                        </View>
+                     </View>
+
+                     <Text style={styles.inputLabel}>Abono inicial ($)</Text>
                      <TextInput
-                        style={styles.inputField}
+                        style={styles.input}
                         placeholder="0.00"
-                        keyboardType="numeric"
+                        placeholderTextColor={C.mute}
+                        keyboardType="decimal-pad"
                         value={initialPayment}
                         onChangeText={setInitialPayment}
                      />
+
+                     <Text style={styles.inputLabel}>Método del abono inicial</Text>
+                     <View style={styles.methodRow}>
+                        {['efectivo', 'pago_movil', 'punto', 'transferencia', 'binance'].map((m) => (
+                           <P
+                              key={m}
+                              style={[styles.methodChip, paymentMethod === m && styles.methodChipOn]}
+                              onPress={() => setPaymentMethod(m as any)}
+                           >
+                              <Text style={[styles.methodText, paymentMethod === m && styles.methodTextOn]}>
+                                 {m.replace('_', ' ').toUpperCase()}
+                              </Text>
+                           </P>
+                        ))}
+                     </View>
                   </ScrollView>
 
                   <View style={styles.modalFooter}>
-                     <TouchableOpacity
-                        style={styles.saveLayawayBtn}
+                     <P
+                        style={[styles.saveBtn, isProcessing && { opacity: 0.6 }]}
                         onPress={handleSaveLayaway}
                         disabled={isProcessing}
                      >
-                        <Text style={styles.saveLayawayText}>
-                           {isProcessing ? 'Reservando Stock...' : 'Guardar y Reservar Stock'}
+                        <CheckCircle2 size={16} color={C.onSolid} />
+                        <Text style={styles.saveBtnText}>
+                           {isProcessing ? 'Reservando stock…' : 'Guardar y reservar stock'}
                         </Text>
-                     </TouchableOpacity>
+                     </P>
                   </View>
                </View>
             </View>
@@ -840,153 +1411,608 @@ export const LayawayScreen: React.FC<Props> = ({
 };
 
 const styles = StyleSheet.create({
-   container: { flex: 1, backgroundColor: '#f8fafc' },
+   container: { flex: 1, backgroundColor: C.bg },
+   pressed: { transform: [{ scale: 0.98 }], opacity: 0.88 },
+   imageFallback: { backgroundColor: C.cardAlt, alignItems: 'center', justifyContent: 'center' },
+
    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      backgroundColor: '#ffffff',
+      backgroundColor: C.bg,
       borderBottomWidth: 1,
-      borderBottomColor: '#e2e8f0',
+      borderBottomColor: C.border,
+      paddingBottom: 12,
    },
-   headerTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
-   headerSubtitle: { fontSize: 11, color: '#64748b' },
+   headerInner: {
+      width: '100%',
+      maxWidth: MAX,
+      alignSelf: 'center',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: 12,
+      paddingHorizontal: 18,
+      paddingTop: 18,
+      paddingBottom: 12,
+   },
+   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 220 },
+   headerIconBox: {
+      width: 42,
+      height: 42,
+      borderRadius: 12,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+   },
+   headerTitle: {
+      ...display,
+      fontSize: 28,
+      lineHeight: 28,
+      fontWeight: '800',
+      color: C.ink,
+      textTransform: 'uppercase',
+   },
+   headerSubtitle: { fontSize: 12, color: C.mute, marginTop: 3 },
    newLayawayBtn: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: '#2563eb',
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 8,
+      gap: 6,
+      backgroundColor: C.solid,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 10,
    },
-   newLayawayBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
+   newLayawayBtnText: { color: C.onSolid, fontSize: 12, fontWeight: '800' },
 
-   filterSection: { paddingHorizontal: 16, paddingTop: 12, backgroundColor: '#ffffff' },
+   metricsRow: {
+      width: '100%',
+      alignSelf: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 18,
+   },
+   metricCard: {
+      flex: 1,
+      minWidth: 92,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+   },
+   metricLabel: {
+      fontSize: 9,
+      color: C.mute,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+   },
+   metricValue: { ...display, fontSize: 18, fontWeight: '800', color: C.ink, marginTop: 2 },
+
+   filterSection: {
+      backgroundColor: C.bg,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+      width: '100%',
+   },
+   filterInner: {
+      width: '100%',
+      maxWidth: MAX,
+      alignSelf: 'center',
+      paddingHorizontal: 18,
+      paddingTop: 12,
+      paddingBottom: 10,
+   },
    searchBar: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: '#f8fafc',
+      gap: 8,
+      height: 46,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      backgroundColor: C.card,
       borderWidth: 1,
-      borderColor: '#cbd5e1',
-      borderRadius: 8,
-      paddingHorizontal: 12,
-      height: 40,
-      marginBottom: 10,
+      borderColor: C.border,
    },
-   searchInput: { flex: 1, fontSize: 13, color: '#0f172a' },
-   chipsScroll: { flexDirection: 'row', paddingBottom: 10 },
+   searchInput: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 14,
+      color: C.ink,
+      paddingVertical: 0,
+      ...(Platform.OS === 'web' ? { outlineStyle: 'none' as any } : {}),
+   },
+   clearBtn: { padding: 4 },
+   chipsRow: { flexDirection: 'row', gap: 6, paddingTop: 10, paddingBottom: 2 },
    chip: {
-      backgroundColor: '#f1f5f9',
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
       paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 16,
-      marginRight: 6,
+      paddingVertical: 7,
+      borderRadius: 999,
    },
-   chipActive: { backgroundColor: '#2563eb' },
-   chipText: { fontSize: 11, color: '#475569', fontWeight: '600' },
-   chipTextActive: { color: '#ffffff', fontWeight: 'bold' },
+   chipOn: { backgroundColor: C.solid, borderColor: C.solid },
+   chipText: { fontSize: 11, color: C.soft, fontWeight: '700' },
+   chipTextOn: { color: C.onSolid, fontWeight: '800' },
 
-   listContent: { padding: 16 },
+   listContent: {
+      width: '100%',
+      maxWidth: MAX,
+      alignSelf: 'center',
+      paddingHorizontal: 18,
+      paddingTop: 16,
+      paddingBottom: 80,
+   },
+   gridRow: { gap: 12 },
    layawayCard: {
-      backgroundColor: '#ffffff',
+      backgroundColor: C.card,
+      borderRadius: 14,
+      padding: 14,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: C.border,
+   },
+   layawayCardGrid: { flex: 1 },
+   cardCompleted: { borderColor: C.greenBorder },
+   cardCancelled: { borderColor: C.redBorder, opacity: 0.78 },
+   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+   codeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+   codeIcon: {
+      width: 28,
+      height: 28,
+      borderRadius: 8,
+      backgroundColor: C.bg,
+      borderWidth: 1,
+      borderColor: C.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+   },
+   layawayCode: { ...display, fontSize: 20, fontWeight: '800', color: C.ink },
+   statusPill: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+      borderWidth: 1,
+   },
+   statusPillActive: { backgroundColor: C.bg, borderColor: C.border },
+   statusPillSuccess: { backgroundColor: C.greenBg, borderColor: C.greenBorder },
+   statusPillDanger: { backgroundColor: C.redBg, borderColor: C.redBorder },
+   statusText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
+
+   customerBlock: { marginTop: 10, gap: 3 },
+   customerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+   customerName: { fontSize: 13, fontWeight: '700', color: C.ink, flexShrink: 1 },
+   customerPhone: { fontSize: 11, color: C.mute },
+   sellerText: { fontSize: 11, color: C.mute },
+
+   progressBlock: { marginTop: 12 },
+   progressLabels: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
+   progressLabel: { fontSize: 11, color: C.soft, fontWeight: '600' },
+   progressPercent: { ...display, fontSize: 14, fontWeight: '800', color: C.ink },
+   progressTrack: { height: 8, backgroundColor: C.cardAlt, borderRadius: 4, overflow: 'hidden', borderWidth: 1, borderColor: C.border },
+   progressFill: { height: '100%', backgroundColor: C.soft, borderRadius: 4 },
+
+   miniMetricsRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+   miniMetric: {
+      flex: 1,
+      minWidth: 0,
+      backgroundColor: C.bg,
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+   },
+   miniMetricLabel: { fontSize: 9, color: C.mute, fontWeight: '800', textTransform: 'uppercase' },
+   miniMetricValue: { ...display, fontSize: 14, fontWeight: '800', color: C.ink, marginTop: 2 },
+
+   cardActions: {
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 12,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: C.border,
+      flexWrap: 'wrap',
+   },
+   actionBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 8,
+      borderWidth: 1,
+   },
+   actionPrimary: { backgroundColor: C.solid, borderColor: C.solid, flex: 1 },
+   actionPrimaryText: { fontSize: 11, fontWeight: '800', color: C.onSolid },
+   actionGhost: { backgroundColor: C.bg, borderColor: C.border, flex: 1 },
+   actionGhostText: { fontSize: 11, fontWeight: '800', color: C.ink },
+   actionDanger: { backgroundColor: C.redBg, borderColor: C.redBorder },
+   actionDangerText: { fontSize: 11, fontWeight: '800', color: C.red },
+   iconBtn: {
+      width: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.bg,
+   },
+
+   emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 64, gap: 8 },
+   emptyIconBox: {
+      width: 64,
+      height: 64,
+      borderRadius: 20,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+   },
+   emptyTitle: { fontSize: 16, fontWeight: '800', color: C.ink },
+   emptySubtitle: { fontSize: 12, color: C.mute, textAlign: 'center', maxWidth: 300, lineHeight: 18 },
+
+   modalOverlay: {
+      flex: 1,
+      backgroundColor: C.overlay,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 16,
+   },
+   modalCard: {
+      width: '100%',
+      maxWidth: 640,
+      maxHeight: '92%',
+      backgroundColor: C.bg,
+      borderRadius: 16,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: C.border,
+   },
+   smallModalCard: {
+      width: '100%',
+      maxWidth: 400,
+      backgroundColor: C.bg,
+      borderRadius: 16,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: C.border,
+   },
+   modalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      padding: 16,
+      backgroundColor: C.card,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+   },
+   modalTitle: { ...display, fontSize: 22, fontWeight: '800', color: C.ink, textTransform: 'uppercase' },
+   modalSubtitle: { fontSize: 11, color: C.mute, marginTop: 3 },
+   closeBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      backgroundColor: C.bg,
+      borderWidth: 1,
+      borderColor: C.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+   },
+   modalScroll: { flex: 1 },
+
+   summaryBox: {
+      backgroundColor: C.card,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: C.border,
+      padding: 12,
+   },
+   summaryLabel: { fontSize: 9, color: C.mute, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+   summaryValue: { ...display, fontSize: 20, fontWeight: '800', color: C.ink, marginTop: 2 },
+   summaryDivider: { height: 1, backgroundColor: C.border, marginVertical: 10 },
+   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, paddingVertical: 2 },
+   summaryMuted: { fontSize: 11, color: C.mute },
+   summaryValueSmall: { fontSize: 12, color: C.soft, fontWeight: '700', flexShrink: 1, textAlign: 'right' },
+
+   sectionTitle: {
+      ...display,
+      fontSize: 16,
+      fontWeight: '800',
+      color: C.ink,
+      textTransform: 'uppercase',
+      marginTop: 18,
+      marginBottom: 8,
+   },
+   sectionTitleFirst: {
+      ...display,
+      fontSize: 16,
+      fontWeight: '800',
+      color: C.ink,
+      textTransform: 'uppercase',
+      marginBottom: 8,
+   },
+   itemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+   },
+   itemImg: { width: 44, height: 56, borderRadius: 6, backgroundColor: C.cardAlt },
+   itemName: { fontSize: 13, fontWeight: '700', color: C.ink },
+   itemCode: { fontSize: 11, fontWeight: '800', color: C.purple },
+   itemMeta: { fontSize: 10, color: C.mute, marginTop: 2 },
+   itemPrice: { ...display, fontSize: 15, fontWeight: '800', color: C.ink },
+
+   paymentRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      padding: 10,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: 8,
+      marginBottom: 6,
+   },
+   paymentAmount: { fontSize: 12, fontWeight: '800', color: C.green },
+   paymentMeta: { fontSize: 10, color: C.mute, marginTop: 2 },
+   mutedText: { fontSize: 12, color: C.mute, fontStyle: 'italic' },
+
+   balanceBox: {
+      marginTop: 12,
+      backgroundColor: C.card,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: C.border,
+      padding: 12,
+   },
+   balanceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 3 },
+   balanceLabel: { fontSize: 11, color: C.mute },
+   balanceValue: { fontSize: 12, color: C.ink, fontWeight: '800' },
+   balancePendingLabel: { fontSize: 11, color: C.soft, fontWeight: '800', textTransform: 'uppercase' },
+   balancePending: { ...display, fontSize: 20, fontWeight: '800', color: C.red },
+
+   modalFooter: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      padding: 14,
+      backgroundColor: C.card,
+      borderTopWidth: 1,
+      borderTopColor: C.border,
+   },
+   footerBtn: {
+      flex: 1,
+      minWidth: 140,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      borderWidth: 1,
+   },
+   footerPrimary: { backgroundColor: C.solid, borderColor: C.solid },
+   footerPrimaryText: { fontSize: 12, fontWeight: '800', color: C.onSolid },
+   footerGhost: { backgroundColor: C.bg, borderColor: C.border },
+   footerGhostText: { fontSize: 12, fontWeight: '800', color: C.ink },
+   footerDanger: { backgroundColor: C.redBg, borderColor: C.redBorder, flex: 0 },
+   footerDangerText: { fontSize: 12, fontWeight: '800', color: C.red },
+
+   inputLabel: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: C.mute,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginTop: 12,
+      marginBottom: 6,
+   },
+   input: {
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: 10,
+      backgroundColor: C.bg,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      fontSize: 14,
+      color: C.ink,
+      ...(Platform.OS === 'web' ? { outlineStyle: 'none' as any } : {}),
+   },
+   formRow: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
+   methodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
+   methodChip: {
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.bg,
+   },
+   methodChipOn: { backgroundColor: C.solid, borderColor: C.solid },
+   methodText: { fontSize: 10, fontWeight: '800', color: C.soft },
+   methodTextOn: { color: C.onSolid },
+
+   pickerSearchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      height: 44,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.card,
+      marginBottom: 8,
+   },
+   pickerSearchInput: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 13,
+      color: C.ink,
+      paddingVertical: 0,
+      ...(Platform.OS === 'web' ? { outlineStyle: 'none' as any } : {}),
+   },
+   productListBox: {
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: 12,
+      padding: 8,
+   },
+   productCard: {
+      backgroundColor: C.bg,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: C.border,
+      marginBottom: 6,
+      overflow: 'hidden',
+   },
+   productCardOn: { borderColor: C.ink, backgroundColor: C.card },
+   productCardTop: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10 },
+   productImg: { width: 48, height: 62, borderRadius: 7, backgroundColor: C.cardAlt },
+   productBrand: { fontSize: 10, fontWeight: '800', color: C.mute, textTransform: 'uppercase' },
+   productName: { fontSize: 13, fontWeight: '700', color: C.ink, marginTop: 1 },
+   productCode: { fontSize: 11, fontWeight: '800', color: C.purple },
+   productMeta: { fontSize: 10, color: C.mute, marginTop: 2 },
+   priceColumn: { alignItems: 'flex-end', flexShrink: 0 },
+   productPrice: { ...display, fontSize: 17, fontWeight: '800', color: C.ink },
+   productPriceHint: { fontSize: 9, color: C.mute, textTransform: 'uppercase', fontWeight: '700' },
+   emptyPickerText: { fontSize: 12, color: C.mute, fontStyle: 'italic', textAlign: 'center', paddingVertical: 16 },
+
+   selectedPanel: {
+      borderTopWidth: 1,
+      borderTopColor: C.border,
+      paddingHorizontal: 10,
+      paddingBottom: 10,
+      paddingTop: 8,
+   },
+   subLabel: { fontSize: 10, fontWeight: '800', color: C.mute, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
+   colorChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.bg,
+   },
+   colorChipOn: { backgroundColor: C.solid, borderColor: C.solid },
+   colorSwatch: { width: 12, height: 12, borderRadius: 6, borderWidth: 1, borderColor: C.border },
+   colorChipText: { fontSize: 11, fontWeight: '700', color: C.soft },
+   colorChipTextOn: { color: C.onSolid, fontWeight: '800' },
+   sizeChip: {
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.bg,
+   },
+   sizeChipOn: { backgroundColor: C.solid, borderColor: C.solid },
+   sizeChipText: { fontSize: 11, fontWeight: '700', color: C.soft },
+   sizeChipTextOn: { color: C.onSolid, fontWeight: '800' },
+   chipDisabled: { opacity: 0.35 },
+   chipTextDisabled: { textDecorationLine: 'line-through' },
+   selectedFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      marginTop: 10,
+      flexWrap: 'wrap',
+   },
+   selectedStock: { fontSize: 10, color: C.soft, fontWeight: '700' },
+   selectedHint: { fontSize: 10, color: C.mute, marginTop: 2 },
+   addCartBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 5,
+      backgroundColor: C.solid,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 8,
+   },
+   addCartText: { fontSize: 11, fontWeight: '800', color: C.onSolid },
+
+   cartEmptyBox: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 22,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: 10,
+   },
+   cartEmptyText: { fontSize: 11, color: C.mute, fontStyle: 'italic' },
+   cartRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      padding: 10,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: 10,
+      marginBottom: 6,
+      flexWrap: 'wrap',
+   },
+   cartImg: { width: 38, height: 48, borderRadius: 6, backgroundColor: C.cardAlt },
+   cartName: { fontSize: 12, fontWeight: '700', color: C.ink },
+   cartCode: { fontSize: 10, fontWeight: '800', color: C.purple },
+   cartMeta: { fontSize: 10, color: C.mute, marginTop: 2 },
+   qtyControls: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: 8,
+      backgroundColor: C.bg,
+   },
+   qtyBtn: { width: 28, height: 30, alignItems: 'center', justifyContent: 'center' },
+   qtyText: { ...display, fontSize: 14, fontWeight: '800', color: C.ink, minWidth: 20, textAlign: 'center' },
+   cartSubtotal: { ...display, fontSize: 14, fontWeight: '800', color: C.ink, minWidth: 56, textAlign: 'right' },
+   cartDeleteBtn: { width: 28, height: 30, alignItems: 'center', justifyContent: 'center' },
+
+   cartTotals: {
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
       borderRadius: 12,
       padding: 12,
-      marginBottom: 10,
-      borderWidth: 1,
-      borderColor: '#e2e8f0',
+      marginTop: 12,
    },
-   cardCompleted: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
-   cardCancelled: { backgroundColor: '#fef2f2', borderColor: '#fca5a5' },
-   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-   layawayCode: { fontSize: 14, fontWeight: 'bold', color: '#0f172a' },
-   badgeSuccess: { backgroundColor: '#dcfce7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-   badgeSuccessText: { fontSize: 9, fontWeight: 'bold', color: '#16a34a' },
-   badgeDanger: { backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-   badgeDangerText: { fontSize: 9, fontWeight: 'bold', color: '#ef4444' },
-   badgeActive: { backgroundColor: '#eff6ff', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-   badgeActiveText: { fontSize: 9, fontWeight: 'bold', color: '#2563eb' },
+   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 3 },
+   totalLabel: { fontSize: 11, color: C.mute },
+   totalValue: { fontSize: 13, color: C.ink, fontWeight: '800' },
+   totalMainLabel: { fontSize: 11, color: C.soft, fontWeight: '800', textTransform: 'uppercase' },
+   totalMainValue: { ...display, fontSize: 22, fontWeight: '800', color: C.ink },
 
-   customerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
-   customerName: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
-   customerPhone: { fontSize: 11, color: '#64748b' },
-   sellerText: { fontSize: 11, color: '#64748b', marginTop: 2 },
-
-   progressSection: { marginTop: 10 },
-   progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-   progressLabelText: { fontSize: 11, color: '#475569', fontWeight: '600' },
-   progressPercentText: { fontSize: 11, fontWeight: 'bold', color: '#2563eb' },
-   progressBarTrack: { height: 6, backgroundColor: '#e2e8f0', borderRadius: 3, overflow: 'hidden' },
-   progressBarFill: { height: '100%', backgroundColor: '#2563eb' },
-
-   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
-   balanceText: { fontSize: 12, color: '#475569' },
-   waBtnQuick: { backgroundColor: '#dcfce7', padding: 6, borderRadius: 6 },
-
-   emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 50 },
-   emptyTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a', marginTop: 8 },
-   emptySubtitle: { fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 4, maxWidth: 280 },
-
-   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.7)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-   modalCard: { width: '100%', maxWidth: 460, maxHeight: '90%', backgroundColor: '#ffffff', borderRadius: 16, overflow: 'hidden' },
-   smallModalCard: { width: '100%', maxWidth: 360, backgroundColor: '#ffffff', borderRadius: 16, overflow: 'hidden' },
-   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#f8fafc', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-   modalTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a' },
-
-   layawaySummaryBox: { backgroundColor: '#f8fafc', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 10 },
-   boxTitle: { fontSize: 11, fontWeight: 'bold', color: '#2563eb', textTransform: 'uppercase', marginBottom: 4 },
-   boxVal: { fontSize: 12, color: '#334155', marginVertical: 1 },
-
-   sectionLabel: { fontSize: 12, fontWeight: 'bold', color: '#334155', marginTop: 10, marginBottom: 6 },
-   itemsTable: { backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', padding: 10 },
-   itemRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-   itemText: { fontSize: 12, color: '#0f172a', flex: 1 },
-   itemPrice: { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
-
-   paymentsTable: { backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', padding: 10 },
-   paymentRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-   paymentAmountText: { fontSize: 12, fontWeight: 'bold', color: '#16a34a' },
-   paymentDateText: { fontSize: 10, color: '#64748b' },
-
-   balanceSummaryBox: { marginTop: 12, backgroundColor: '#eff6ff', borderRadius: 8, borderWidth: 1, borderColor: '#bfdbfe', padding: 10 },
-   balRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 },
-   balLabel: { fontSize: 11, color: '#1e40af' },
-   balVal: { fontSize: 12, color: '#1e40af', fontWeight: 'bold' },
-   balValPaid: { fontSize: 12, color: '#16a34a', fontWeight: 'bold' },
-   balMainLabel: { fontSize: 13, color: '#1e3a8a', fontWeight: 'bold' },
-   balMainVal: { fontSize: 16, color: '#ef4444', fontWeight: '800' },
-
-   modalFooter: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, padding: 16, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0' },
-   addAbonoBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#2563eb', paddingVertical: 10, borderRadius: 8 },
-   addAbonoBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
-   cancelBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5' },
-   cancelBtnText: { color: '#ef4444', fontSize: 12, fontWeight: 'bold' },
-   receiptBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a', paddingVertical: 10, borderRadius: 8 },
-   receiptBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
-
-   inputLabel: { fontSize: 12, fontWeight: 'bold', color: '#334155', marginTop: 10, marginBottom: 4 },
-   inputField: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 13, color: '#0f172a', backgroundColor: '#ffffff' },
-   methodGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 8 },
-   methodChip: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-   methodChipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-   methodChipText: { fontSize: 10, fontWeight: 'bold', color: '#475569' },
-   methodChipTextActive: { color: '#ffffff' },
-   saveAbonoSubmitBtn: { backgroundColor: '#16a34a', paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginTop: 12 },
-   saveAbonoSubmitText: { color: '#ffffff', fontWeight: 'bold', fontSize: 13 },
-
-   productPickerBox: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, padding: 8, maxHeight: 250 },
-   pickerSearchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 10, height: 38, marginBottom: 8 },
-   pickerSearchInput: { flex: 1, fontSize: 12, color: '#0f172a', paddingVertical: 0 },
-   pickerEmptyText: { fontSize: 11, color: '#64748b', fontStyle: 'italic', textAlign: 'center', paddingVertical: 12 },
-   pickerProductRow: { marginBottom: 8 },
-   pickerProdName: { fontSize: 11, fontWeight: 'bold', color: '#0f172a', marginBottom: 2 },
-   addVariantChip: { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, marginRight: 4 },
-   addVariantText: { fontSize: 10, color: '#2563eb', fontWeight: 'bold' },
-
-   cartRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-   cartText: { fontSize: 11, color: '#334155', flex: 1 },
-   cartPrice: { fontSize: 11, fontWeight: 'bold', color: '#0f172a' },
-   saveLayawayBtn: { backgroundColor: '#2563eb', paddingVertical: 12, borderRadius: 8, alignItems: 'center', width: '100%' },
-   saveLayawayText: { color: '#ffffff', fontWeight: 'bold', fontSize: 13 },
+   saveBtn: {
+      flex: 1,
+      minWidth: 160,
+      height: 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      backgroundColor: C.solid,
+      borderRadius: 10,
+   },
+   saveBtnText: { fontSize: 13, fontWeight: '800', color: C.onSolid },
 });

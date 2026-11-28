@@ -16,7 +16,7 @@ import {
   DocumentData,
   writeBatch,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import type { Product } from '../types/inventory';
 import { bumpCatalogVersion } from './productService';
 import { assertOwner } from './userService';
@@ -664,6 +664,155 @@ export interface ProfitResyncResult {
   updatedItems: number;
   skippedProducts: ProfitResyncSkipped[];
 }
+
+export interface SingleSaleProfitResyncResult {
+  saleId: string;
+  receiptNumber: string;
+  updatedItems: number;
+  skippedProducts: ProfitResyncSkipped[];
+  profit: number;
+  margin: number;
+  determined: boolean;
+}
+
+/**
+ * Resincroniza el costo y la ganancia de UNA sola venta.
+ *
+ * - Valida que `actorUid` sea la sesión actual y que esa sesión sea `owner`.
+ * - Lee únicamente el documento de la venta y los productos de sus ítems.
+ * - Regla parcial: las prendas inexistentes o `deleted` conservan su línea
+ *   original y se devuelven en `skippedProducts`; el resto sí se actualiza.
+ */
+export const resyncSingleSaleProfit = async (
+  saleId: string,
+  actorUid: string
+): Promise<SingleSaleProfitResyncResult> => {
+  if (!db) throw new Error('Base de datos no disponible');
+  if (!saleId) throw new Error('La venta no tiene ID.');
+
+  const currentUid = auth?.currentUser?.uid;
+  if (!actorUid || !currentUid || currentUid !== actorUid) {
+    throw new Error('La sesión no coincide con el usuario que solicitó la resincronización.');
+  }
+
+  // Regla de negocio C-08: solo el dueño puede recalcular ganancias.
+  await assertOwner();
+
+  return await runTransaction(db, async (transaction) => {
+    const saleRef = doc(db, 'sales', saleId);
+
+    // 1) Lectura de la venta.
+    const saleSnap = await transaction.get(saleRef);
+    if (!saleSnap.exists()) throw new Error('La venta no existe.');
+
+    const saleData: any = saleSnap.data() || {};
+    if (saleData.status === 'voided') {
+      throw new Error('No se puede resincronizar una venta anulada.');
+    }
+
+    const rawItems: any[] = Array.isArray(saleData.items) ? saleData.items : [];
+
+    // 2) Lectura de los productos de esta venta, antes de cualquier escritura.
+    const productIds = Array.from(
+      new Set(rawItems.map((item) => item?.productId).filter(Boolean))
+    ) as string[];
+
+    const productRefs = productIds.map((productId) => doc(db, 'products', productId));
+    const productSnaps = await Promise.all(
+      productRefs.map((productRef) => transaction.get(productRef))
+    );
+
+    const productsById = new Map<string, Product | null>();
+    productSnaps.forEach((snap, index) => {
+      productsById.set(productIds[index], snap.exists() ? (snap.data() as Product) : null);
+    });
+
+    // 3) Cálculo en memoria.
+    const skipped = new Map<string, ProfitResyncSkipped>();
+    let updatedItems = 0;
+    let changed = false;
+
+    const nextItems = rawItems.map((item: any) => {
+      const productId = item?.productId || '';
+      const productCode = item?.productCode || item?.code || '';
+      const product = productId ? productsById.get(productId) : undefined;
+
+      if (!product || product.deleted) {
+        const warningKey = productId || productCode || item?.name || 'unknown';
+        const previous = skipped.get(warningKey);
+        skipped.set(warningKey, {
+          code: productCode || product?.code || 'S/N',
+          name: item?.name || item?.productName || product?.name || 'Prenda desconocida',
+          occurrences: (previous?.occurrences || 0) + 1,
+        });
+        // La línea se conserva exactamente como estaba.
+        return item;
+      }
+
+      if (product.purchasePrice === undefined || product.purchasePrice === null) {
+        // No se inventa un costo que la prenda no tiene configurado.
+        return item;
+      }
+
+      const currentPurchasePrice = roundMoney(Number(product.purchasePrice));
+      if (!Number.isFinite(currentPurchasePrice)) return item;
+
+      if (
+        typeof item.purchasePrice === 'number' &&
+        item.purchasePrice === currentPurchasePrice
+      ) {
+        return item;
+      }
+
+      changed = true;
+      updatedItems += 1;
+      return { ...item, purchasePrice: currentPurchasePrice };
+    });
+
+    // 4) Ganancia/margen netos con los costos ya sincronizados.
+    let grossProfit = 0;
+    let determined = true;
+
+    nextItems.forEach((item: any) => {
+      const purchasePrice =
+        typeof item?.purchasePrice === 'number' && Number.isFinite(item.purchasePrice)
+          ? item.purchasePrice
+          : undefined;
+
+      if (purchasePrice === undefined) {
+        determined = false;
+        return;
+      }
+
+      const quantity = Number(item.quantity) || 0;
+      const unitPrice = Number(item.unitPrice) || 0;
+      grossProfit += (unitPrice - purchasePrice) * quantity;
+    });
+
+    const discount = Math.max(0, Number(saleData.discount) || 0);
+    const total = Math.max(0, Number(saleData.totalAmount ?? saleData.total) || 0);
+    const profit = roundMoney(grossProfit - discount);
+    const margin = total > 0 ? (profit / total) * 100 : 0;
+
+    // 5) Escritura únicamente de la venta afectada.
+    if (changed) {
+      transaction.update(saleRef, {
+        items: nextItems,
+        updatedAt: Timestamp.now(),
+      });
+    }
+
+    return {
+      saleId,
+      receiptNumber: saleData.receiptNumber || 'S/N',
+      updatedItems,
+      skippedProducts: Array.from(skipped.values()),
+      profit,
+      margin,
+      determined,
+    };
+  });
+};
 
 /**
  * Recorre las ventas no anuladas y actualiza el `purchasePrice` de cada línea

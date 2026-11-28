@@ -34,12 +34,13 @@ import {
    subscribeToSales,
    voidSale,
    formatDateTime,
-   resyncSaleProfits,
+   resyncSingleSaleProfit,
 } from '../services/salesHistoryService';
 import { DateRangePickerModal } from '../components/DateRangePickerModal';
 import { showAlert, showConfirm } from '../utils/alert';
 import { EditSaleModal } from '../components/EditSaleModal';
 import { calculateSaleProfit } from '../services/salesHistoryService';
+import { auth } from '../services/firebase';
 import { escapeHtml, openExternalLink, openPrintWindow } from '../utils/htmlUtils';
 import { MONO as T, display } from '../design';
 
@@ -356,43 +357,47 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
       }
    };
 
-   const handleResyncProfits = () => {
+   const handleResyncSaleProfit = (sale: Sale) => {
       if (!isOwner) {
-         showAlert('Permiso denegado', 'Solo el dueño puede resincronizar las ganancias.');
+         showAlert('Permiso denegado', 'Solo el dueño puede resincronizar ganancias.');
          return;
       }
-      if (isResyncing) return;
+      if (isResyncing || !sale.id) return;
+
+      const actorUid = auth?.currentUser?.uid || '';
+      if (!actorUid) {
+         showAlert('Sesión no válida', 'Inicia sesión de nuevo para continuar.');
+         return;
+      }
 
       showConfirm(
-         'Resincronizar Ganancias',
-         'Se actualizará el costo de compra de cada línea usando el costo vigente en productos. ' +
-         'Las prendas que ya no existan o estén eliminadas se conservarán sin cambios y se reportarán al final. ' +
-         '¿Continuar?',
+         'Resincronizar Ganancia',
+         `Se actualizará el costo de compra de las líneas de la venta #${sale.receiptNumber} ` +
+         'usando el costo vigente en productos. Las prendas que ya no existan o estén eliminadas ' +
+         'se conservarán sin cambios y se reportarán al final. ¿Continuar?',
          async () => {
             setIsResyncing(true);
             try {
-               const result = await resyncSaleProfits();
+               const result = await resyncSingleSaleProfit(sale.id as string, actorUid);
+
                let message =
-                  `${result.updatedSales} venta(s) actualizada(s) de ${result.scannedSales} revisada(s).\n` +
-                  `${result.updatedItems} línea(s) de detalle con costo actualizado.`;
+                  `${result.updatedItems} línea(s) actualizada(s) con el costo vigente.\n` +
+                  `Ganancia neta: $${safeFixed(result.profit)} · Margen: ${safeFixed(result.margin)}%` +
+                  `${result.determined ? '' : ' (parcial: hay líneas sin costo)'}.`;
 
                if (result.skippedProducts.length > 0) {
-                  const visible = result.skippedProducts.slice(0, 10);
                   message +=
                      '\n\n⚠️ Prendas omitidas (no existen o están eliminadas):\n' +
-                     visible
+                     result.skippedProducts
                         .map((item) => `• [${item.code}] ${item.name}${item.occurrences > 1 ? ` (${item.occurrences}×)` : ''}`)
                         .join('\n');
-                  if (result.skippedProducts.length > visible.length) {
-                     message += `\n… y ${result.skippedProducts.length - visible.length} prenda(s) más.`;
-                  }
                } else {
-                  message += '\n\nTodas las prendas de las ventas siguen existiendo.';
+                  message += '\n\nTodas las prendas de esta venta siguen existiendo.';
                }
 
                showAlert('Resincronización completada', message);
             } catch (error: any) {
-               showAlert('Error', error?.message || 'No se pudieron resincronizar las ganancias.');
+               showAlert('Error', error?.message || 'No se pudo resincronizar la ganancia.');
             } finally {
                setIsResyncing(false);
             }
@@ -465,18 +470,6 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                   >
                      <Filter size={18} color={showAdvancedFilters ? T.onSolid : T.ink} />
                   </P>
-                  {isOwner && (
-                     <P
-                        style={[styles.resyncBtn, isResyncing && { opacity: 0.6 }]}
-                        onPress={handleResyncProfits}
-                        disabled={isResyncing}
-                     >
-                        <RefreshCw size={16} color={T.ink} />
-                        <Text style={styles.resyncBtnText} numberOfLines={1}>
-                           {isResyncing ? 'Sincronizando…' : mobile ? 'Ganancias' : 'Resincronizar Ganancias'}
-                        </Text>
-                     </P>
-                  )}
                </View>
 
                <View style={styles.dateFilterRow}>
@@ -863,6 +856,16 @@ export const SalesHistoryScreen: React.FC<SalesHistoryScreenProps> = ({ isOwner 
                         </P>
                         {selectedSale.status !== 'voided' && isOwner && (
                            <>
+                              <P
+                                 style={[styles.actionBtnSync, isResyncing && { opacity: 0.6 }]}
+                                 onPress={() => handleResyncSaleProfit(selectedSale)}
+                                 disabled={isResyncing}
+                              >
+                                 <RefreshCw size={16} color={T.ink} />
+                                 <Text style={styles.actionBtnSyncText} numberOfLines={1}>
+                                    {isResyncing ? 'Sincronizando…' : 'Resincronizar Ganancia'}
+                                 </Text>
+                              </P>
                               <P style={styles.actionBtnEdit} onPress={() => setEditingSale(selectedSale)}>
                                  <Pencil size={16} color={T.ink} />
                                  <Text style={styles.actionBtnEditText} numberOfLines={1}>Editar</Text>
@@ -1076,20 +1079,6 @@ const styles = StyleSheet.create({
       flexShrink: 0,
    },
    filterToggleBtnActive: { backgroundColor: T.solid, borderColor: T.solid },
-   resyncBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
-      height: 46,
-      paddingHorizontal: 12,
-      borderRadius: 10,
-      backgroundColor: T.bg,
-      borderWidth: 1,
-      borderColor: T.line,
-      flexShrink: 0,
-   },
-   resyncBtnText: { fontSize: 12, fontWeight: '800', color: T.ink },
 
    dateFilterRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
    advancedFiltersContainer: {
@@ -1486,6 +1475,21 @@ const styles = StyleSheet.create({
       backgroundColor: T.bg,
    },
    actionBtnEditText: { fontSize: 13, fontWeight: '800', color: T.ink },
+   actionBtnSync: {
+      flexGrow: 1,
+      flexBasis: '47%',
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 6,
+      height: 42,
+      paddingHorizontal: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: T.line,
+      backgroundColor: T.surface,
+   },
+   actionBtnSyncText: { fontSize: 12, fontWeight: '800', color: T.ink },
 
    voidModalCard: {
       width: '100%',
